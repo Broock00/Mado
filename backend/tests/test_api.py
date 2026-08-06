@@ -16,18 +16,16 @@ import uuid
 import httpx
 import pytest
 
+from tests.conftest import requires_api
+
 BASE_URL = os.environ.get("MADO_TEST_API_URL", "http://127.0.0.1:8000")
 CITY = "addis-ababa"
 
 
-def api_available() -> bool:
-    try:
-        return httpx.get(f"{BASE_URL}/health", timeout=3).status_code == 200
-    except httpx.HTTPError:
-        return False
-
-
-pytestmark = pytest.mark.skipif(not api_available(), reason=f"API not reachable at {BASE_URL}")
+# Fails rather than skips when the API is down - see tests/conftest.py for why.
+@pytest.fixture(scope="module", autouse=True)
+def _api_required() -> None:
+    requires_api()
 
 
 @pytest.fixture(scope="module")

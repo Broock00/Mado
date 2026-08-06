@@ -24,6 +24,7 @@ import type {
   ExperienceDetail,
   EventInstance,
   ExperienceSummary,
+  GeocodeResult,
   Me,
   SavedItem,
   SearchResponse,
@@ -374,6 +375,14 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url, altText }),
+    }).then((r) => r.data),
+
+  /** Resolve a street address to coordinates so publishers never type them. */
+  geocode: (address: string, citySlug: string) =>
+    request<Envelope<GeocodeResult>>('/api/v1/posts/venues/geocode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address, citySlug }),
     }).then((r) => r.data),
 
   createVenue: (input: CreateVenueInput) =>

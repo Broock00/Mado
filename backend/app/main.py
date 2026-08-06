@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.router import api_router
+from app.core import scheduler
 from app.core.config import get_settings
 from app.core.context import get_request_id
 from app.core.errors import PlatformError
@@ -63,8 +64,11 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001
         logger.warning("search_index_setup_failed", error=str(exc))
 
+    scheduler.start()
+
     yield
 
+    await scheduler.stop()
     await close_rate_limiter()
     logger.info("api_stopping")
 

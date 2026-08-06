@@ -1,0 +1,149 @@
+"""Background maintenance.
+
+Some of the platform's numbers are derived rather than stored: popularity and
+trend come from the interaction stream, and embeddings have to be generated for
+anything published while the embedding provider was unavailable. Both were
+CLI-only, which in practice means they run when someone remembers - and a
+Trending rail computed last Tuesday is worse than no Trending rail, because it
+looks current.
+
+An in-process asyncio loop rather than a separate worker or a cron container.
+This is a modular monolith by design (spec 70.02): adding a second deployable to
+run one query every half hour would be a real operational cost for no benefit,
+and the job is small, idempotent and safe to miss.
+
+**Only one process may run the jobs.** With several workers behind a load
+balancer, every one of them would otherwise wake up and recompute the same
+scores. A Redis lock elects a single runner per interval; without Redis the loop
+does not run at all rather than running everywhere, because duplicated writes are
+worse than stale numbers.
+
+Nothing here is on a request path, so every failure is logged and swallowed. A
+maintenance job that takes the API down with it has done more damage than the
+stale data it was fixing.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+
+from app.core.config import get_settings
+from app.core.database import SessionFactory
+from app.core.logging import get_logger
+from app.core.rate_limit import _client as redis_client
+
+logger = get_logger("mado.scheduler")
+
+# How often popularity and trend are rebuilt. Half-hourly is far more often than
+# the numbers meaningfully move, and cheap enough that it does not matter - the
+# point is that "trending" never means "trending last week".
+ENGAGEMENT_INTERVAL_SECONDS = 1800
+
+# Embedding backfill catches anything published while the provider was down.
+# Hourly: a listing without an embedding is still fully discoverable by keyword,
+# so this is a quality repair rather than an outage.
+EMBEDDING_INTERVAL_SECONDS = 3600
+
+# A held lock expires slightly after the interval it guards, so a worker that
+# dies mid-job does not block the next run forever.
+LOCK_MARGIN_SECONDS = 60
+
+
+@dataclass(slots=True)
+class Job:
+    name: str
+    interval_seconds: int
+    run: Callable[[], Awaitable[None]]
+
+
+async def _claim(name: str, ttl: int) -> bool:
+    """Elect a single runner for this interval.
+
+    SET NX EX: the first worker to claim the key wins, and the key expires on its
+    own so a crashed holder cannot deadlock the job. Without Redis nobody runs -
+    see the module docstring.
+    """
+    client = await redis_client()
+    if client is None:
+        return False
+    try:
+        return bool(await client.set(f"job:{name}", "held", nx=True, ex=ttl))
+    except Exception as exc:  # noqa: BLE001 - never fail a background loop
+        logger.warning("scheduler_lock_failed", job=name, error=str(exc))
+        return False
+
+
+async def _recompute_engagement() -> None:
+    from app.domains.explorer.learning import recompute_engagement_scores
+
+    async with SessionFactory() as session:
+        result = await recompute_engagement_scores(session)
+        await session.commit()
+        logger.info("scheduled_engagement_recompute", **result)
+
+
+async def _backfill_embeddings() -> None:
+    from app.domains.discovery.embedding_service import backfill_embeddings
+
+    async with SessionFactory() as session:
+        written = await backfill_embeddings(session, only_missing=True)
+        await session.commit()
+        if written:
+            logger.info("scheduled_embedding_backfill", written=written)
+
+
+JOBS = [
+    Job("engagement", ENGAGEMENT_INTERVAL_SECONDS, _recompute_engagement),
+    Job("embeddings", EMBEDDING_INTERVAL_SECONDS, _backfill_embeddings),
+]
+
+
+async def _loop(job: Job) -> None:
+    # Wait before the first run rather than after. Starting every job at boot
+    # would make a deploy - when several workers start at once - the busiest
+    # moment on the database.
+    while True:
+        await asyncio.sleep(job.interval_seconds)
+        try:
+            if not await _claim(job.name, job.interval_seconds + LOCK_MARGIN_SECONDS):
+                continue
+            started = datetime.now(UTC)
+            await job.run()
+            logger.info(
+                "scheduled_job_complete",
+                job=job.name,
+                seconds=round((datetime.now(UTC) - started).total_seconds(), 2),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - a job must never stop the loop
+            logger.warning("scheduled_job_failed", job=job.name, error=str(exc))
+
+
+_tasks: list[asyncio.Task] = []
+
+
+def start() -> None:
+    """Begin the maintenance loops."""
+    settings = get_settings()
+    if not settings.scheduler_enabled:
+        logger.info("scheduler_disabled")
+        return
+
+    for job in JOBS:
+        _tasks.append(asyncio.create_task(_loop(job), name=f"mado-job-{job.name}"))
+    logger.info("scheduler_started", jobs=[job.name for job in JOBS])
+
+
+async def stop() -> None:
+    """Cancel the loops on shutdown, so a reload does not leave them running."""
+    for task in _tasks:
+        task.cancel()
+    for task in _tasks:
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    _tasks.clear()

@@ -97,6 +97,11 @@ LOGIN_LIMIT = Limit(times=10, seconds=900, scope="login")
 # is the one limit protecting a synchronous compute path rather than a spend path.
 UPLOAD_LIMIT = Limit(times=40, seconds=3600, scope="upload")
 
+# Geocoding calls a third party that rate limits us in turn - OpenStreetMap asks
+# for roughly one request a second across all of our traffic, so this protects
+# their service as much as ours.
+GEOCODE_LIMIT = Limit(times=60, seconds=3600, scope="geocode")
+
 # Planning runs a full retrieval and solve, so it is heavier than a page view.
 PLAN_LIMIT = Limit(times=60, seconds=3600, scope="plan")
 

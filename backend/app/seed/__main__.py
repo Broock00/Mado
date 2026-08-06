@@ -4,6 +4,7 @@ python -m app.seed              seed the pilot city and rebuild the search index
 python -m app.seed --no-index   seed only
 python -m app.seed --reindex    rebuild the search index only
 python -m app.seed --recompute  rebuild popularity and trend from interaction events
+python -m app.seed --ingest URL  import an iCalendar feed from a trusted source
 """
 
 from __future__ import annotations
@@ -39,6 +40,49 @@ async def _grant_moderator(email: str) -> None:
         user.is_moderator = True
         await session.commit()
         print(f"{email} is now a moderator.")
+
+
+async def _ingest(url: str, source_slug: str) -> None:
+    """Import an iCalendar feed.
+
+    A manual entry point for the same code a scheduled job runs. Sources are
+    configured rather than passed on the command line in a deployed environment;
+    this exists to try a feed before trusting it.
+    """
+    import httpx
+
+    from app.domains.catalog.feeds import FeedSource, from_ics, ingest
+
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        items = from_ics(response.text, external_id_prefix=f"{source_slug}:")
+
+    print(f"Parsed {len(items)} items from {url}")
+    if not items:
+        return
+
+    async with SessionFactory() as session:
+        source = FeedSource(
+            slug=source_slug,
+            name=source_slug.replace("-", " ").title(),
+            # Manual runs are treated as untrusted: an operator trying a feed for
+            # the first time should not be able to overwrite existing data with
+            # it by accident. A configured source carries its real trust level.
+            trust=0.5,
+            publisher_slug="addis-culture-bureau",
+            city_slug="addis-ababa",
+        )
+        report = await ingest(session, source, items)
+        await session.commit()
+
+        print(f"  created  {report.created}")
+        print(f"  updated  {report.updated}")
+        print(f"  merged   {report.merged}  (recognised as something already held)")
+        print(f"  skipped  {report.skipped}")
+        print(f"  withheld {report.withheld}  (screening sent these to moderation)")
+        for problem in report.problems[:10]:
+            print(f"    - {problem}")
 
 
 async def _recompute() -> None:
@@ -97,6 +141,12 @@ def main() -> None:
         "--make-moderator", metavar="EMAIL", help="Grant moderator rights to an account."
     )
     parser.add_argument(
+        "--ingest", metavar="URL", help="Import an iCalendar feed from a trusted source."
+    )
+    parser.add_argument(
+        "--source", default="manual-import", help="Source slug for --ingest."
+    )
+    parser.add_argument(
         "--recompute",
         action="store_true",
         help="Rebuild popularity and trend scores from interaction events.",
@@ -118,6 +168,9 @@ def main() -> None:
 
     if args.make_moderator:
         run_async(_grant_moderator(args.make_moderator))
+        return
+    if args.ingest:
+        run_async(_ingest(args.ingest, args.source))
         return
     if args.recompute:
         run_async(_recompute())

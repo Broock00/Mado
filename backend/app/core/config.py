@@ -54,6 +54,22 @@ class Settings(BaseSettings):
     # Where uploaded images are written. Local disk in development; spec 82.01
     # names S3-compatible object storage for production, which changes this
     # setting and app/integrations/media_storage.py and nothing else.
+    # Maps and geocoding. Spec 82.01 s10 treats maps as infrastructure: the
+    # vendor renders tiles and resolves addresses, and Mado owns the catalogue
+    # and the ranking. Swapping vendors is therefore a config change.
+    #   auto       Google when a key is set, OpenStreetMap otherwise (default)
+    #   google     Google Geocoding (requires a key and billing)
+    #   nominatim  OpenStreetMap, keyless, rate limited by its operators
+    #   local      offline stand-in resolving against known neighbourhoods
+    geocoding_provider: Literal["auto", "google", "nominatim", "local"] = "auto"
+    google_maps_api_key: str = ""
+
+    # Background maintenance. Popularity, trend and embedding backfill run on a
+    # timer inside the API process (spec 70.02 keeps this a single deployable).
+    # Off in test runs, where a job firing mid-suite would mutate the data a test
+    # is asserting about.
+    scheduler_enabled: bool = True
+
     # Rate limiting. On by default; switched off for test runs, which
     # legitimately create hundreds of accounts and posts from one address in
     # seconds and would otherwise be testing the limiter rather than the feature.

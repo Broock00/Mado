@@ -11,7 +11,7 @@
  *  - saves as a draft first, so nothing is lost if the explorer stops halfway
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import { ApiError, api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
+import type { GeocodeResult } from '@/lib/types'
 import { Badge, Button, Card, Input } from '@/design-system/primitives'
 import { cn } from '@/lib/utils'
 import type { CreatePostInput, OwnPost } from '@/lib/types'
@@ -35,6 +36,11 @@ const TYPES: { value: CreatePostInput['type']; label: string; hint: string }[] =
   { value: 'event', label: 'An event', hint: 'Happens at specific dates and times' },
   { value: 'activity', label: 'An activity', hint: 'Something people take part in or book' },
 ]
+
+// Loaded on demand - the confirmation map is only reached by publishers.
+const ExperienceMap = lazy(() =>
+  import('@/features/map/ExperienceMap').then((m) => ({ default: m.ExperienceMap })),
+)
 
 export function ComposePage() {
   const { experienceId } = useParams()
@@ -64,6 +70,7 @@ export function ComposePage() {
   // posting at all.
   const [venue, setVenue] = useState({ name: '', address: '', latitude: '', longitude: '' })
   const [venueId, setVenueId] = useState<string | null>(null)
+  const [located, setLocated] = useState<GeocodeResult | null>(null)
   const [dateInput, setDateInput] = useState('')
   const [imageUrl, setImageUrl] = useState('')
 
@@ -98,14 +105,19 @@ export function ComposePage() {
   const post: OwnPost | undefined = existing
   const problems = post?.readinessProblems ?? []
 
+  const geocode = useMutation({
+    mutationFn: () => api.geocode(venue.address, citySlug),
+    onSuccess: (result) => setLocated(result),
+  })
+
   const createVenue = useMutation({
     mutationFn: () =>
       api.createVenue({
         name: venue.name,
         address: venue.address,
         citySlug: form.citySlug,
-        latitude: Number(venue.latitude),
-        longitude: Number(venue.longitude),
+        latitude: located!.latitude,
+        longitude: located!.longitude,
       }),
     onSuccess: (created) => setVenueId(created.id),
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Could not add that place.'),
@@ -366,29 +378,74 @@ export function ComposePage() {
                   placeholder="Street address"
                   aria-label="Street address"
                 />
-                <Input
-                  value={venue.latitude}
-                  onChange={(e) => setVenue({ ...venue, latitude: e.target.value })}
-                  placeholder="Latitude (e.g. 9.0055)"
-                  aria-label="Latitude"
-                />
-                <Input
-                  value={venue.longitude}
-                  onChange={(e) => setVenue({ ...venue, longitude: e.target.value })}
-                  placeholder="Longitude (e.g. 38.7810)"
-                  aria-label="Longitude"
-                />
               </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => createVenue.mutate()}
-                loading={createVenue.isPending}
-                disabled={!venue.name || !venue.address || !venue.latitude || !venue.longitude}
-              >
-                <Plus className="size-4" aria-hidden />
-                Add this place
-              </Button>
+
+              {/* Coordinates are looked up, not typed. Nobody adding a cafe knows
+                  its latitude, and a listing with guessed coordinates is worse
+                  than one with none - it turns up confidently in "near you" for
+                  the wrong neighbourhood. */}
+              {!located ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => geocode.mutate()}
+                    loading={geocode.isPending}
+                    disabled={venue.address.trim().length < 3}
+                  >
+                    <MapPin className="size-4" aria-hidden />
+                    Find on the map
+                  </Button>
+                  {geocode.isError && (
+                    <span className="text-sm text-red-700">
+                      {(geocode.error as Error).message}
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {/* Shown back for confirmation. A geocoder returns a precise
+                      point even for a poor query, so a person checking the
+                      resolved address is the only real safeguard against a pin
+                      landing somewhere plausible but wrong. */}
+                  <p className="text-sm text-sand-600">
+                    Found: <span className="text-sand-900">{located.formattedAddress}</span>
+                  </p>
+                  <Suspense
+                    fallback={<div className="h-48 w-full animate-pulse rounded-xl bg-sand-200" />}
+                  >
+                    <ExperienceMap
+                      className="h-48 w-full overflow-hidden rounded-xl"
+                      zoom={16}
+                      experiences={[
+                        {
+                          id: 'preview',
+                          title: venue.name || 'This place',
+                          venue: {
+                            latitude: located.latitude,
+                            longitude: located.longitude,
+                          },
+                        } as never,
+                      ]}
+                    />
+                  </Suspense>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => createVenue.mutate()}
+                      loading={createVenue.isPending}
+                      disabled={!venue.name}
+                    >
+                      <Plus className="size-4" aria-hidden />
+                      That is the place
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setLocated(null)}>
+                      Not quite — try again
+                    </Button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </Card>

@@ -11,13 +11,15 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, File, Form, Query, Request, UploadFile, status
+from pydantic import Field
 
 from app.api.deps import CurrentUser, SessionDep
 from app.core import rate_limit
 from app.core.envelope import CollectionEnvelope, Envelope
 from app.core.errors import RateLimitError, ValidationError
+from app.domains.catalog import repository as catalog_repo
 from app.domains.catalog.models import Experience
-from app.domains.catalog.schemas import EventInstanceOut
+from app.domains.catalog.schemas import CamelModel, EventInstanceOut
 from app.domains.catalog.serializers import to_detail
 from app.domains.discovery.embedding_service import embed_experience
 from app.domains.discovery.indexer import index_experience, remove_experience
@@ -35,6 +37,7 @@ from app.domains.publisher.schemas import (
 from app.domains.publisher.service import PublishingService
 from app.domains.trust.service import TrustService
 from app.integrations import media_storage
+from app.integrations.geocoding import get_geocoder
 
 router = APIRouter(prefix="/posts", tags=["publishing"])
 
@@ -408,6 +411,65 @@ async def delete_event(
 
 
 # ---------------------------------------------------------------------- venues
+
+
+class GeocodeRequest(CamelModel):
+    address: str = Field(min_length=3, max_length=300)
+    city_slug: str
+
+
+class GeocodeOut(CamelModel):
+    latitude: float
+    longitude: float
+    # Shown back to the publisher so they can confirm the pin is where they meant.
+    # This is the real safeguard: a confidence score cannot tell that someone typed
+    # their country instead of their street, because the geocoder will happily find
+    # a precise point for a poor query. A person looking at the resolved address can.
+    formatted_address: str
+    confidence: float
+    provider: str
+
+
+@router.post(
+    "/venues/geocode",
+    response_model=Envelope[GeocodeOut],
+    summary="Resolve an address to coordinates",
+    description=(
+        "Turns a street address into coordinates so a publisher never has to know "
+        "them. Always confirm the returned address with the publisher before "
+        "saving - a precise-looking result can still be the wrong place."
+    ),
+)
+async def geocode_address(
+    payload: GeocodeRequest,
+    user: CurrentUser,
+    session: SessionDep,
+    request: Request,
+) -> Envelope[GeocodeOut]:
+    await rate_limit.check(rate_limit.identify(request, str(user.id)), rate_limit.GEOCODE_LIMIT)
+
+    city = await catalog_repo.get_city_by_slug(session, payload.city_slug)
+    if city is None:
+        raise ValidationError("Unknown city.", code="UNKNOWN_CITY")
+
+    result = await get_geocoder().geocode(
+        payload.address, city=city.name, country=city.country
+    )
+    if result is None or not result.is_usable:
+        raise ValidationError(
+            "We could not place that address. Try adding a landmark or the neighbourhood.",
+            code="ADDRESS_NOT_FOUND",
+        )
+
+    return Envelope(
+        data=GeocodeOut(
+            latitude=result.latitude,
+            longitude=result.longitude,
+            formatted_address=result.formatted_address,
+            confidence=round(result.confidence, 2),
+            provider=result.provider,
+        )
+    )
 
 
 @router.post(

@@ -416,3 +416,13 @@ export interface ModerationItem {
   citySlug?: string | null
   createdAt: string
 }
+
+
+export interface GeocodeResult {
+  latitude: number
+  longitude: number
+  /** The provider's tidied version of the address, shown back for confirmation. */
+  formattedAddress: string
+  confidence: number
+  provider: string
+}

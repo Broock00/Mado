@@ -5,12 +5,19 @@
  * the interface exposes no special syntax (spec PRODUCT-04 "Search Principles").
  */
 
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { AlertTriangle, SearchIcon, SlidersHorizontal } from 'lucide-react'
+import {
+  AlertTriangle,
+  LayoutGrid,
+  Map as MapIcon,
+  SearchIcon,
+  SlidersHorizontal,
+} from 'lucide-react'
 import { api } from '@/lib/api'
 import { useDiscoveryParams, useToggleSave } from '@/app/hooks'
+import { useAppStore } from '@/app/store'
 import { ExperienceCard, ExperienceCardSkeleton } from '@/features/experiences/ExperienceCard'
 import { Badge, Button, EmptyState, Input } from '@/design-system/primitives'
 import { cn } from '@/lib/utils'
@@ -23,12 +30,19 @@ const SUGGESTED_QUERIES = [
   'outdoors with kids',
 ]
 
+// Loaded on demand: MapLibre is ~200KB gzipped and most sessions never open a map.
+const ExperienceMap = lazy(() =>
+  import('@/features/map/ExperienceMap').then((m) => ({ default: m.ExperienceMap })),
+)
+
 export function SearchPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const initialQuery = searchParams.get('q') ?? ''
   const [input, setInput] = useState(initialQuery)
   const [submitted, setSubmitted] = useState(initialQuery)
   const [freeOnly, setFreeOnly] = useState(searchParams.get('free') === 'true')
+  const [view, setView] = useState<'list' | 'map'>('list')
+  const location = useAppStore((s) => s.location)
 
   const params = useDiscoveryParams(24)
   const { toggle, requiresAuth } = useToggleSave()
@@ -54,6 +68,10 @@ export function SearchPage() {
     else updated.delete('free')
     setSearchParams(updated, { replace: true })
   }
+
+  const mappable = (data?.results ?? []).filter(
+    (item) => item.venue?.latitude != null && item.venue?.longitude != null,
+  )
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 pb-24 pt-6 sm:px-6 lg:px-8">
@@ -158,6 +176,39 @@ export function SearchPage() {
                 Showing basic results — search index unavailable
               </Badge>
             )}
+
+            {/* Only offered when there is something to plot. A map view that
+                opens onto an empty city is worse than no map view. */}
+            {mappable.length > 0 && (
+              <div className="ml-auto flex rounded-lg border border-sand-300 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setView('list')}
+                  aria-pressed={view === 'list'}
+                  className={
+                    view === 'list'
+                      ? 'flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white'
+                      : 'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-sand-700 hover:bg-sand-100'
+                  }
+                >
+                  <LayoutGrid className="size-4" aria-hidden />
+                  List
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setView('map')}
+                  aria-pressed={view === 'map'}
+                  className={
+                    view === 'map'
+                      ? 'flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white'
+                      : 'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-sand-700 hover:bg-sand-100'
+                  }
+                >
+                  <MapIcon className="size-4" aria-hidden />
+                  Map
+                </button>
+              </div>
+            )}
           </div>
 
           {data.results.length === 0 ? (
@@ -166,6 +217,23 @@ export function SearchPage() {
               title="Nothing matched that"
               description="Try fewer words, or ask the concierge to help narrow it down."
             />
+          ) : view === 'map' ? (
+            <Suspense
+              fallback={
+                <div className="h-[28rem] w-full animate-pulse rounded-xl bg-sand-200" />
+              }
+            >
+              {/* Same ranked order as the list: the pins are numbered to match,
+                  so the two views are one result set shown two ways. */}
+              <ExperienceMap
+                experiences={mappable}
+                origin={
+                  location.latitude != null && location.longitude != null
+                    ? { latitude: location.latitude, longitude: location.longitude }
+                    : null
+                }
+              />
+            </Suspense>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {data.results.map((experience) => (
