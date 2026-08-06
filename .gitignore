@@ -31,3 +31,6 @@ coverage/
 .coverage
 playwright-report/
 test-results/
+
+# Uploaded images. Content-addressed local storage; object storage in production.
+backend/var/

@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Request, status
 
 from app.api.deps import CurrentUser, OptionalUser, SessionDep
+from app.core import rate_limit
 from app.core.envelope import CollectionEnvelope, Envelope
 from app.core.errors import PermissionDeniedError
 from app.domains.catalog.models import Experience
@@ -60,7 +61,11 @@ async def report_experience(
     payload: ReportRequest,
     session: SessionDep,
     user: OptionalUser,
+    request: Request,
 ) -> Envelope[ReportOut]:
+    await rate_limit.check(
+        rate_limit.identify(request, str(user.id) if user else None), rate_limit.REPORT_LIMIT
+    )
     trust = TrustService(session)
     report = await trust.report(
         experience_id=experience_id,

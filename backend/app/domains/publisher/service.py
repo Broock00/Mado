@@ -418,8 +418,17 @@ class PublishingService:
                 f"An experience can have at most {MAX_MEDIA_PER_EXPERIENCE} images.",
                 code="MEDIA_LIMIT_REACHED",
             )
-        if not url.startswith(("https://", "http://")):
-            raise ValidationError("Image URL must be http(s).", code="INVALID_MEDIA_URL")
+        # Two legitimate shapes: an absolute http(s) URL, or a path under /media/
+        # produced by our own upload endpoint. The second is deliberately narrow -
+        # accepting arbitrary relative paths would let a caller point a listing at
+        # any route on this host, and "/media/" is the only one we serve files from.
+        if not url.startswith(("https://", "http://", "/media/")):
+            raise ValidationError(
+                "Image URL must be http(s), or an uploaded image.",
+                code="INVALID_MEDIA_URL",
+            )
+        if url.startswith("/media/") and ".." in url:
+            raise ValidationError("Invalid image path.", code="INVALID_MEDIA_URL")
 
         media = Media(
             experience_id=experience.id,

@@ -1,0 +1,199 @@
+"""Rate limiting and upload handling tests.
+
+Both of these exist because open publishing means untrusted input on a write
+path. The tests that matter are the refusals: an upload that is not an image, a
+limit that does not actually limit, a file that keeps its GPS coordinates.
+"""
+
+from __future__ import annotations
+
+import io
+import uuid
+
+import pytest
+from PIL import Image
+
+from app.core.errors import ValidationError
+from app.core.rate_limit import (
+    DRAFT_LIMIT,
+    LOGIN_LIMIT,
+    PUBLISH_LIMIT,
+    REGISTER_LIMIT,
+    UPLOAD_LIMIT,
+    Limit,
+    RateLimited,
+    _InProcessLimiter,
+)
+from app.integrations import media_storage
+
+
+def make_image(width: int = 800, height: int = 600, fmt: str = "JPEG", mode: str = "RGB") -> bytes:
+    buffer = io.BytesIO()
+    Image.new(mode, (width, height), (120, 90, 60)).save(buffer, format=fmt)
+    return buffer.getvalue()
+
+
+# --- rate limiting -----------------------------------------------------------
+
+
+class TestSlidingWindow:
+    """The in-process limiter, which is also the fallback path in production."""
+
+    def test_allows_up_to_the_limit(self):
+        limiter = _InProcessLimiter()
+        limit = Limit(times=3, seconds=60, scope="test")
+        assert all(limiter.check("k", limit, 1000.0 + i) is None for i in range(3))
+
+    def test_refuses_beyond_the_limit(self):
+        limiter = _InProcessLimiter()
+        limit = Limit(times=3, seconds=60, scope="test")
+        for i in range(3):
+            limiter.check("k", limit, 1000.0 + i)
+        assert limiter.check("k", limit, 1003.0) is not None
+
+    def test_window_slides_rather_than_resetting(self):
+        """A fixed window would allow a double burst across its boundary."""
+        limiter = _InProcessLimiter()
+        limit = Limit(times=2, seconds=60, scope="test")
+        limiter.check("k", limit, 1000.0)
+        limiter.check("k", limit, 1030.0)
+        # Still inside the window of both.
+        assert limiter.check("k", limit, 1050.0) is not None
+        # The first has now aged out, so one slot is free again.
+        assert limiter.check("k", limit, 1061.0) is None
+
+    def test_retry_hint_points_past_the_oldest_entry(self):
+        limiter = _InProcessLimiter()
+        limit = Limit(times=1, seconds=60, scope="test")
+        limiter.check("k", limit, 1000.0)
+        retry_after = limiter.check("k", limit, 1010.0)
+        assert retry_after == pytest.approx(50, abs=1)
+
+    def test_identities_do_not_share_an_allowance(self):
+        limiter = _InProcessLimiter()
+        limit = Limit(times=1, seconds=60, scope="test")
+        limiter.check("user:a", limit, 1000.0)
+        assert limiter.check("user:b", limit, 1000.0) is None
+
+    def test_scopes_do_not_share_an_allowance(self):
+        """Publishing and reporting must not consume each other's budget."""
+        limiter = _InProcessLimiter()
+        publish = Limit(times=1, seconds=60, scope="publish")
+        report = Limit(times=1, seconds=60, scope="report")
+        limiter.check(f"ratelimit:{publish.scope}:u", publish, 1000.0)
+        assert limiter.check(f"ratelimit:{report.scope}:u", report, 1000.0) is None
+
+
+class TestLimitDefinitions:
+    def test_expensive_actions_are_limited_more_tightly_than_cheap_ones(self):
+        """Publishing runs two screeners including a model call; a draft does not.
+
+        This is the ordering the limits are actually designed around - by cost of
+        the action, not by a single global severity ranking.
+        """
+        assert PUBLISH_LIMIT.times < DRAFT_LIMIT.times
+        assert PUBLISH_LIMIT.seconds == DRAFT_LIMIT.seconds
+
+    def test_every_limit_is_bounded_and_positive(self):
+        for limit in (PUBLISH_LIMIT, DRAFT_LIMIT, LOGIN_LIMIT, REGISTER_LIMIT, UPLOAD_LIMIT):
+            assert limit.times > 0
+            assert limit.seconds > 0
+            assert limit.scope
+
+    def test_descriptions_are_human_readable(self):
+        assert PUBLISH_LIMIT.description == "20 per hour"
+        assert LOGIN_LIMIT.description == "10 per 15 minutes"
+
+    def test_error_carries_a_retry_hint(self):
+        error = RateLimited(PUBLISH_LIMIT, retry_after=42)
+        assert error.status_code == 429
+        assert error.details["retryAfter"] == 42
+        # The message says what the limit is, so a developer hitting it in
+        # testing does not have to go digging for the number.
+        assert "20 per hour" in error.message
+
+
+# --- uploads -----------------------------------------------------------------
+
+
+class TestUploadValidation:
+    """Every input here is attacker-controlled."""
+
+    def test_accepts_a_real_photograph(self):
+        data, width, height = media_storage.process_image(make_image(1200, 800))
+        assert data[:4] == b"RIFF"  # WebP container
+        assert (width, height) == (1200, 800)
+
+    def test_rejects_a_file_that_is_not_an_image(self):
+        """Content-Type and extension are attacker-supplied; the decoder is not."""
+        with pytest.raises(ValidationError):
+            media_storage.process_image(b"#!/bin/sh\nrm -rf /\n")
+
+    def test_rejects_an_empty_file(self):
+        with pytest.raises(ValidationError):
+            media_storage.process_image(b"")
+
+    def test_rejects_an_oversized_file(self):
+        with pytest.raises(ValidationError):
+            media_storage.process_image(b"\xff" * (media_storage.MAX_UPLOAD_BYTES + 1))
+
+    def test_rejects_a_tracking_pixel(self):
+        with pytest.raises(ValidationError):
+            media_storage.process_image(make_image(1, 1))
+
+    def test_rejects_an_unsupported_format(self):
+        buffer = io.BytesIO()
+        Image.new("RGB", (400, 400)).save(buffer, format="BMP")
+        with pytest.raises(ValidationError):
+            media_storage.process_image(buffer.getvalue())
+
+
+class TestUploadNormalisation:
+    def test_oversized_images_are_scaled_down(self):
+        _, width, height = media_storage.process_image(make_image(5000, 3000))
+        assert max(width, height) == media_storage.MAX_DIMENSION
+
+    def test_aspect_ratio_is_preserved(self):
+        _, width, height = media_storage.process_image(make_image(4000, 2000))
+        assert width / height == pytest.approx(2.0, abs=0.01)
+
+    def test_transparency_is_flattened(self):
+        """A transparent background renders unpredictably on a themed surface."""
+        data, _, _ = media_storage.process_image(make_image(400, 400, fmt="PNG", mode="RGBA"))
+        assert Image.open(io.BytesIO(data)).mode == "RGB"
+
+    def test_metadata_is_stripped(self):
+        """Phone photos carry GPS. Publishing a venue photo is not consent to
+        publish where the photographer was standing."""
+        original = Image.new("RGB", (600, 400))
+        buffer = io.BytesIO()
+        exif = Image.Exif()
+        exif[0x010F] = "TestCamera"
+        original.save(buffer, format="JPEG", exif=exif)
+
+        assert Image.open(io.BytesIO(buffer.getvalue())).getexif()
+
+        processed, _, _ = media_storage.process_image(buffer.getvalue())
+        assert not dict(Image.open(io.BytesIO(processed)).getexif())
+
+    def test_output_is_always_one_format(self):
+        for fmt, mode in (("PNG", "RGB"), ("JPEG", "RGB"), ("WEBP", "RGB")):
+            data, _, _ = media_storage.process_image(make_image(500, 500, fmt=fmt, mode=mode))
+            assert Image.open(io.BytesIO(data)).format == "WEBP"
+
+
+class TestStorage:
+    def test_identical_images_share_a_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path)
+        owner = uuid.uuid4()
+        first = media_storage.store(make_image(400, 400), owner_id=owner)
+        second = media_storage.store(make_image(400, 400), owner_id=owner)
+        assert first.url == second.url
+
+    def test_stored_name_is_not_chosen_by_the_uploader(self, tmp_path, monkeypatch):
+        """Content-addressed, so a filename cannot be used to traverse or collide."""
+        monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path)
+        stored = media_storage.store(make_image(400, 400), owner_id=uuid.uuid4())
+        assert stored.url.startswith("/media/")
+        assert ".." not in stored.url
+        assert stored.url.endswith(".webp")

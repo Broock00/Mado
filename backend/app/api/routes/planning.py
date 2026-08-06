@@ -10,10 +10,11 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from pydantic import Field, field_validator
 
 from app.api.deps import AnonymousId, OptionalUser, SessionDep
+from app.core import rate_limit
 from app.core.config import get_settings
 from app.core.envelope import CollectionEnvelope, Envelope
 from app.core.errors import BadRequestError
@@ -115,7 +116,13 @@ def _window(payload: PlanRequestIn) -> tuple[datetime, datetime]:
     return start, end
 
 
-async def _plan_inputs(session, user, anonymous_id: str | None, payload: PlanRequestIn):
+async def _plan_inputs(
+    session, user, anonymous_id: str | None, payload: PlanRequestIn, http_request: Request
+):
+    # A plan is a full retrieval plus a solve, so it is heavier than a page view.
+    await rate_limit.check(
+        rate_limit.identify(http_request, str(user.id) if user else None), rate_limit.PLAN_LIMIT
+    )
     start, end = _window(payload)
 
     preferences = user.profile.preferences if user and user.profile else {}
@@ -178,8 +185,9 @@ async def create_plan(
     session: SessionDep,
     user: OptionalUser,
     anonymous_id: AnonymousId,
+    http_request: Request,
 ) -> Envelope[PlanOut]:
-    request, ctx = await _plan_inputs(session, user, anonymous_id, payload)
+    request, ctx = await _plan_inputs(session, user, anonymous_id, payload, http_request)
     plan = await PlanningService(session).plan(request, ctx)
     return Envelope(
         data=PlanOut(
@@ -203,8 +211,9 @@ async def save_itinerary(
     session: SessionDep,
     user: OptionalUser,
     anonymous_id: AnonymousId,
+    http_request: Request,
 ) -> Envelope[ItineraryOut]:
-    request, ctx = await _plan_inputs(session, user, anonymous_id, payload)
+    request, ctx = await _plan_inputs(session, user, anonymous_id, payload, http_request)
     service = PlanningService(session)
     plan = await service.plan(request, ctx)
     if plan.is_empty:

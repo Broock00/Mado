@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request, status
 
 from app.api.deps import CurrentUser, SessionDep
+from app.core import rate_limit
 from app.core.envelope import Envelope
 from app.domains.identity.schemas import (
     AuthResponse,
@@ -36,6 +37,8 @@ def _device_from(request: Request) -> dict:
 async def register(
     payload: RegisterRequest, session: SessionDep, request: Request
 ) -> Envelope[AuthResponse]:
+    # Keyed to the client address: there is no account yet to key to.
+    await rate_limit.check(rate_limit.identify(request), rate_limit.REGISTER_LIMIT)
     service = IdentityService(session)
     user, tokens = await service.register(
         email=payload.email,
@@ -53,6 +56,8 @@ async def register(
 async def login(
     payload: LoginRequest, session: SessionDep, request: Request
 ) -> Envelope[AuthResponse]:
+    # The tightest limit in the system: this is the credential-stuffing surface.
+    await rate_limit.check(rate_limit.identify(request), rate_limit.LOGIN_LIMIT)
     service = IdentityService(session)
     user, tokens = await service.authenticate(email=payload.email, password=payload.password)
     view = AuthResponse(user=MeOut.model_validate(user), tokens=tokens)

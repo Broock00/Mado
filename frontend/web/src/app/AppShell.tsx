@@ -7,7 +7,16 @@
  */
 
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
-import { Bookmark, Compass, PenSquare, Search as SearchIcon, User } from 'lucide-react'
+import {
+  Bookmark,
+  Compass,
+  PenSquare,
+  Route,
+  Search as SearchIcon,
+  Settings,
+  ShieldCheck,
+  User,
+} from 'lucide-react'
 import { useSession } from '@/app/hooks'
 import { useAppStore } from '@/app/store'
 import { ConciergeLauncher, ConciergePanel } from '@/features/concierge/ConciergePanel'
@@ -16,11 +25,15 @@ import { cn } from '@/lib/utils'
 const NAV = [
   { to: '/', label: 'Discover', icon: Compass, end: true },
   { to: '/search', label: 'Search', icon: SearchIcon, end: false },
+  { to: '/plans', label: 'Plan', icon: Route, end: false },
   { to: '/saved', label: 'Saved', icon: Bookmark, end: false },
   // Publishing is a peer of discovery, not a separate console: a publisher is
   // just an explorer who posts.
-  { to: '/posts', label: 'Your posts', icon: PenSquare, end: false },
+  { to: '/posts', label: 'Posts', icon: PenSquare, end: false },
 ]
+// Five is the practical ceiling for the mobile tab bar; anything beyond it goes
+// in the account area rather than shrinking every target below a comfortable
+// tap (spec 11.03).
 
 export function AppShell() {
   useSession()
@@ -70,8 +83,40 @@ export function AppShell() {
 
           <div className="flex items-center gap-2">
             {user ? (
-              <div className="flex items-center gap-2">
-                <span className="hidden text-sm text-sand-600 sm:inline">
+              <div className="flex items-center gap-1">
+                {/* A display hint only - /moderation re-checks server-side, so a
+                    forged flag reveals an empty page and nothing else. */}
+                {user.isModerator && (
+                  <NavLink
+                    to="/moderation"
+                    aria-label="Moderation queue"
+                    className={({ isActive }) =>
+                      cn(
+                        'rounded-lg p-2 transition-colors',
+                        isActive
+                          ? 'bg-brand-100 text-brand-800'
+                          : 'text-sand-600 hover:bg-sand-200/60 hover:text-sand-900',
+                      )
+                    }
+                  >
+                    <ShieldCheck className="size-4.5" aria-hidden />
+                  </NavLink>
+                )}
+                <NavLink
+                  to="/settings"
+                  aria-label="Privacy and data"
+                  className={({ isActive }) =>
+                    cn(
+                      'rounded-lg p-2 transition-colors',
+                      isActive
+                        ? 'bg-brand-100 text-brand-800'
+                        : 'text-sand-600 hover:bg-sand-200/60 hover:text-sand-900',
+                    )
+                  }
+                >
+                  <Settings className="size-4.5" aria-hidden />
+                </NavLink>
+                <span className="hidden pl-1 text-sm text-sand-600 sm:inline">
                   {user.profile.displayName}
                 </span>
                 <button

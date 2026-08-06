@@ -72,6 +72,10 @@ class MeOut(CamelModel):
     is_verified: bool
     created_at: datetime
     profile: ProfileOut
+    # Exposed so the client knows whether to offer the moderation console. It is
+    # a display hint only - every moderation endpoint re-checks the real column,
+    # because a flag the client can see is a flag an attacker can forge.
+    is_moderator: bool = False
 
 
 class AuthResponse(CamelModel):

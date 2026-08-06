@@ -10,11 +10,13 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.router import api_router
@@ -23,6 +25,8 @@ from app.core.context import get_request_id
 from app.core.errors import PlatformError
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
+from app.core.rate_limit import RateLimited
+from app.core.rate_limit import close as close_rate_limiter
 from app.integrations.search import get_search_client
 
 # Registers every domain's models on the shared registry. Required at import time:
@@ -60,6 +64,8 @@ async def lifespan(app: FastAPI):
         logger.warning("search_index_setup_failed", error=str(exc))
 
     yield
+
+    await close_rate_limiter()
     logger.info("api_stopping")
 
 
@@ -89,9 +95,18 @@ app.add_middleware(
 
 @app.exception_handler(PlatformError)
 async def platform_error_handler(_: Request, exc: PlatformError) -> JSONResponse:
+    # Retry-After on a 429 so a well-behaved client backs off for the right
+    # interval instead of guessing - and so retries do not themselves extend the
+    # window the caller is waiting on.
+    headers = (
+        {"Retry-After": str(exc.retry_after)}
+        if isinstance(exc, RateLimited)
+        else None
+    )
     return JSONResponse(
         status_code=exc.status_code,
         content=_error_body(exc.code, exc.message, exc.details),
+        headers=headers,
     )
 
 
@@ -149,3 +164,12 @@ async def health() -> dict:
 
 
 app.include_router(api_router, prefix="/api/v1")
+
+# Uploaded images. Served by the application only in development - in production
+# this path belongs to a CDN or object store, which is why the URL prefix is
+# stable and the storage backend is not baked into it. StaticFiles resolves paths
+# against the root and refuses traversal outside it, and every stored name is a
+# content hash rather than anything an uploader chose.
+_media_root = Path(settings.media_root)
+_media_root.mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=_media_root), name="media")

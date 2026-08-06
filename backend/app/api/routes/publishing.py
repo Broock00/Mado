@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, File, Form, Query, Request, UploadFile, status
 
 from app.api.deps import CurrentUser, SessionDep
+from app.core import rate_limit
 from app.core.envelope import CollectionEnvelope, Envelope
-from app.core.errors import RateLimitError
+from app.core.errors import RateLimitError, ValidationError
 from app.domains.catalog.models import Experience
 from app.domains.catalog.schemas import EventInstanceOut
 from app.domains.catalog.serializers import to_detail
@@ -33,6 +34,7 @@ from app.domains.publisher.schemas import (
 )
 from app.domains.publisher.service import PublishingService
 from app.domains.trust.service import TrustService
+from app.integrations import media_storage
 
 router = APIRouter(prefix="/posts", tags=["publishing"])
 
@@ -96,8 +98,12 @@ async def list_my_posts(
     description="Creates a draft. Nothing is discoverable until you publish it.",
 )
 async def create_post(
-    payload: CreateExperienceRequest, user: CurrentUser, session: SessionDep
+    payload: CreateExperienceRequest,
+    user: CurrentUser,
+    session: SessionDep,
+    request: Request,
 ) -> Envelope[OwnExperienceOut]:
+    await rate_limit.check(rate_limit.identify(request, str(user.id)), rate_limit.DRAFT_LIMIT)
     service = PublishingService(session)
     trust = TrustService(session)
 
@@ -185,8 +191,14 @@ async def update_post(
     ),
 )
 async def publish_post(
-    experience_id: uuid.UUID, user: CurrentUser, session: SessionDep
+    experience_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+    request: Request,
 ) -> Envelope[OwnExperienceOut]:
+    # Checked before any work: publishing writes to the catalogue, reindexes,
+    # embeds and runs two screeners including a model call.
+    await rate_limit.check(rate_limit.identify(request, str(user.id)), rate_limit.PUBLISH_LIMIT)
     service = PublishingService(session)
     trust = TrustService(session)
 
@@ -264,6 +276,50 @@ async def add_media(
 ) -> Envelope[OwnExperienceOut]:
     service = PublishingService(session)
     await service.add_media(user, experience_id, url=payload.url, alt_text=payload.alt_text)
+    experience = await service.get_own_experience(user, experience_id)
+    view = _own_view(experience)
+    await session.commit()
+    return Envelope(data=view)
+
+
+@router.post(
+    "/{experience_id}/media/upload",
+    status_code=status.HTTP_201_CREATED,
+    response_model=Envelope[OwnExperienceOut],
+    summary="Upload an image",
+    description=(
+        "Accepts a JPEG, PNG or WebP file. The image is decoded and re-encoded "
+        "server-side, which validates it is genuinely an image, strips EXIF "
+        "(including any GPS coordinates) and resizes it for serving."
+    ),
+)
+async def upload_media(
+    experience_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+    request: Request,
+    file: UploadFile = File(...),
+    alt_text: str | None = Form(default=None),
+) -> Envelope[OwnExperienceOut]:
+    await rate_limit.check(rate_limit.identify(request, str(user.id)), rate_limit.UPLOAD_LIMIT)
+
+    service = PublishingService(session)
+    # Ownership is checked before a byte is read: an upload endpoint that
+    # processes the file first does the expensive work for anyone who asks.
+    await service.get_own_experience(user, experience_id)
+
+    # Bounded read. Without a cap the whole file lands in memory before any size
+    # check could run, which makes the size check decorative.
+    data = await file.read(media_storage.MAX_UPLOAD_BYTES + 1)
+    if len(data) > media_storage.MAX_UPLOAD_BYTES:
+        raise ValidationError(
+            f"Images must be under {media_storage.MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
+            code="UPLOAD_TOO_LARGE",
+        )
+
+    stored = media_storage.store(data, owner_id=user.id)
+    await service.add_media(user, experience_id, url=stored.url, alt_text=alt_text)
+
     experience = await service.get_own_experience(user, experience_id)
     view = _own_view(experience)
     await session.commit()

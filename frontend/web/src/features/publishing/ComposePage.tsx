@@ -14,7 +14,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, ArrowLeft, Check, Clock, ImagePlus, MapPin, Plus } from 'lucide-react'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Check,
+  Clock,
+  ImagePlus,
+  MapPin,
+  Plus,
+  Upload,
+} from 'lucide-react'
 import { ApiError, api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
 import { Badge, Button, Card, Input } from '@/design-system/primitives'
@@ -124,6 +133,16 @@ export function ComposePage() {
       queryClient.invalidateQueries({ queryKey: ['my-post', draftId] })
     },
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Could not add that date.'),
+  })
+
+  const uploadImage = useMutation({
+    mutationFn: (file: File) => api.uploadPostImage(draftId!, file, form.title),
+    onSuccess: () => {
+      setError(null)
+      void queryClient.invalidateQueries({ queryKey: ['my-post', draftId] })
+    },
+    onError: (err) =>
+      setError(err instanceof ApiError ? err.message : 'Could not upload that image.'),
   })
 
   const addImage = useMutation({
@@ -432,22 +451,51 @@ export function ComposePage() {
                 ))}
               </div>
             )}
-            <div className="flex gap-2">
-              <Input
-                value={imageUrl}
-                onChange={(e) => setImageUrl(e.target.value)}
-                placeholder="https://…"
-                aria-label="Image URL"
+            {/* Upload first, paste-a-URL second. Almost nobody photographing a
+                venue has somewhere to host the picture already, so asking for a
+                URL was in practice asking most publishers not to add a photo. */}
+            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-sand-300 px-4 py-6 text-sm text-sand-600 hover:bg-sand-100">
+              <Upload className="size-4" aria-hidden />
+              {uploadImage.isPending ? 'Uploading…' : 'Choose a photo'}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="sr-only"
+                disabled={uploadImage.isPending}
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  if (file) uploadImage.mutate(file)
+                  // Reset so choosing the same file twice still fires a change.
+                  event.target.value = ''
+                }}
               />
-              <Button
-                variant="secondary"
-                onClick={() => addImage.mutate()}
-                loading={addImage.isPending}
-                disabled={!imageUrl.startsWith('http')}
-              >
-                Add
-              </Button>
-            </div>
+            </label>
+            <p className="text-xs text-sand-500">
+              JPEG, PNG or WebP, up to 12&nbsp;MB. Photos are resized for the web and
+              their location data is removed before anything is stored.
+            </p>
+
+            <details className="text-sm">
+              <summary className="cursor-pointer text-sand-600">
+                Or paste an image address
+              </summary>
+              <div className="mt-2 flex gap-2">
+                <Input
+                  value={imageUrl}
+                  onChange={(e) => setImageUrl(e.target.value)}
+                  placeholder="https://…"
+                  aria-label="Image URL"
+                />
+                <Button
+                  variant="secondary"
+                  onClick={() => addImage.mutate()}
+                  loading={addImage.isPending}
+                  disabled={!imageUrl.startsWith('http')}
+                >
+                  Add
+                </Button>
+              </div>
+            </details>
           </Card>
         )}
 

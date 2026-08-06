@@ -27,6 +27,12 @@ import type {
   Me,
   SavedItem,
   SearchResponse,
+  Itinerary,
+  MemoryEntry,
+  ModerationItem,
+  Plan,
+  PlanRequestInput,
+  PrivacySettings,
 } from './types'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -346,6 +352,23 @@ export const api = {
       body: JSON.stringify({ startTime, capacity }),
     }).then((r) => r.data),
 
+  /**
+   * Upload an image file.
+   *
+   * No Content-Type header is set: the browser has to generate the multipart
+   * boundary itself, and supplying the header without it produces a request the
+   * server cannot parse.
+   */
+  uploadPostImage: (id: string, file: File, altText?: string) => {
+    const body = new FormData()
+    body.append('file', file)
+    if (altText) body.append('alt_text', altText)
+    return request<Envelope<OwnPost>>(`/api/v1/posts/${id}/media/upload`, {
+      method: 'POST',
+      body,
+    }).then((r) => r.data)
+  },
+
   addPostImage: (id: string, url: string, altText?: string) =>
     request<Envelope<OwnPost>>(`/api/v1/posts/${id}/media`, {
       method: 'POST',
@@ -379,6 +402,63 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+    }).then((r) => r.data),
+
+  // ------------------------------------------------------------- planning
+  // Planning and saving are separate calls because most plans are looked at
+  // once and discarded - an explorer asks for an evening, dislikes it, asks
+  // again. Only the ones worth keeping become itineraries.
+  plan: (input: PlanRequestInput) =>
+    request<Envelope<Plan>>('/api/v1/plans', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }).then((r) => r.data),
+
+  saveItinerary: (input: PlanRequestInput & { title: string }) =>
+    request<Envelope<Itinerary>>('/api/v1/itineraries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }).then((r) => r.data),
+
+  itineraries: () =>
+    request<CollectionEnvelope<Itinerary>>('/api/v1/itineraries').then((r) => r.data),
+
+  itinerary: (id: string) =>
+    request<Envelope<Itinerary>>(`/api/v1/itineraries/${id}`).then((r) => r.data),
+
+  deleteItinerary: (id: string) =>
+    request<void>(`/api/v1/itineraries/${id}`, { method: 'DELETE' }),
+
+  // --------------------------------------------------------------- memory
+  memories: () =>
+    request<CollectionEnvelope<MemoryEntry>>('/api/v1/assistant/memory').then((r) => r.data),
+
+  forgetMemory: (id: string) =>
+    request<void>(`/api/v1/assistant/memory/${id}`, { method: 'DELETE' }),
+
+  forgetAllMemories: () => request<void>('/api/v1/assistant/memory', { method: 'DELETE' }),
+
+  // -------------------------------------------------------------- privacy
+  updatePrivacy: (settings: Partial<PrivacySettings>) =>
+    request<Envelope<Me>>('/api/v1/me/privacy', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    }).then((r) => r.data),
+
+  exportMyData: () => request<Envelope<Record<string, unknown>>>('/api/v1/me/export').then((r) => r.data),
+
+  // ----------------------------------------------------------- moderation
+  moderationQueue: () =>
+    request<CollectionEnvelope<ModerationItem>>('/api/v1/moderation/queue').then((r) => r.data),
+
+  decideModeration: (experienceId: string, approve: boolean, note?: string) =>
+    request<Envelope<ModerationItem>>(`/api/v1/moderation/${experienceId}/decide`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approve, note }),
     }).then((r) => r.data),
 }
 

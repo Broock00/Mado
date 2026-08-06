@@ -12,11 +12,12 @@ import json
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import Field
 
 from app.api.deps import AnonymousId, CurrentUser, OptionalUser, SessionDep
+from app.core import rate_limit
 from app.core.config import get_settings
 from app.core.envelope import CollectionEnvelope, Envelope
 from app.core.errors import BadRequestError, NotFoundError
@@ -89,7 +90,12 @@ class ConversationOut(CamelModel):
     updated_at: datetime
 
 
-async def _reply(*, session, user, anonymous_id: str | None, payload: MessageRequest):
+async def _reply(*, session, user, anonymous_id: str | None, payload: MessageRequest, request):
+    # Each turn costs a comprehension call plus a generation call.
+    await rate_limit.check(
+        rate_limit.identify(request, str(user.id) if user else None),
+        rate_limit.CONCIERGE_LIMIT,
+    )
     if not payload.message.strip():
         raise BadRequestError("Message cannot be empty.", code="EMPTY_MESSAGE")
 
@@ -149,9 +155,10 @@ async def send_message(
     session: SessionDep,
     user: OptionalUser,
     anonymous_id: AnonymousId,
+    request: Request,
 ) -> Envelope[ConciergeResponse]:
     conversation, reply = await _reply(
-        session=session, user=user, anonymous_id=anonymous_id, payload=payload
+        session=session, user=user, anonymous_id=anonymous_id, payload=payload, request=request
     )
     return Envelope(
         data=ConciergeResponse(
@@ -181,9 +188,10 @@ async def stream_message(
     session: SessionDep,
     user: OptionalUser,
     anonymous_id: AnonymousId,
+    request: Request,
 ) -> StreamingResponse:
     conversation, reply = await _reply(
-        session=session, user=user, anonymous_id=anonymous_id, payload=payload
+        session=session, user=user, anonymous_id=anonymous_id, payload=payload, request=request
     )
     # The turn is already committed by _reply, which matters more here than
     # elsewhere: once the response body starts streaming the transaction can no

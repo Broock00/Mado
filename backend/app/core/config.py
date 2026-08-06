@@ -51,6 +51,19 @@ class Settings(BaseSettings):
     ai_reasoning_model: str = "gemini-2.5-pro"
     ai_request_timeout_seconds: float = 30.0
 
+    # Where uploaded images are written. Local disk in development; spec 82.01
+    # names S3-compatible object storage for production, which changes this
+    # setting and app/integrations/media_storage.py and nothing else.
+    # Rate limiting. On by default; switched off for test runs, which
+    # legitimately create hundreds of accounts and posts from one address in
+    # seconds and would otherwise be testing the limiter rather than the feature.
+    rate_limit_enabled: bool = True
+
+    media_root: str = "var/media"
+    # Public prefix images are served from. Split from media_root so a CDN can be
+    # put in front without moving the files.
+    media_base_url: str = ""
+
     default_city_slug: str = "addis-ababa"
 
     cors_origins: list[str] = [

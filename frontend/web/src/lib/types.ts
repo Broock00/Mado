@@ -174,6 +174,12 @@ export interface SearchResponse {
     total: number
     /** True when the search index was unreachable and results came from Postgres. */
     degraded: boolean
+    /**
+     * True when vector retrieval contributed, so the interface can distinguish
+     * "matched your words" from "understood what you meant" - and so a silent
+     * fall back to keyword-only is visible.
+     */
+    semantic: boolean
   }
 }
 
@@ -228,6 +234,11 @@ export interface Me {
   isVerified: boolean
   createdAt: string
   profile: UserProfile
+  /**
+   * Display hint for whether to offer the moderation console. Never a
+   * permission check - the API re-verifies on every moderation call.
+   */
+  isModerator?: boolean
 }
 
 export interface TokenPair {
@@ -314,3 +325,94 @@ export type ReportReason =
   | 'duplicate'
   | 'scam'
   | 'other'
+
+// --- Planning (spec 10.01.04, Journey Planner) -------------------------------
+
+export interface PlanStop {
+  experienceId: string
+  eventInstanceId?: string | null
+  title: string
+  arriveAt: string
+  departAt: string
+  dwellMinutes: number
+  travelMinutes: number
+  travelKm?: number | null
+  estimatedCost: number
+  /** Dictated by a scheduled event rather than chosen, so it cannot be moved. */
+  isFixedTime: boolean
+  note?: string | null
+}
+
+export interface Plan {
+  stops: PlanStop[]
+  totalCost: number
+  currency: string
+  totalTravelMinutes: number
+  rationale: string
+  /** Constraints the planner could not meet, stated rather than hidden. */
+  unmet: string[]
+}
+
+export interface Itinerary {
+  id: string
+  title: string
+  citySlug?: string | null
+  startsAt: string
+  endsAt: string
+  estimatedCost?: number | null
+  currency: string
+  totalTravelMinutes: number
+  rationale?: string | null
+  stops: PlanStop[]
+}
+
+export interface PlanRequestInput {
+  startsAt?: string | null
+  endsAt?: string | null
+  city: string
+  latitude?: number | null
+  longitude?: number | null
+  budget?: number | null
+  maxStops?: number
+  categories?: string[]
+  freeOnly?: boolean
+}
+
+// --- Memory and privacy ------------------------------------------------------
+
+export interface MemoryEntry {
+  id: string
+  type: string
+  category?: string | null
+  attribute?: string | null
+  value: string
+  /** Already discounted for age - what this memory is worth today. */
+  confidence: number
+  source: string
+  /** True when the explorer said it, false when the platform inferred it. */
+  isExplicit: boolean
+  lastReinforcedAt?: string | null
+}
+
+export interface PrivacySettings {
+  personalizationEnabled: boolean
+  locationEnabled: boolean
+  aiMemoryEnabled: boolean
+  analyticsEnabled: boolean
+}
+
+// --- Moderation --------------------------------------------------------------
+
+export interface ModerationItem {
+  id: string
+  title: string
+  summary?: string | null
+  publisherName?: string | null
+  moderationStatus: ModerationStatus
+  /** The screening signals, in words - a moderator sees why, not just a number. */
+  moderationNotes?: string | null
+  reportCount: number
+  riskScore: number
+  citySlug?: string | null
+  createdAt: string
+}
