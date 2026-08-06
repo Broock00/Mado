@@ -27,6 +27,11 @@ from app.core.logging import get_logger, redact
 logger = get_logger("mado.ai.provider")
 
 
+# Fraction of the output budget a reasoning model may spend on thought. The rest
+# is guaranteed to the answer.
+THINKING_SHARE = 0.4
+
+
 @dataclass(slots=True)
 class GenerationRequest:
     system_prompt: str
@@ -37,10 +42,10 @@ class GenerationRequest:
     temperature: float = 0.4
     max_output_tokens: int = 1024
     # Gemini 2.5 models reason before answering, and those thinking tokens are
-    # drawn from the same budget as the answer. On a long prompt that silently
-    # starved the response: the call succeeded, finishReason was STOP, and the
-    # content came back truncated or empty. Extraction tasks gain nothing from it,
-    # so they turn it off; open-ended generation leaves it on.
+    # drawn from the same budget as the answer. Extraction tasks gain nothing from
+    # it, so they turn it off; open-ended generation leaves it on.
+    #
+    # Leaving it on is not enough on its own - see THINKING_SHARE below.
     thinking: bool = True
 
 
@@ -97,8 +102,14 @@ class GeminiProvider:
             payload["generationConfig"]["responseMimeType"] = "application/json"
             payload["generationConfig"]["responseSchema"] = request.response_schema
 
-        if not request.thinking:
-            payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
+        # Thinking is capped rather than left unbounded. Uncapped, a reasoning
+        # model can spend the entire allowance deliberating and return nothing:
+        # gemini-2.5-pro burned 1021 of 1024 tokens on thought and emitted an
+        # empty reply, with finishReason MAX_TOKENS and no error - so the
+        # concierge answered planning requests with silence. Reserving room for
+        # the answer is the only thing that prevents it.
+        budget = 0 if not request.thinking else int(request.max_output_tokens * THINKING_SHARE)
+        payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": budget}
 
         url = f"{self._base}/{model}:generateContent"
         try:

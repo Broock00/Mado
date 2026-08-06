@@ -60,6 +60,10 @@ class ToolResult:
     # on data that ages quickly.
     freshness: str = "live"
     retrieved_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    # Structured output for tools whose result is more than a list of cards.
+    # A plan has an order, timings and travel between stops - flattening it to
+    # cards throws away exactly what makes it a plan rather than a list.
+    payload: dict[str, Any] | None = None
 
 
 _REGISTRY: dict[str, ToolDefinition] = {}
@@ -466,6 +470,46 @@ async def _plan_outing(
         ok=True,
         items=items,
         entity_ids=[str(stop.experience.id) for stop in plan.stops],
+        # The plan in full, so the client can render it as a sequence and offer
+        # to keep it. Carries the request that produced it too: accepting is
+        # saving *this* plan, and re-deriving the parameters from prose later
+        # would be guessing at what was asked.
+        payload={
+            "stops": [
+                {
+                    "experienceId": str(stop.experience.id),
+                    "eventInstanceId": (
+                        str(stop.event_instance_id) if stop.event_instance_id else None
+                    ),
+                    "title": stop.experience.title,
+                    "arriveAt": stop.arrive_at.isoformat(),
+                    "departAt": stop.depart_at.isoformat(),
+                    "dwellMinutes": stop.dwell_minutes,
+                    "travelMinutes": stop.travel_minutes,
+                    "travelKm": stop.travel_km,
+                    "estimatedCost": stop.estimated_cost,
+                    "isFixedTime": stop.is_fixed_time,
+                    "note": stop.note,
+                }
+                for stop in plan.stops
+            ],
+            "totalCost": plan.total_cost,
+            "currency": "ETB",
+            "totalTravelMinutes": plan.total_travel_minutes,
+            "rationale": plan.rationale,
+            "unmet": plan.unmet,
+            "request": {
+                "startsAt": request.start.isoformat(),
+                "endsAt": request.end.isoformat(),
+                "city": request.city_slug,
+                "latitude": request.latitude,
+                "longitude": request.longitude,
+                "budget": request.budget,
+                "maxStops": request.max_stops,
+                "categories": request.categories,
+                "freeOnly": request.free_only,
+            },
+        },
     )
 
 

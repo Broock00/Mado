@@ -203,11 +203,27 @@ export interface SuggestedAction {
   message: string
 }
 
+/** An itinerary the concierge worked out, offered for the explorer to keep. */
+export interface OfferedPlan {
+  stops: PlanStop[]
+  totalCost: number
+  currency: string
+  totalTravelMinutes: number
+  rationale: string
+  unmet: string[]
+}
+
 export interface ConciergeResponse {
   conversationId: string
   message: string
   intent: string
   confidence: number
+  /**
+   * Present when the turn produced an itinerary. Nothing is stored until the
+   * explorer accepts it - most plans are looked at once and a different one
+   * asked for.
+   */
+  plan?: OfferedPlan | null
   results: ConciergeResult[]
   suggestedActions: SuggestedAction[]
   clarification?: string | null

@@ -63,6 +63,10 @@ class ConciergeReply:
     # Set when confidence is low enough that the concierge should confirm rather
     # than assume (spec 56.02 s13 / s33).
     clarification: str | None = None
+    # Present when the turn produced an itinerary. Carried separately from
+    # `items` because a plan is a sequence with timings and travel between stops,
+    # and rendering it as a row of cards discards the part that makes it a plan.
+    plan: dict[str, Any] | None = None
 
 
 class AIGateway:
@@ -95,6 +99,32 @@ class AIGateway:
         )
         self.session.add(conversation)
         await self.session.flush()
+        return conversation
+
+    async def get_conversation(
+        self,
+        conversation_id: uuid.UUID,
+        *,
+        user_id: uuid.UUID | None,
+        anonymous_id: str | None,
+    ) -> Conversation:
+        """Load a conversation belonging to the caller.
+
+        404 rather than 403 for someone else's: confirming a conversation exists
+        to whoever guesses its id is itself a disclosure.
+        """
+        conversation = await self.session.get(Conversation, conversation_id)
+        if conversation is None or conversation.deleted_at is not None:
+            raise NotFoundError("Conversation not found.", code="CONVERSATION_NOT_FOUND")
+
+        owned = (
+            conversation.user_id == user_id
+            if user_id is not None
+            else conversation.anonymous_id is not None
+            and conversation.anonymous_id == anonymous_id
+        )
+        if not owned:
+            raise NotFoundError("Conversation not found.", code="CONVERSATION_NOT_FOUND")
         return conversation
 
     async def load_history(self, conversation_id: uuid.UUID) -> list[Message]:
@@ -166,7 +196,9 @@ class AIGateway:
             memories = await memory_service.recall(user_id, text, privacy=privacy)
 
         # 3-5. Plan and execute tools. Facts are gathered before generation.
-        tool_calls, results = await self._execute_plan(classification, ctx=ctx, city_slug=city_slug)
+        tool_calls, results, plan = await self._execute_plan(
+            classification, ctx=ctx, city_slug=city_slug
+        )
 
         # 6. Synthesize. The model phrases; it does not decide the facts.
         reply_text, model_name = await self._synthesize(
@@ -178,6 +210,7 @@ class AIGateway:
             ctx=ctx,
             preferences=preferences,
             memories=memories,
+            plan=plan,
         )
 
         # 7. Validate. The reader proposes its own question when it could not read
@@ -233,6 +266,11 @@ class AIGateway:
 
         conversation.state = {
             **(conversation.state or {}),
+            # The plan most recently offered, kept so "save this" stores the
+            # itinerary the explorer actually saw. Recomputing on accept could
+            # quietly hand back a different evening - an event may have sold out,
+            # or the ranking may have shifted between the offer and the answer.
+            "pendingPlan": plan,
             "lastIntent": classification.intent,
             "lastTimeLabel": classification.time_window.label
             if classification.time_window
@@ -263,11 +301,12 @@ class AIGateway:
             model=model_name,
             latency_ms=latency_ms,
             clarification=clarification,
+            plan=plan,
         )
 
     async def _execute_plan(
         self, classification: intents.Classification, *, ctx: RankingContext, city_slug: str
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
         """Choose and run tools for the classified intent.
 
         Deterministic routing rather than letting the model pick: for this set of
@@ -341,6 +380,7 @@ class AIGateway:
 
         tool_calls: list[dict[str, Any]] = []
         results: list[dict[str, Any]] = []
+        payload: dict[str, Any] | None = None
 
         for name, raw_arguments in plan:
             arguments = {k: v for k, v in raw_arguments.items() if v is not None}
@@ -366,6 +406,8 @@ class AIGateway:
             )
             if outcome.ok:
                 results.extend(outcome.items)
+                if outcome.payload is not None:
+                    payload = outcome.payload
 
         # De-duplicate across tools while preserving rank order.
         seen: set[str] = set()
@@ -401,7 +443,7 @@ class AIGateway:
                     }
                 )
 
-        return tool_calls, deduped[:MAX_RESULTS_IN_CONTEXT]
+        return tool_calls, deduped[:MAX_RESULTS_IN_CONTEXT], payload
 
     async def _synthesize(
         self,
@@ -414,6 +456,7 @@ class AIGateway:
         ctx: RankingContext,
         preferences: dict | None,
         memories: list[UserMemory] | None = None,
+        plan: dict[str, Any] | None = None,
     ) -> tuple[str, str]:
         context_notes = build_context_notes(
             has_location=ctx.has_location,
@@ -430,8 +473,16 @@ class AIGateway:
             context_notes=context_notes,
         )
 
-        results_block = _render_results_block(results)
-        user_message = f"{text}\n\n<RESULTS>\n{results_block}\n</RESULTS>"
+        # A plan is rendered as an ordered itinerary, not as a list of options.
+        # Handed the flat card list, the model read the stops as alternatives and
+        # hedged - "the only option still available is Azmari Night... might not
+        # be ideal if you prefer quieter places" - while a three-stop plan sat
+        # underneath it. It cannot describe a sequence it was never shown one of.
+        if plan and plan.get("stops"):
+            block, wrapper = _render_plan_block(plan), "PLAN"
+        else:
+            block, wrapper = _render_results_block(results), "RESULTS"
+        user_message = f"{text}\n\n<{wrapper}>\n{block}\n</{wrapper}>"
 
         request = GenerationRequest(
             system_prompt=system_prompt,
@@ -446,15 +497,59 @@ class AIGateway:
                 else None,
             },
             temperature=0.4,
+            # A plan reply lists several stops with times, so it needs more
+            # room than a one-line recommendation.
+            max_output_tokens=1200,
         )
 
-        model = (
-            settings.ai_reasoning_model
-            if classification.intent == intents.PLAN_ACTIVITY
-            else settings.ai_fast_model
-        )
+        # The fast model for everything, including planning.
+        #
+        # Routing PLAN_ACTIVITY to the reasoning model predates the planning
+        # engine, when the model was expected to work out the itinerary itself.
+        # It no longer does: the planner computes the order, the timings and the
+        # travel, and the model only phrases the result. Deliberation buys
+        # nothing there, costs several seconds, and was actively harmful - the
+        # reasoning model spent its whole budget thinking and returned an empty
+        # reply.
+        model = settings.ai_fast_model
         result = await self.provider.generate(request, model=model)
         return result.text.strip(), result.model
+
+
+def _render_plan_block(plan: dict[str, Any]) -> str:
+    """Render an itinerary as a sequence, with the times already computed.
+
+    Ordered and numbered, with travel drawn between stops, so the model has no
+    room to read it as a menu. Times are pre-formatted for the same reason they
+    are elsewhere: the model must never compute or convert one.
+    """
+    lines = [
+        "This itinerary has already been worked out and is feasible as given.",
+        "Present it in this order. Do not reorder it, add to it, or change a time.",
+        "",
+    ]
+    for position, stop in enumerate(plan.get("stops") or [], start=1):
+        arrive = str(stop.get("arriveAt", ""))[11:16]
+        depart = str(stop.get("departAt", ""))[11:16]
+        parts = [f"{position}. {stop.get('title')} | {arrive}-{depart}"]
+        cost = stop.get("estimatedCost") or 0
+        parts.append("free" if cost == 0 else f"{cost:.0f} ETB")
+        if stop.get("isFixedTime"):
+            parts.append("starts at a set time")
+        if position > 1 and stop.get("travelMinutes"):
+            parts.append(f"{stop['travelMinutes']} min from the previous stop")
+        lines.append(" | ".join(parts))
+
+    lines.append("")
+    total = plan.get("totalCost") or 0
+    lines.append(
+        f"Totals: {len(plan.get('stops') or [])} stops, "
+        f"{plan.get('totalTravelMinutes', 0)} minutes travelling, "
+        + ("nothing to pay" if total == 0 else f"about {total:.0f} ETB")
+    )
+    for reason in plan.get("unmet") or []:
+        lines.append(f"Could not fit: {reason}")
+    return "\n".join(lines)
 
 
 def _render_results_block(results: list[dict[str, Any]]) -> str:

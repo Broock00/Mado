@@ -27,6 +27,7 @@ from app.domains.ai.memory import MemoryService, effective_confidence, memory_en
 from app.domains.catalog.schemas import CamelModel
 from app.domains.discovery.service import build_context
 from app.domains.explorer.learning import infer_preferences
+from app.domains.explorer.planning_service import PlanningService
 from app.domains.explorer.service import ExplorerService
 
 router = APIRouter(prefix="/assistant", tags=["concierge"])
@@ -62,11 +63,44 @@ class SuggestedAction(CamelModel):
     message: str
 
 
+class PlanStopOut(CamelModel):
+    experience_id: str
+    event_instance_id: str | None = None
+    title: str
+    arrive_at: datetime
+    depart_at: datetime
+    dwell_minutes: int
+    travel_minutes: int
+    travel_km: float | None = None
+    estimated_cost: float
+    is_fixed_time: bool
+    note: str | None = None
+
+
+class OfferedPlan(CamelModel):
+    """An itinerary the concierge worked out, offered for the explorer to keep.
+
+    Sent separately from `results` because a plan is a sequence - the order, the
+    timings and the travel between stops are the substance of it, and a row of
+    cards shows none of that.
+    """
+
+    stops: list[PlanStopOut]
+    total_cost: float
+    currency: str = "ETB"
+    total_travel_minutes: int
+    rationale: str
+    unmet: list[str] = Field(default_factory=list)
+
+
 class ConciergeResponse(CamelModel):
     conversation_id: uuid.UUID
     message: str
     intent: str
     confidence: float
+    # Present when this turn produced an itinerary. Nothing is stored until the
+    # explorer accepts it - most plans are looked at once and asked again.
+    plan: OfferedPlan | None = None
     # Rendered as result cards, not prose (spec 57.04 s10).
     results: list[ResultItem] = Field(default_factory=list)
     suggested_actions: list[SuggestedAction] = Field(default_factory=list)
@@ -171,6 +205,7 @@ async def send_message(
             clarification=reply.clarification,
             model=reply.model,
             latency_ms=reply.latency_ms,
+            plan=_to_offered_plan(reply.plan),
         )
     )
 
@@ -355,3 +390,75 @@ async def forget_all_memories(session: SessionDep, user: CurrentUser) -> None:
     count = await MemoryService(session).forget_all(user.id)
     await session.commit()
     logger.info("memory_cleared", user_id=str(user.id), count=count)
+
+
+def _to_offered_plan(plan: dict | None) -> OfferedPlan | None:
+    if not plan or not plan.get("stops"):
+        return None
+    return OfferedPlan(
+        stops=[PlanStopOut(**stop) for stop in plan["stops"]],
+        total_cost=plan.get("totalCost", 0.0),
+        currency=plan.get("currency", "ETB"),
+        total_travel_minutes=plan.get("totalTravelMinutes", 0),
+        rationale=plan.get("rationale", ""),
+        unmet=plan.get("unmet") or [],
+    )
+
+
+class AcceptPlanRequest(CamelModel):
+    title: str | None = Field(default=None, max_length=200)
+
+
+@router.post(
+    "/conversations/{conversation_id}/plan",
+    response_model=Envelope[dict],
+    status_code=201,
+    summary="Keep the plan the concierge offered",
+    description=(
+        "Saves the itinerary from the most recent planning turn in this "
+        "conversation, exactly as it was shown. Nothing is stored before this - "
+        "most plans are looked at once and a different one asked for."
+    ),
+)
+async def accept_plan(
+    conversation_id: uuid.UUID,
+    payload: AcceptPlanRequest,
+    session: SessionDep,
+    user: OptionalUser,
+    anonymous_id: AnonymousId,
+) -> Envelope[dict]:
+    conversation = await AIGateway(session).get_conversation(
+        conversation_id, user_id=user.id if user else None, anonymous_id=anonymous_id
+    )
+
+    offered = (conversation.state or {}).get("pendingPlan")
+    if not offered or not offered.get("stops"):
+        raise BadRequestError(
+            "There is no plan in this conversation to keep.", code="NO_PENDING_PLAN"
+        )
+
+    title = (payload.title or "").strip() or _default_title(offered)
+    itinerary = await PlanningService(session).save_offered(
+        offered,
+        title=title,
+        user_id=user.id if user else None,
+        anonymous_id=anonymous_id,
+    )
+
+    # Clear it, so the same plan cannot be saved twice by a double tap.
+    conversation.state = {**(conversation.state or {}), "pendingPlan": None}
+    await session.commit()
+
+    return Envelope(data={"id": str(itinerary.id), "title": itinerary.title})
+
+
+# How a plan is named when the explorer does not name it. Weekday and date,
+# because that is how people refer to an evening they have planned. Built from
+# parts rather than a format string: the no-padding directive for day-of-month
+# differs between platforms (%-d against %#d) and neither is portable.
+def _default_title(offered: dict) -> str:
+    stops = offered.get("stops") or []
+    if not stops:
+        return "A plan"
+    when = datetime.fromisoformat(stops[0]["arriveAt"].replace("Z", "+00:00"))
+    return f"{when:%A} {when.day} {when:%B}"

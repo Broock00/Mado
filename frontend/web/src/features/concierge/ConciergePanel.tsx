@@ -21,11 +21,17 @@ import { api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
 import { Badge, Button, Input } from '@/design-system/primitives'
 import { cn } from '@/lib/utils'
-import type { ConciergeResult, SuggestedAction } from '@/lib/types'
+import type { ConciergeResult, OfferedPlan, SuggestedAction } from '@/lib/types'
+import { OfferedPlanCard } from './OfferedPlanCard'
 
 interface Turn {
   role: 'user' | 'assistant'
   text: string
+  // Rendered instead of the result cards when present: a plan is a sequence,
+  // and showing it as a row of cards discards the order and the timings that
+  // make it one.
+  plan?: OfferedPlan | null
+  conversationId?: string
   results?: ConciergeResult[]
   actions?: SuggestedAction[]
   clarification?: string | null
@@ -35,7 +41,7 @@ const OPENERS: SuggestedAction[] = [
   { label: 'What is on tonight?', message: 'What should I do tonight?' },
   { label: 'Free this weekend', message: 'Find me something free this weekend' },
   { label: 'Somewhere for coffee', message: 'Where can I get good traditional coffee?' },
-  { label: 'Plan my evening', message: 'Plan my evening in Addis Ababa' },
+  { label: 'I am free tonight', message: 'I am free this evening, what should I do with it?' },
 ]
 
 export function ConciergePanel() {
@@ -66,6 +72,8 @@ export function ConciergePanel() {
         {
           role: 'assistant',
           text: response.message,
+          plan: response.plan,
+          conversationId: response.conversationId,
           results: response.results,
           actions: response.suggestedActions,
           clarification: response.clarification,
@@ -176,7 +184,17 @@ export function ConciergePanel() {
                     {turn.text}
                   </p>
 
-                  {turn.results && turn.results.length > 0 && (
+                  {turn.plan && turn.plan.stops.length > 0 && turn.conversationId && (
+                    <OfferedPlanCard
+                      plan={turn.plan}
+                      conversationId={turn.conversationId}
+                      onClose={() => toggle(false)}
+                    />
+                  )}
+
+                  {/* Cards only when there is no plan. Showing both repeats the
+                      same places twice in two shapes. */}
+                  {!turn.plan && turn.results && turn.results.length > 0 && (
                     <ul className="space-y-2">
                       {turn.results.map((result) => (
                         <li key={result.id}>

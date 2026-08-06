@@ -82,6 +82,7 @@ export function PlanPage() {
   const city = useAppStore((s) => s.citySlug)
   const location = useAppStore((s) => s.location)
   const user = useAppStore((s) => s.user)
+  const openConcierge = useAppStore((s) => s.toggleConcierge)
   const queryClient = useQueryClient()
 
   const [windowKey, setWindowKey] = useState<WindowKey>('tonight')
@@ -137,14 +138,95 @@ export function PlanPage() {
   return (
     <div className="mx-auto w-full max-w-4xl px-4 pb-24 pt-6 sm:px-6 lg:px-8">
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-sand-900">Plan an outing</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-sand-900">Your plans</h1>
         <p className="mt-1 text-sand-600">
-          Mado works out an order that fits, allowing for travel between stops and
-          building around anything that starts at a set time.
+          Tell Mado when you are free and it works out an evening that fits — the
+          order, the travel between stops, and anything that starts at a set time.
+          Plans you keep end up here.
         </p>
       </header>
 
-      <Card className="p-5">
+      {/* The primary way in. Planning belongs in the conversation, because an
+          explorer saying "I'm free on Saturday" has already said everything the
+          planner needs - asking them to restate it as a window, a budget and a
+          stop count is asking for the same thing again in a worse notation. */}
+      <Card className="flex flex-wrap items-center justify-between gap-4 border-brand-200 bg-brand-50/60 p-5">
+        <div className="min-w-0">
+          <p className="font-medium text-sand-900">Ask Mado to plan something</p>
+          <p className="mt-0.5 text-sm text-sand-600">
+            &ldquo;I&rsquo;m free this evening&rdquo; is enough to start.
+          </p>
+        </div>
+        <Button onClick={() => openConcierge(true)}>
+          <Sparkles className="size-4" aria-hidden />
+          Plan with Mado
+        </Button>
+      </Card>
+
+      {user && itineraries && itineraries.length > 0 && (
+        <section className="mt-8">
+          <SectionHeading title="Kept plans" />
+          <ul className="mt-3 space-y-3">
+            {itineraries.map((itinerary) => (
+              <li key={itinerary.id}>
+                <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
+                  <div className="min-w-0">
+                    <p className="font-medium text-sand-900">{itinerary.title}</p>
+                    <p className="text-sm text-sand-600">
+                      {itinerary.stops.length} stops ·{' '}
+                      {new Date(itinerary.startsAt).toLocaleDateString([], {
+                        weekday: 'short',
+                        day: 'numeric',
+                        month: 'short',
+                      })}
+                      {itinerary.estimatedCost != null &&
+                        itinerary.estimatedCost > 0 &&
+                        ` · ${itinerary.estimatedCost.toFixed(0)} ${itinerary.currency}`}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Link to={`/plans/${itinerary.id}`}>
+                      <Button variant="ghost" size="sm">
+                        <Route className="size-4" aria-hidden />
+                        Open
+                      </Button>
+                    </Link>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Delete ${itinerary.title}`}
+                      onClick={() => remove.mutate(itinerary.id)}
+                      disabled={remove.isPending}
+                    >
+                      <Trash2 className="size-4" aria-hidden />
+                    </Button>
+                  </div>
+                </Card>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {user && itineraries && itineraries.length === 0 && (
+        <Card className="mt-6 p-5">
+          <EmptyState
+            icon={<Route className="size-8" />}
+            title="No plans kept yet"
+            description="Ask Mado for an evening and keep the one you like. It will be here afterwards."
+          />
+        </Card>
+      )}
+
+      {/* Kept because some people would rather set the dials themselves, and
+          because it is the only way in when the assistant is unavailable. Folded
+          away, because it is not how most people will do this. */}
+      <details className="mt-8 group">
+        <summary className="cursor-pointer text-sm font-medium text-sand-700 hover:text-sand-900">
+          Or build one yourself
+        </summary>
+
+      <Card className="mt-3 p-5">
         <fieldset>
           <legend className="text-sm font-medium text-sand-700">When</legend>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -324,50 +406,7 @@ export function PlanPage() {
         </Card>
       )}
 
-      {user && itineraries && itineraries.length > 0 && (
-        <section className="mt-10">
-          <SectionHeading title="Your itineraries" />
-          <ul className="mt-3 space-y-3">
-            {itineraries.map((itinerary) => (
-              <li key={itinerary.id}>
-                <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
-                  <div className="min-w-0">
-                    <p className="font-medium text-sand-900">{itinerary.title}</p>
-                    <p className="text-sm text-sand-600">
-                      {itinerary.stops.length} stops ·{' '}
-                      {new Date(itinerary.startsAt).toLocaleDateString([], {
-                        weekday: 'short',
-                        day: 'numeric',
-                        month: 'short',
-                      })}
-                      {itinerary.estimatedCost != null &&
-                        itinerary.estimatedCost > 0 &&
-                        ` · ${itinerary.estimatedCost.toFixed(0)} ${itinerary.currency}`}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Link to={`/plans/${itinerary.id}`}>
-                      <Button variant="ghost" size="sm">
-                        <Route className="size-4" aria-hidden />
-                        Open
-                      </Button>
-                    </Link>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Delete ${itinerary.title}`}
-                      onClick={() => remove.mutate(itinerary.id)}
-                      disabled={remove.isPending}
-                    >
-                      <Trash2 className="size-4" aria-hidden />
-                    </Button>
-                  </div>
-                </Card>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      </details>
     </div>
   )
 }

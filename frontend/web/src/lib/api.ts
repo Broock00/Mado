@@ -427,6 +427,23 @@ export const api = {
       body: JSON.stringify(payload),
     }).then((r) => r.data),
 
+  /**
+   * Keep the plan the concierge offered, exactly as it was shown.
+   *
+   * Takes no plan body: the server saves what it stored against the
+   * conversation, so an explorer saying "yes, that one" gets the evening they
+   * were shown rather than something recomputed since.
+   */
+  acceptPlan: (conversationId: string, title?: string) =>
+    request<Envelope<{ id: string; title: string }>>(
+      `/api/v1/assistant/conversations/${conversationId}/plan`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      },
+    ).then((r) => r.data),
+
   // ------------------------------------------------------------- planning
   // Planning and saving are separate calls because most plans are looked at
   // once and discarded - an explorer asks for an evening, dislikes it, asks

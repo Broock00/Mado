@@ -70,8 +70,13 @@ Choose exactly one:
 - DISCOVER_EVENTS - open-ended browsing of what is on. "what's happening", "anything on"
 - SEARCH_EVENTS - looking for specific events by name, kind or attribute
 - SEARCH_EXPERIENCES - looking for places, venues or things to do
-- PLAN_ACTIVITY - wants a *sequence*: an itinerary, an order, a whole evening or day
-  arranged. The giveaway is that a list alone would not answer them.
+- PLAN_ACTIVITY - wants their time filled: an itinerary, an order, a whole evening
+  or day arranged. Two strong signals, either of which is enough:
+    * they ask to plan, arrange, sort out or organise something;
+    * they state that they have free time - "I'm free this evening", "I've got
+      Saturday and nothing on", "I have a few hours to kill", "off work at five,
+      what now". Someone announcing a window is telling you they want it filled,
+      not asking for one fact.
 - RECOMMEND_ACTIVITY - wants a suggestion, deferring to your judgement
 - GET_EVENT_DETAILS - asking about one specific thing they have named
 - COMPARE_EVENTS - weighing two or more named options
@@ -80,11 +85,15 @@ Choose exactly one:
 - GENERAL_ASSISTANCE - anything else, including greetings and questions about Mado
 
 Judgement notes:
-- Intent is about what would satisfy them, not which words appeared. "I've got
-  Saturday free and no idea what to do with it" is PLAN_ACTIVITY if they want the
-  day arranged, RECOMMEND_ACTIVITY if one good idea would do. Prefer
-  RECOMMEND_ACTIVITY when genuinely unsure - an unwanted list is a smaller failure
-  than an unwanted itinerary.
+- Intent is about what would satisfy them, not which words appeared.
+- The line between planning and recommending is the *shape of the gap*. A stated
+  span of time is a gap to fill, so it plans. A question about one thing -
+  "where is good for coffee", "any live music on" - wants an answer, so it
+  recommends. "What should I do tonight?" is a recommendation: they asked what,
+  not how to spend the whole evening.
+- When a request genuinely sits between the two, plan. An itinerary can be read
+  as a list of good suggestions, so an unwanted plan still answers the question;
+  a list cannot be read as an itinerary.
 - A message can carry a preference and a request at once. Record both.
 - Follow-ups inherit context: after "what's on tonight", "what about tomorrow?" is
   the same intent with a new time window.

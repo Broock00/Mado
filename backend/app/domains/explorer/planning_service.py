@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError
+from app.core.errors import NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.domains.catalog import repository as catalog_repo
 from app.domains.discovery.ranking import RankingContext
@@ -108,6 +108,88 @@ class PlanningService:
         logger.info("itinerary_saved", itinerary_id=str(itinerary.id), stops=len(plan.stops))
         return itinerary
 
+    async def save_offered(
+        self,
+        offered: dict,
+        *,
+        title: str,
+        user_id: uuid.UUID | None,
+        anonymous_id: str | None,
+    ) -> Itinerary:
+        """Persist a plan exactly as it was shown to the explorer.
+
+        Takes the stored plan rather than re-running the planner. Recomputing on
+        accept would sometimes hand back a different evening - an event may have
+        sold out, or ranking may have shifted between the offer and the answer -
+        and an explorer who says "yes, that one" means the one they were shown.
+
+        The plan comes from the conversation the platform itself wrote, not from
+        the client, so the stops are trusted. Titles and timings are still bounded
+        by the model column widths on the way in.
+        """
+        stops = offered.get("stops") or []
+        if not stops:
+            raise ValidationError("That plan has no stops to save.", code="EMPTY_PLAN")
+
+        request = offered.get("request") or {}
+        arrive_first = _parse(stops[0]["arriveAt"])
+        depart_last = _parse(stops[-1]["departAt"])
+
+        itinerary = Itinerary(
+            user_id=user_id,
+            anonymous_id=None if user_id else anonymous_id,
+            title=title[:200],
+            city_slug=request.get("city"),
+            starts_at=arrive_first,
+            ends_at=depart_last,
+            estimated_cost=offered.get("totalCost"),
+            total_travel_minutes=offered.get("totalTravelMinutes") or 0,
+            constraints={
+                "budget": request.get("budget"),
+                "maxStops": request.get("maxStops"),
+                "categories": request.get("categories") or [],
+                "freeOnly": request.get("freeOnly", False),
+                "window": [request.get("startsAt"), request.get("endsAt")],
+                # Records that this came out of a conversation rather than the
+                # manual builder, which is the difference the Plan page shows.
+                "origin": "concierge",
+            },
+            rationale=offered.get("rationale"),
+            stops=[],
+        )
+        self.session.add(itinerary)
+        await self.session.flush()
+
+        for position, stop in enumerate(stops):
+            itinerary.stops.append(
+                ItineraryStop(
+                    itinerary_id=itinerary.id,
+                    position=position,
+                    experience_id=uuid.UUID(stop["experienceId"]),
+                    event_instance_id=(
+                        uuid.UUID(stop["eventInstanceId"])
+                        if stop.get("eventInstanceId")
+                        else None
+                    ),
+                    title=str(stop["title"])[:300],
+                    arrive_at=_parse(stop["arriveAt"]),
+                    depart_at=_parse(stop["departAt"]),
+                    travel_minutes=int(stop.get("travelMinutes") or 0),
+                    travel_km=stop.get("travelKm"),
+                    estimated_cost=stop.get("estimatedCost"),
+                    is_fixed_time=bool(stop.get("isFixedTime")),
+                    note=stop.get("note"),
+                )
+            )
+
+        await self.session.flush()
+        logger.info(
+            "itinerary_accepted_from_concierge",
+            itinerary_id=str(itinerary.id),
+            stops=len(stops),
+        )
+        return itinerary
+
     async def get(
         self,
         itinerary_id: uuid.UUID,
@@ -157,3 +239,9 @@ class PlanningService:
         # spec BUSINESS-07's "nothing is deleted automatically" applies to their
         # history too.
         itinerary.deleted_at = datetime.now(UTC)
+
+
+def _parse(value: str) -> datetime:
+    """Read a timestamp the platform itself wrote, defaulting to UTC."""
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
