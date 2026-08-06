@@ -1,0 +1,117 @@
+@import 'tailwindcss';
+
+/*
+ * Mado design tokens (spec 11.06).
+ *
+ * The spec asks for an interface that reads "modern, calm, intelligent,
+ * trustworthy, human, exploratory, spatial" and never cluttered or promotional.
+ * That points away from a saturated consumer palette: the surface stays quiet so
+ * that photography of real places carries the colour.
+ *
+ * Semantic tokens only - components never reference a raw hue. Spec 11.06
+ * requires colour to communicate purpose, and requires that colour is never the
+ * sole carrier of meaning, so every state pairs with an icon or label.
+ */
+
+@theme {
+  /* Brand: a deep spruce green. Ethiopian highland vegetation, and distinct from
+     the blues that dominate travel apps. */
+  --color-brand-50: oklch(0.97 0.02 155);
+  --color-brand-100: oklch(0.93 0.04 155);
+  --color-brand-200: oklch(0.87 0.07 155);
+  --color-brand-300: oklch(0.78 0.1 155);
+  --color-brand-400: oklch(0.68 0.12 155);
+  --color-brand-500: oklch(0.58 0.13 155);
+  --color-brand-600: oklch(0.48 0.12 155);
+  --color-brand-700: oklch(0.39 0.1 155);
+  --color-brand-800: oklch(0.31 0.08 155);
+  --color-brand-900: oklch(0.24 0.06 155);
+
+  /* Accent: warm amber, used sparingly for time-critical states ("starting
+     soon") where the spec wants temporal urgency legible at a glance. */
+  --color-accent-100: oklch(0.95 0.05 75);
+  --color-accent-300: oklch(0.85 0.12 75);
+  --color-accent-500: oklch(0.75 0.16 70);
+  --color-accent-600: oklch(0.66 0.15 65);
+  --color-accent-700: oklch(0.55 0.13 60);
+
+  /* Neutrals carry a faint warm cast so large surfaces do not read clinical. */
+  --color-sand-50: oklch(0.99 0.003 85);
+  --color-sand-100: oklch(0.97 0.005 85);
+  --color-sand-200: oklch(0.93 0.006 85);
+  --color-sand-300: oklch(0.87 0.007 85);
+  --color-sand-400: oklch(0.71 0.008 85);
+  --color-sand-500: oklch(0.57 0.008 85);
+  --color-sand-600: oklch(0.45 0.008 85);
+  --color-sand-700: oklch(0.36 0.007 85);
+  --color-sand-800: oklch(0.26 0.006 85);
+  --color-sand-900: oklch(0.18 0.005 85);
+  --color-sand-950: oklch(0.13 0.004 85);
+
+  --color-success: oklch(0.6 0.13 150);
+  --color-warning: oklch(0.75 0.15 75);
+  --color-danger: oklch(0.58 0.19 25);
+  --color-info: oklch(0.62 0.12 240);
+
+  /* AI-generated content gets its own hue. Spec 11.06 requires AI output to be
+     always distinguishable, without discouraging use of it. */
+  --color-ai: oklch(0.62 0.14 285);
+  --color-ai-soft: oklch(0.95 0.03 285);
+
+  --font-sans: 'Inter var', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --radius-card: 1rem;
+  --radius-pill: 9999px;
+
+  /* Elevation stays subtle per spec 11.06 - shadows signal interactivity, not
+     decoration. */
+  --shadow-card: 0 1px 2px oklch(0 0 0 / 0.04), 0 4px 12px oklch(0 0 0 / 0.05);
+  --shadow-lifted: 0 2px 4px oklch(0 0 0 / 0.05), 0 12px 28px oklch(0 0 0 / 0.09);
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-sand-50);
+    color: var(--color-sand-900);
+    font-family: var(--font-sans);
+  }
+
+  /* Spec 11.07 / PRODUCT-00 principle 10: focus must always be visible, and
+     never removed for aesthetics. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand-600);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Honour the OS reduced-motion setting rather than animating regardless. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* Horizontal rails scroll without a visible bar; the overflow itself and the
+     partially-clipped final card signal that more content exists. */
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}

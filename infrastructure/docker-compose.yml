@@ -1,0 +1,59 @@
+name: mado
+
+services:
+  postgres:
+    # PostGIS + pgvector in one database, so spec 54.x transactional, geospatial and
+    # embedding storage all live in the primary store. See postgres/Dockerfile -
+    # no published image carries both extensions.
+    build:
+      context: ./postgres
+    image: mado/postgres:16-postgis-pgvector
+    container_name: mado-postgres
+    environment:
+      POSTGRES_USER: mado
+      POSTGRES_PASSWORD: mado
+      POSTGRES_DB: mado
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mado -d mado"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: mado-redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  meilisearch:
+    # Primary search engine per spec 82.01. Retrieval only - ranking stays in the platform.
+    image: getmeili/meilisearch:v1.11
+    container_name: mado-meilisearch
+    environment:
+      MEILI_MASTER_KEY: mado-dev-master-key
+      MEILI_ENV: development
+      MEILI_NO_ANALYTICS: "true"
+    ports:
+      - "7700:7700"
+    volumes:
+      - meili-data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7700/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  postgres-data:
+  meili-data:

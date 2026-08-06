@@ -1,0 +1,142 @@
+/** Shared data hooks. */
+
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useCallback } from 'react'
+import { api, tokenStore, type DiscoveryParams } from '@/lib/api'
+import { useAppStore } from '@/app/store'
+import type { ExperienceSummary } from '@/lib/types'
+
+/** Discovery parameters assembled from current city and location consent. */
+export function useDiscoveryParams(limit = 12): DiscoveryParams {
+  const citySlug = useAppStore((s) => s.citySlug)
+  const location = useAppStore((s) => s.location)
+  return {
+    city: citySlug,
+    lat: location.granted ? location.latitude : undefined,
+    lng: location.granted ? location.longitude : undefined,
+    limit,
+  }
+}
+
+export function useCanvas() {
+  const params = useDiscoveryParams()
+  return useQuery({
+    queryKey: ['canvas', params],
+    queryFn: () => api.canvas(params),
+    // Time-sensitive rails go stale quickly; a minute keeps "starting soon"
+    // honest without hammering the API on every navigation.
+    staleTime: 60_000,
+  })
+}
+
+export function useSession() {
+  const setUser = useAppStore((s) => s.setUser)
+  return useQuery({
+    queryKey: ['me'],
+    queryFn: async () => {
+      const me = await api.me()
+      setUser(me)
+      return me
+    },
+    // Only attempt when a token exists - anonymous browsing is a first-class
+    // state, not a failed auth check (spec 10.01.01).
+    enabled: Boolean(tokenStore.access),
+    retry: false,
+    staleTime: 5 * 60_000,
+  })
+}
+
+/**
+ * Toggle saved state with an optimistic update.
+ *
+ * Saving is a low-stakes, high-frequency action; waiting for a round-trip makes
+ * the interface feel slower than the platform actually is. On failure the caches
+ * roll back.
+ */
+export function useToggleSave() {
+  const queryClient = useQueryClient()
+  const user = useAppStore((s) => s.user)
+
+  const mutation = useMutation({
+    mutationFn: async (experience: ExperienceSummary) => {
+      if (experience.isSaved) {
+        await api.unsave('experience', experience.id)
+        return { id: experience.id, saved: false }
+      }
+      await api.save('experience', experience.id)
+      return { id: experience.id, saved: true }
+    },
+    onMutate: async (experience) => {
+      await queryClient.cancelQueries()
+      const snapshot = queryClient.getQueryCache().getAll().map((q) => ({
+        key: q.queryKey,
+        data: q.state.data,
+      }))
+      patchSavedState(queryClient, experience.id, !experience.isSaved)
+      return { snapshot }
+    },
+    onError: (_error, _experience, context) => {
+      context?.snapshot.forEach(({ key, data }) => queryClient.setQueryData(key, data))
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['saved'] })
+    },
+  })
+
+  return {
+    toggle: mutation.mutate,
+    isPending: mutation.isPending,
+    requiresAuth: !user,
+  }
+}
+
+/** Rewrite isSaved wherever this experience appears in any cached query. */
+function patchSavedState(
+  queryClient: ReturnType<typeof useQueryClient>,
+  experienceId: string,
+  saved: boolean,
+) {
+  const patch = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(patch)
+    if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>
+      if (record.id === experienceId && 'isSaved' in record) {
+        return { ...record, isSaved: saved }
+      }
+      const next: Record<string, unknown> = {}
+      let changed = false
+      for (const [key, item] of Object.entries(record)) {
+        const updated = patch(item)
+        next[key] = updated
+        if (updated !== item) changed = true
+      }
+      return changed ? next : value
+    }
+    return value
+  }
+
+  queryClient.getQueryCache().getAll().forEach((query) => {
+    const current = query.state.data
+    if (current === undefined) return
+    const updated = patch(current)
+    if (updated !== current) queryClient.setQueryData(query.queryKey, updated)
+  })
+}
+
+/** Request browser location, recording consent or refusal. */
+export function useRequestLocation() {
+  const setLocation = useAppStore((s) => s.setLocation)
+  const denyLocation = useAppStore((s) => s.denyLocation)
+
+  return useCallback(() => {
+    if (!('geolocation' in navigator)) {
+      denyLocation()
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => setLocation(position.coords.latitude, position.coords.longitude),
+      () => denyLocation(),
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 300_000 },
+    )
+  }, [setLocation, denyLocation])
+}
