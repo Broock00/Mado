@@ -19,7 +19,7 @@ from app.domains.catalog.models import (
     Venue,
     experience_tags,
 )
-from app.domains.explorer.models import InteractionEvent, Review, SavedItem
+from app.domains.explorer.models import ContentReport, InteractionEvent, Review, SavedItem
 from app.domains.identity.models import AuthIdentity, User, UserProfile, UserSession
 from app.domains.publisher.models import Publisher
 
@@ -27,6 +27,7 @@ __all__ = [
     "Base",
     "AuthIdentity",
     "Category",
+    "ContentReport",
     "City",
     "Conversation",
     "EventInstance",

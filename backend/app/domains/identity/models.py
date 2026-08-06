@@ -47,6 +47,14 @@ class User(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
+    # A real column, not a key in the preferences JSONB. Preferences are written by
+    # the explorer themselves; keeping a privilege flag there would mean one
+    # careless schema change turns into privilege escalation. No API sets this -
+    # it is granted out of band (see `python -m app.seed --make-moderator`).
+    is_moderator: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+
     profile: Mapped[UserProfile] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan", lazy="selectin"
     )

@@ -44,8 +44,9 @@ async def register(
         language=payload.language,
     )
     # Commit before responding: the client may use these tokens immediately.
+    view = AuthResponse(user=MeOut.model_validate(user), tokens=tokens)
     await session.commit()
-    return Envelope(data=AuthResponse(user=MeOut.model_validate(user), tokens=tokens))
+    return Envelope(data=view)
 
 
 @router.post("/login", response_model=Envelope[AuthResponse], summary="Sign in")
@@ -54,8 +55,9 @@ async def login(
 ) -> Envelope[AuthResponse]:
     service = IdentityService(session)
     user, tokens = await service.authenticate(email=payload.email, password=payload.password)
+    view = AuthResponse(user=MeOut.model_validate(user), tokens=tokens)
     await session.commit()
-    return Envelope(data=AuthResponse(user=MeOut.model_validate(user), tokens=tokens))
+    return Envelope(data=view)
 
 
 @router.post("/refresh", response_model=Envelope[TokenPair], summary="Rotate tokens")

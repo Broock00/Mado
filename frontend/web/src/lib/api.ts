@@ -8,6 +8,12 @@
 
 import type {
   ApiErrorBody,
+  CreatePostInput,
+  CreateVenueInput,
+  OwnPost,
+  Publisher,
+  ReportReason,
+  VenueCreated,
   AuthResponse,
   Category,
   City,
@@ -16,6 +22,7 @@ import type {
   DiscoveryCanvas,
   Envelope,
   ExperienceDetail,
+  EventInstance,
   ExperienceSummary,
   Me,
   SavedItem,
@@ -302,6 +309,63 @@ export const api = {
     }
     tokenStore.clear()
   },
+
+  // --------------------------------------------------------- publishing
+  myPublisher: () =>
+    request<Envelope<Publisher>>('/api/v1/posts/me').then((r) => r.data),
+
+  myPosts: (status?: string) =>
+    request<CollectionEnvelope<OwnPost>>(`/api/v1/posts${query({ status })}`).then((r) => r.data),
+
+  myPost: (id: string) =>
+    request<Envelope<OwnPost>>(`/api/v1/posts/${id}`).then((r) => r.data),
+
+  createPost: (input: CreatePostInput) =>
+    request<Envelope<OwnPost>>('/api/v1/posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }).then((r) => r.data),
+
+  updatePost: (id: string, input: Partial<CreatePostInput>) =>
+    request<Envelope<OwnPost>>(`/api/v1/posts/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }).then((r) => r.data),
+
+  postAction: (id: string, action: 'publish' | 'unpublish' | 'archive' | 'restore') =>
+    request<Envelope<OwnPost>>(`/api/v1/posts/${id}/${action}`, { method: 'POST' }).then(
+      (r) => r.data,
+    ),
+
+  addPostDate: (id: string, startTime: string, capacity?: number | null) =>
+    request<Envelope<EventInstance>>(`/api/v1/posts/${id}/events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ startTime, capacity }),
+    }).then((r) => r.data),
+
+  addPostImage: (id: string, url: string, altText?: string) =>
+    request<Envelope<OwnPost>>(`/api/v1/posts/${id}/media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, altText }),
+    }).then((r) => r.data),
+
+  createVenue: (input: CreateVenueInput) =>
+    request<Envelope<VenueCreated>>('/api/v1/posts/venues', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }).then((r) => r.data),
+
+  reportExperience: (experienceId: string, reason: ReportReason, detail?: string) =>
+    request<Envelope<{ id: string }>>(`/api/v1/experiences/${experienceId}/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason, detail }),
+    }).then((r) => r.data),
 
   // ----------------------------------------------------------- concierge
   concierge: (payload: {

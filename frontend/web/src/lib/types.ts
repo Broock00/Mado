@@ -249,3 +249,68 @@ export interface SavedItem {
   note?: string | null
   createdAt: string
 }
+
+/* ------------------------------------------------------------------ publishing */
+
+export interface Publisher {
+  id: string
+  name: string
+  slug: string
+  type: 'individual' | 'organization'
+  verificationStatus: string
+  trustLevel: number
+  logoUrl?: string | null
+}
+
+export type PostStatus = 'draft' | 'review' | 'published' | 'archived'
+export type ModerationStatus = 'approved' | 'pending' | 'flagged' | 'rejected'
+
+/** An author's view of their own post, including editorial state. */
+export interface OwnPost extends ExperienceDetail {
+  status: PostStatus
+  moderationStatus: ModerationStatus
+  moderationNotes?: string | null
+  reportCount: number
+  /** What still stands between this draft and going live. */
+  readinessProblems: string[]
+}
+
+export interface CreatePostInput {
+  title: string
+  description: string
+  citySlug: string
+  type: 'place' | 'event' | 'activity'
+  summary?: string | null
+  categorySlug?: string | null
+  venueId?: string | null
+  tags?: string[]
+  priceType?: 'free' | 'fixed' | 'range'
+  priceAmount?: number | null
+  durationMinutes?: number | null
+  isIndoor?: boolean | null
+}
+
+export interface CreateVenueInput {
+  name: string
+  address: string
+  citySlug: string
+  latitude: number
+  longitude: number
+}
+
+export interface VenueCreated {
+  id: string
+  name: string
+  slug: string
+  address: string
+  latitude: number
+  longitude: number
+}
+
+export type ReportReason =
+  | 'spam'
+  | 'inaccurate'
+  | 'inappropriate'
+  | 'duplicate'
+  | 'scam'
+  | 'other'

@@ -7,6 +7,7 @@
  * they need prose.
  */
 
+import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -16,6 +17,7 @@ import {
   Bookmark,
   Calendar,
   Clock,
+  Flag,
   MapPin,
   Star,
   Users,
@@ -24,6 +26,7 @@ import { api } from '@/lib/api'
 import { useDiscoveryParams, useToggleSave } from '@/app/hooks'
 import { Badge, Button, Card, EmptyState, SectionHeading, Skeleton } from '@/design-system/primitives'
 import { ExperienceCard } from './ExperienceCard'
+import { ReportDialog } from '@/features/trust/ReportDialog'
 import { formatDistance, formatPrice, formatWhen } from '@/lib/utils'
 
 export function ExperienceDetailPage() {
@@ -36,6 +39,8 @@ export function ExperienceDetailPage() {
     queryFn: () => api.experience(experienceId, { lat: params.lat, lng: params.lng }),
     enabled: Boolean(experienceId),
   })
+
+  const [reporting, setReporting] = useState(false)
 
   const { data: similar } = useQuery({
     queryKey: ['similar', experienceId],
@@ -264,9 +269,28 @@ export function ExperienceDetailPage() {
                 </p>
               </div>
             )}
+
+            {/* Anyone can post, so anyone must be able to flag what is wrong
+                (spec BUSINESS-07). Quiet, but always findable. */}
+            <button
+              type="button"
+              onClick={() => setReporting(true)}
+              className="mt-4 flex w-full items-center justify-center gap-1.5 border-t border-sand-200 pt-4 text-xs text-sand-500 transition-colors hover:text-sand-800"
+            >
+              <Flag className="size-3.5" aria-hidden />
+              Report a problem with this listing
+            </button>
           </Card>
         </aside>
       </div>
+
+      {reporting && (
+        <ReportDialog
+          experienceId={data.id}
+          experienceTitle={data.title}
+          onClose={() => setReporting(false)}
+        />
+      )}
     </article>
   )
 }

@@ -7,7 +7,7 @@
  */
 
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
-import { Bookmark, Compass, Search as SearchIcon, User } from 'lucide-react'
+import { Bookmark, Compass, PenSquare, Search as SearchIcon, User } from 'lucide-react'
 import { useSession } from '@/app/hooks'
 import { useAppStore } from '@/app/store'
 import { ConciergeLauncher, ConciergePanel } from '@/features/concierge/ConciergePanel'
@@ -17,6 +17,9 @@ const NAV = [
   { to: '/', label: 'Discover', icon: Compass, end: true },
   { to: '/search', label: 'Search', icon: SearchIcon, end: false },
   { to: '/saved', label: 'Saved', icon: Bookmark, end: false },
+  // Publishing is a peer of discovery, not a separate console: a publisher is
+  // just an explorer who posts.
+  { to: '/posts', label: 'Your posts', icon: PenSquare, end: false },
 ]
 
 export function AppShell() {

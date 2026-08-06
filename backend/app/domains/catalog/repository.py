@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.domains.catalog.models import (
+    MODERATION_APPROVED,
+    MODERATION_PENDING,
     STATUS_PUBLISHED,
     Category,
     City,
@@ -23,6 +25,11 @@ from app.domains.catalog.models import (
     Tag,
     Venue,
 )
+
+# Pending content stays visible while it waits for a human: spec BUSINESS-07 treats
+# automated suspicion as a reason to look, not a reason to hide. Flagged and
+# rejected are withheld.
+DISCOVERABLE_MODERATION_STATUSES = (MODERATION_APPROVED, MODERATION_PENDING)
 
 
 def _with_card_relations(stmt: Select) -> Select:
@@ -38,11 +45,19 @@ def _with_card_relations(stmt: Select) -> Select:
 
 
 def published_experiences() -> Select:
-    """Base query for anything an explorer is allowed to see."""
+    """Base query for anything an explorer is allowed to see.
+
+    Two independent gates, and both must pass: the author published it, and
+    moderation has not withheld it. Every discovery surface builds on this
+    query, so an item flagged or rejected disappears from the feed, search,
+    nearby and concierge answers at once - there is no path that forgets to
+    check.
+    """
     return _with_card_relations(
         select(Experience).where(
             Experience.status == STATUS_PUBLISHED,
             Experience.deleted_at.is_(None),
+            Experience.moderation_status.in_(DISCOVERABLE_MODERATION_STATUSES),
         )
     )
 
@@ -179,6 +194,7 @@ async def upcoming_events(
         .where(
             Experience.status == STATUS_PUBLISHED,
             Experience.deleted_at.is_(None),
+            Experience.moderation_status.in_(DISCOVERABLE_MODERATION_STATUSES),
             EventInstance.status != "cancelled",
         )
         .options(

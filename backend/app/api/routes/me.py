@@ -35,8 +35,9 @@ async def update_me(
     for field, value in payload.model_dump(exclude_unset=True).items():
         if value is not None:
             setattr(profile, field, value)
+    view = ProfileOut.model_validate(profile)
     await session.commit()
-    return Envelope(data=ProfileOut.model_validate(profile))
+    return Envelope(data=view)
 
 
 @router.get("/preferences", response_model=Envelope[dict], summary="Get preferences")
@@ -53,8 +54,9 @@ async def update_preferences(
     updated = await ExplorerService(session).update_preferences(
         profile, payload.model_dump(exclude_unset=True, by_alias=True)
     )
+    view = dict(updated.preferences)
     await session.commit()
-    return Envelope(data=updated.preferences)
+    return Envelope(data=view)
 
 
 @router.get("/privacy", response_model=Envelope[dict], summary="Get privacy controls")
@@ -71,8 +73,9 @@ async def update_privacy(
     updated = await ExplorerService(session).update_privacy(
         profile, payload.model_dump(exclude_unset=True, by_alias=True)
     )
+    view = dict(updated.privacy)
     await session.commit()
-    return Envelope(data=updated.privacy)
+    return Envelope(data=view)
 
 
 @router.get(
@@ -99,8 +102,9 @@ async def save_item(
     entity_type: str, entity_id: uuid.UUID, user: CurrentUser, session: SessionDep
 ) -> Envelope[SavedItemOut]:
     item = await ExplorerService(session).save(user, entity_type=entity_type, entity_id=entity_id)
+    view = SavedItemOut.model_validate(item)
     await session.commit()
-    return Envelope(data=SavedItemOut.model_validate(item))
+    return Envelope(data=view)
 
 
 @router.delete(

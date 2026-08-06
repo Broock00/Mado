@@ -56,6 +56,15 @@ TYPE_PLACE = "place"
 TYPE_EVENT = "event"
 TYPE_ACTIVITY = "activity"
 
+# Moderation outcome, tracked separately from the publishing lifecycle (spec
+# BUSINESS-07). The two are genuinely independent: an experience can be published
+# and later flagged, and it must be possible to withhold something from discovery
+# without the author's own status silently changing under them.
+MODERATION_APPROVED = "approved"
+MODERATION_PENDING = "pending"
+MODERATION_FLAGGED = "flagged"
+MODERATION_REJECTED = "rejected"
+
 # Embedding width for the Gemini text-embedding family; the vector column is sized
 # once here so a model swap is a single deliberate migration rather than a surprise.
 EMBEDDING_DIM = 768
@@ -244,6 +253,34 @@ class Experience(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     status: Mapped[str] = mapped_column(String(16), default=STATUS_DRAFT, nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
+    # --- Moderation (spec BUSINESS-07) --------------------------------------
+    # Independent of `status`: the author controls publishing, the platform
+    # controls moderation. An experience can be published by its author and still
+    # withheld from discovery, without its status changing beneath them.
+    # server_default as well as default: these columns are NOT NULL and are added
+    # to a populated table, and rows written by migrations or direct SQL need a
+    # value without the ORM present.
+    moderation_status: Mapped[str] = mapped_column(
+        String(16),
+        default=MODERATION_APPROVED,
+        server_default=MODERATION_APPROVED,
+        nullable=False,
+    )
+    moderation_notes: Mapped[str | None] = mapped_column(Text, default=None)
+    report_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    # 0-1 risk from automated checks at submission. High scores route to review
+    # rather than blocking outright - spec BUSINESS-07 reserves hard enforcement
+    # for human decisions.
+    risk_score: Mapped[float] = mapped_column(
+        Numeric(4, 3), default=0.0, server_default="0", nullable=False
+    )
+    # True when a human has ruled, so automated re-checks stop overriding them.
+    moderation_locked: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+
     price_type: Mapped[str] = mapped_column(String(16), default="free", nullable=False)
     price_amount: Mapped[float | None] = mapped_column(Numeric(12, 2), default=None)
     price_max: Mapped[float | None] = mapped_column(Numeric(12, 2), default=None)
@@ -281,6 +318,18 @@ class Experience(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     @property
     def is_published(self) -> bool:
         return self.status == STATUS_PUBLISHED and self.deleted_at is None
+
+    @property
+    def is_discoverable(self) -> bool:
+        """Whether this may appear in discovery, search or a concierge answer.
+
+        Both gates must pass: the author has published it *and* moderation has not
+        withheld it.
+        """
+        return self.is_published and self.moderation_status in {
+            MODERATION_APPROVED,
+            MODERATION_PENDING,
+        }
 
 
 class EventInstance(Base, UUIDPrimaryKey, Timestamps):

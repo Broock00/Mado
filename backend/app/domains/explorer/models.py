@@ -75,6 +75,49 @@ class Review(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     verified_attendance: Mapped[bool] = mapped_column(default=False, nullable=False)
 
 
+class ContentReport(Base, UUIDPrimaryKey, Timestamps):
+    """A community report against published content (spec BUSINESS-07).
+
+    Community reporting is the counterweight to open publishing: once anyone can
+    post, the people reading are the fastest detector of what should not be there.
+
+    Reports are advisory, never automatic enforcement. Spec BUSINESS-07 reserves
+    account suspension and content removal for human judgement, so a report raises
+    a signal and can withhold content pending review - it cannot delete anything.
+    """
+
+    __tablename__ = "content_reports"
+    __table_args__ = (
+        # One report per person per item. Without this, a handful of determined
+        # users could manufacture a takeover of the moderation queue.
+        UniqueConstraint("reporter_user_id", "experience_id", name="uq_report_per_reporter"),
+        Index("ix_reports_status_created", "status", "created_at"),
+        {"schema": SCHEMA},
+    )
+
+    experience_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("catalog.experiences.id", ondelete="CASCADE"),
+        index=True,
+    )
+    reporter_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="SET NULL"),
+        default=None,
+        index=True,
+    )
+    # spam | inaccurate | inappropriate | duplicate | scam | other
+    reason: Mapped[str] = mapped_column(String(32), nullable=False)
+    detail: Mapped[str | None] = mapped_column(Text, default=None)
+    # open | reviewing | upheld | dismissed
+    status: Mapped[str] = mapped_column(String(16), default="open", nullable=False)
+    resolution_note: Mapped[str | None] = mapped_column(Text, default=None)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    resolved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="SET NULL"), default=None
+    )
+
+
 class InteractionEvent(Base, UUIDPrimaryKey):
     """Behavioural signal feeding personalization (spec 10.01.02 "Progressive Learning").
 

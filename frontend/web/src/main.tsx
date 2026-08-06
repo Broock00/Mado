@@ -10,6 +10,8 @@ import { SearchPage } from '@/features/search/SearchPage'
 import { ExperienceDetailPage } from '@/features/experiences/ExperienceDetailPage'
 import { SavedPage } from '@/features/saved/SavedPage'
 import { SignInPage } from '@/features/auth/SignInPage'
+import { MyPostsPage } from '@/features/publishing/MyPostsPage'
+import { ComposePage } from '@/features/publishing/ComposePage'
 import { NotFoundPage } from '@/features/NotFoundPage'
 
 const queryClient = new QueryClient({
@@ -33,6 +35,9 @@ const router = createBrowserRouter([
       { path: 'search', element: <SearchPage /> },
       { path: 'experiences/:experienceId', element: <ExperienceDetailPage /> },
       { path: 'saved', element: <SavedPage /> },
+      { path: 'posts', element: <MyPostsPage /> },
+      { path: 'compose', element: <ComposePage /> },
+      { path: 'compose/:experienceId', element: <ComposePage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

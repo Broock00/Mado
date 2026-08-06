@@ -33,7 +33,20 @@ SessionFactory = async_sessionmaker(
 
 
 class Base(DeclarativeBase):
-    """Declarative base shared by every domain's models."""
+    """Declarative base shared by every domain's models.
+
+    ``eager_defaults`` makes flush fetch server-generated values in the same
+    statement, via Postgres ``RETURNING``. Without it, a column like
+    ``updated_at`` (``onupdate=func.now()``) is computed by the database and left
+    expired on the instance, so the next attribute read emits a lazy SELECT - which
+    raises ``MissingGreenlet`` under an async session, at whatever unrelated line
+    happened to touch the attribute first.
+
+    Setting it here rather than per-model means no future timestamped table has to
+    rediscover this.
+    """
+
+    __mapper_args__ = {"eager_defaults": True}
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
