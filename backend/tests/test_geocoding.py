@@ -113,3 +113,64 @@ class TestLocalGeocoder:
         assert (
             await geocoder.geocode("Atlantis", city="Addis Ababa", country="Ethiopia") is None
         )
+
+
+class TestReverseGeocoding:
+    """Naming a dropped pin.
+
+    The publisher already chose the point, so this is a label rather than an
+    answer. Everything here is about degrading to "no label" instead of failing.
+    """
+
+    @pytest.mark.anyio
+    async def test_the_local_geocoder_names_the_nearest_known_place(self):
+        geocoder = LocalGeocoder(
+            {"Piassa": (9.0348, 38.7503), "Bole": (8.9945, 38.7896)}
+        )
+        assert "Piassa" in (await geocoder.reverse(9.0350, 38.7500) or "")
+        assert "Bole" in (await geocoder.reverse(8.9950, 38.7890) or "")
+
+    @pytest.mark.anyio
+    async def test_it_returns_nothing_rather_than_guessing(self):
+        assert await LocalGeocoder({}).reverse(9.0, 38.7) is None
+
+    def test_the_address_is_trimmed_to_what_a_person_would_say(self):
+        """Nominatim returns the whole administrative chain; nobody talks that way."""
+        from app.integrations.geocoding import _short_address
+
+        label = _short_address(
+            {
+                "address": {
+                    "amenity": "Tomoca Coffee",
+                    "road": "Wawel Street",
+                    "suburb": "Piassa",
+                    "city": "Addis Ababa",
+                    "state": "Addis Ababa",
+                    "postcode": "1000",
+                    "country": "Ethiopia",
+                    "country_code": "et",
+                }
+            }
+        )
+        assert label == "Tomoca Coffee, Wawel Street, Piassa, Addis Ababa"
+        assert "Ethiopia" not in label
+        assert "1000" not in label
+
+    def test_duplicate_names_in_the_chain_appear_once(self):
+        """A city whose suburb shares its name should not be repeated."""
+        from app.integrations.geocoding import _short_address
+
+        label = _short_address(
+            {"address": {"road": "Main Street", "suburb": "Addis Ababa", "city": "Addis Ababa"}}
+        )
+        assert label.count("Addis Ababa") == 1
+
+    def test_it_falls_back_to_the_full_name_when_unstructured(self):
+        from app.integrations.geocoding import _short_address
+
+        assert _short_address({"display_name": "Somewhere, Ethiopia"}) == "Somewhere, Ethiopia"
+
+    def test_an_empty_response_yields_nothing(self):
+        from app.integrations.geocoding import _short_address
+
+        assert _short_address({}) is None

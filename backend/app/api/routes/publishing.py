@@ -8,6 +8,7 @@ but nobody has to think about it.
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 
 from fastapi import APIRouter, File, Form, Query, Request, UploadFile, status
@@ -428,6 +429,51 @@ class GeocodeOut(CamelModel):
     formatted_address: str
     confidence: float
     provider: str
+
+
+class LocateRequest(CamelModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+
+
+class LocateOut(CamelModel):
+    latitude: float
+    longitude: float
+    # What is at this point, in words. Purely a label: the coordinates are the
+    # truth because a person put the pin there deliberately, and this only helps
+    # them confirm it is the right there.
+    label: str | None = None
+
+
+@router.post(
+    "/venues/locate",
+    response_model=Envelope[LocateOut],
+    summary="Describe a point on the map",
+    description=(
+        "Reverse geocodes a dropped pin so the publisher can see what is there. "
+        "The coordinates are authoritative - this only labels them, and a failed "
+        "lookup returns the point with no label rather than an error."
+    ),
+)
+async def locate_point(
+    payload: LocateRequest,
+    user: CurrentUser,
+    session: SessionDep,
+    request: Request,
+) -> Envelope[LocateOut]:
+    await rate_limit.check(rate_limit.identify(request, str(user.id)), rate_limit.GEOCODE_LIMIT)
+
+    # Deliberately never fails the request. The publisher has already chosen this
+    # point; being unable to name it is a missing label, not a missing location.
+    label = None
+    with contextlib.suppress(Exception):
+        label = await get_geocoder().reverse(payload.latitude, payload.longitude)
+
+    return Envelope(
+        data=LocateOut(
+            latitude=payload.latitude, longitude=payload.longitude, label=label
+        )
+    )
 
 
 @router.post(

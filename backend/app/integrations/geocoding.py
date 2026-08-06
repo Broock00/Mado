@@ -70,6 +70,16 @@ class Geocoder(Protocol):
 
     async def geocode(self, address: str, *, city: str, country: str) -> GeocodeResult | None: ...
 
+    async def reverse(self, latitude: float, longitude: float) -> str | None:
+        """Describe a point in words.
+
+        Used to tell a publisher what they just dropped a pin on. Returns a
+        description or None - never a confidence, because the coordinates came
+        from a deliberate act rather than a guess. Failure here degrades the
+        label, not the location.
+        """
+        ...
+
 
 class GoogleGeocoder:
     """Google Geocoding API. The vendor named in spec 82.01."""
@@ -118,6 +128,24 @@ class GoogleGeocoder:
             confidence=_google_confidence(best),
             provider=self.name,
         )
+
+
+    async def reverse(self, latitude: float, longitude: float) -> str | None:
+        try:
+            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+                response = await client.get(
+                    "https://maps.googleapis.com/maps/api/geocode/json",
+                    params={"latlng": f"{latitude},{longitude}"},
+                    headers={"X-Goog-Api-Key": self._api_key},
+                )
+                response.raise_for_status()
+                body = response.json()
+        except httpx.HTTPError as exc:
+            logger.warning("google_reverse_failed", error=redact(str(exc)))
+            return None
+
+        results = body.get("results") or []
+        return results[0].get("formatted_address") if results else None
 
 
 def _google_confidence(result: dict) -> float:
@@ -185,6 +213,52 @@ class NominatimGeocoder:
             provider=self.name,
         )
 
+    async def reverse(self, latitude: float, longitude: float) -> str | None:
+        try:
+            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+                response = await client.get(
+                    "https://nominatim.openstreetmap.org/reverse",
+                    params={
+                        "lat": str(latitude),
+                        "lon": str(longitude),
+                        "format": "jsonv2",
+                        # Street level. Asking for building level returns a house
+                        # number that is usually the neighbour's, which reads as
+                        # precision the pin does not have.
+                        "zoom": "18",
+                    },
+                    headers={"User-Agent": "Mado/1.0 (city discovery platform)"},
+                )
+                response.raise_for_status()
+                body = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("nominatim_reverse_failed", error=redact(str(exc)))
+            return None
+
+        return _short_address(body)
+
+
+def _short_address(body: dict) -> str | None:
+    """Trim a reverse-geocode result to something a person would say.
+
+    Nominatim returns the full administrative chain - street, suburb, subcity,
+    city, zone, region, postcode, country. Nobody describes a cafe that way, and
+    showing all of it buries the part that tells a publisher whether the pin is
+    in the right place.
+    """
+    address = body.get("address") or {}
+    if not address:
+        return body.get("display_name")
+
+    # Ordered by how a person would actually locate something.
+    parts = [
+        address.get("amenity") or address.get("building") or address.get("shop"),
+        address.get("road"),
+        address.get("neighbourhood") or address.get("suburb") or address.get("quarter"),
+        address.get("city") or address.get("town"),
+    ]
+    trimmed = [part for part in parts if part]
+    return ", ".join(dict.fromkeys(trimmed)) or body.get("display_name")
 
 # Administrative area types that are never precise enough to pin a venue to,
 # whatever else the result says. A match on "Ethiopia" is a failure dressed up as
@@ -239,6 +313,20 @@ class LocalGeocoder:
 
     def __init__(self, places: dict[str, tuple[float, float]] | None = None) -> None:
         self._places = places or {}
+
+    async def reverse(self, latitude: float, longitude: float) -> str | None:
+        """Nearest known neighbourhood, or nothing.
+
+        Offline, so it can only describe a point as being near somewhere it
+        already knows about.
+        """
+        if not self._places:
+            return None
+        name, _ = min(
+            self._places.items(),
+            key=lambda item: (item[1][0] - latitude) ** 2 + (item[1][1] - longitude) ** 2,
+        )
+        return f"Near {name}"
 
     async def geocode(self, address: str, *, city: str, country: str) -> GeocodeResult | None:
         needle = address.casefold()

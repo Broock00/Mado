@@ -377,7 +377,21 @@ export const api = {
       body: JSON.stringify({ url, altText }),
     }).then((r) => r.data),
 
-  /** Resolve a street address to coordinates so publishers never type them. */
+  /**
+   * Describe a dropped pin. Never throws for a missing label - the coordinates
+   * are already chosen and a name for them is confirmation, not the answer.
+   */
+  locate: (latitude: number, longitude: number) =>
+    request<Envelope<{ latitude: number; longitude: number; label: string | null }>>(
+      '/api/v1/posts/venues/locate',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ latitude, longitude }),
+      },
+    ).then((r) => r.data),
+
+  /** Move the map to a searched place. The publisher still confirms the pin. */
   geocode: (address: string, citySlug: string) =>
     request<Envelope<GeocodeResult>>('/api/v1/posts/venues/geocode', {
       method: 'POST',

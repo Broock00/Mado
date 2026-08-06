@@ -26,7 +26,7 @@ import {
 } from 'lucide-react'
 import { ApiError, api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
-import type { GeocodeResult } from '@/lib/types'
+import type { PickedLocation } from '@/features/map/LocationPicker'
 import { Badge, Button, Card, Input } from '@/design-system/primitives'
 import { cn } from '@/lib/utils'
 import type { CreatePostInput, OwnPost } from '@/lib/types'
@@ -38,9 +38,18 @@ const TYPES: { value: CreatePostInput['type']; label: string; hint: string }[] =
 ]
 
 // Loaded on demand - the confirmation map is only reached by publishers.
-const ExperienceMap = lazy(() =>
-  import('@/features/map/ExperienceMap').then((m) => ({ default: m.ExperienceMap })),
+const LocationPicker = lazy(() =>
+  import('@/features/map/LocationPicker').then((m) => ({ default: m.LocationPicker })),
 )
+
+/**
+ * Where the picker opens when the publisher has not shared their location.
+ * Falls back to the pilot city rather than the middle of the ocean, which is
+ * where an unset centre lands.
+ */
+const CITY_CENTRES: Record<string, { latitude: number; longitude: number }> = {
+  'addis-ababa': { latitude: 9.0192, longitude: 38.7525 },
+}
 
 export function ComposePage() {
   const { experienceId } = useParams()
@@ -50,6 +59,7 @@ export function ComposePage() {
 
   const user = useAppStore((s) => s.user)
   const citySlug = useAppStore((s) => s.citySlug)
+  const explorerLocation = useAppStore((s) => s.location)
 
   const [draftId, setDraftId] = useState<string | null>(experienceId ?? null)
   const [error, setError] = useState<string | null>(null)
@@ -68,9 +78,9 @@ export function ComposePage() {
   // Venue is captured inline. Requiring people to find a venue in a picker before
   // they can describe their own event is the kind of friction that stops them
   // posting at all.
-  const [venue, setVenue] = useState({ name: '', address: '', latitude: '', longitude: '' })
+  const [venue, setVenue] = useState({ name: '' })
   const [venueId, setVenueId] = useState<string | null>(null)
-  const [located, setLocated] = useState<GeocodeResult | null>(null)
+  const [picked, setPicked] = useState<PickedLocation | null>(null)
   const [dateInput, setDateInput] = useState('')
   const [imageUrl, setImageUrl] = useState('')
 
@@ -105,19 +115,19 @@ export function ComposePage() {
   const post: OwnPost | undefined = existing
   const problems = post?.readinessProblems ?? []
 
-  const geocode = useMutation({
-    mutationFn: () => api.geocode(venue.address, citySlug),
-    onSuccess: (result) => setLocated(result),
-  })
-
   const createVenue = useMutation({
     mutationFn: () =>
       api.createVenue({
         name: venue.name,
-        address: venue.address,
+        // The reverse-geocoded label, or the coordinates themselves when
+        // nothing could name them. Either way it describes the pin the
+        // publisher actually placed.
+        address:
+          picked?.label ??
+          `${picked!.latitude.toFixed(5)}, ${picked!.longitude.toFixed(5)}`,
         citySlug: form.citySlug,
-        latitude: located!.latitude,
-        longitude: located!.longitude,
+        latitude: picked!.latitude,
+        longitude: picked!.longitude,
       }),
     onSuccess: (created) => setVenueId(created.id),
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Could not add that place.'),
@@ -365,86 +375,51 @@ export function ComposePage() {
             </p>
           ) : (
             <>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Input
-                  value={venue.name}
-                  onChange={(e) => setVenue({ ...venue, name: e.target.value })}
-                  placeholder="Place name"
-                  aria-label="Place name"
-                />
-                <Input
-                  value={venue.address}
-                  onChange={(e) => setVenue({ ...venue, address: e.target.value })}
-                  placeholder="Street address"
-                  aria-label="Street address"
-                />
-              </div>
+              <Input
+                value={venue.name}
+                onChange={(e) => setVenue({ ...venue, name: e.target.value })}
+                placeholder="What is this place called?"
+                aria-label="Place name"
+              />
 
-              {/* Coordinates are looked up, not typed. Nobody adding a cafe knows
-                  its latitude, and a listing with guessed coordinates is worse
-                  than one with none - it turns up confidently in "near you" for
-                  the wrong neighbourhood. */}
-              {!located ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => geocode.mutate()}
-                    loading={geocode.isPending}
-                    disabled={venue.address.trim().length < 3}
-                  >
-                    <MapPin className="size-4" aria-hidden />
-                    Find on the map
-                  </Button>
-                  {geocode.isError && (
-                    <span className="text-sm text-red-700">
-                      {(geocode.error as Error).message}
-                    </span>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {/* Shown back for confirmation. A geocoder returns a precise
-                      point even for a poor query, so a person checking the
-                      resolved address is the only real safeguard against a pin
-                      landing somewhere plausible but wrong. */}
-                  <p className="text-sm text-sand-600">
-                    Found: <span className="text-sand-900">{located.formattedAddress}</span>
-                  </p>
-                  <Suspense
-                    fallback={<div className="h-48 w-full animate-pulse rounded-xl bg-sand-200" />}
-                  >
-                    <ExperienceMap
-                      className="h-48 w-full overflow-hidden rounded-xl"
-                      zoom={16}
-                      experiences={[
-                        {
-                          id: 'preview',
-                          title: venue.name || 'This place',
-                          venue: {
-                            latitude: located.latitude,
-                            longitude: located.longitude,
-                          },
-                        } as never,
-                      ]}
-                    />
-                  </Suspense>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => createVenue.mutate()}
-                      loading={createVenue.isPending}
-                      disabled={!venue.name}
-                    >
-                      <Plus className="size-4" aria-hidden />
-                      That is the place
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => setLocated(null)}>
-                      Not quite — try again
-                    </Button>
-                  </div>
-                </div>
+              {/* The map is the input, not a preview of one. Typing an address
+                  asked publishers for something they do not know - nobody
+                  standing outside their own cafe knows the postal address a
+                  geocoder wants - and gave no feedback until after they had
+                  committed. Placing a pin is the same act as knowing where you
+                  are. */}
+              <Suspense
+                fallback={<div className="h-72 w-full animate-pulse rounded-xl bg-sand-200" />}
+              >
+                <LocationPicker
+                  centre={
+                    explorerLocation.latitude != null && explorerLocation.longitude != null
+                      ? {
+                          latitude: explorerLocation.latitude,
+                          longitude: explorerLocation.longitude,
+                        }
+                      : CITY_CENTRES[citySlug] ?? CITY_CENTRES['addis-ababa']
+                  }
+                  value={picked}
+                  onChange={setPicked}
+                  citySlug={citySlug}
+                />
+              </Suspense>
+
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => createVenue.mutate()}
+                loading={createVenue.isPending}
+                disabled={!venue.name.trim() || !picked}
+              >
+                <Plus className="size-4" aria-hidden />
+                Use this location
+              </Button>
+              {createVenue.isError && (
+                <p className="text-sm text-red-700" role="alert">
+                  {(createVenue.error as Error).message}
+                </p>
               )}
             </>
           )}
