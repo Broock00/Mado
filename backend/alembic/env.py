@@ -31,9 +31,23 @@ target_metadata = Base.metadata
 MADO_SCHEMAS = {"identity", "publisher", "catalog", "explorer", "ai"}
 
 
+# Indexes created by raw SQL because SQLAlchemy's metadata cannot express them:
+# HNSW needs a vector operator class, and the model-tag index is partial. They are
+# absent from Base.metadata by definition, so autogenerate reflects them from the
+# database, finds no counterpart, and proposes dropping them on *every* run. Left
+# unhandled that is a trap - one unreviewed migration silently drops the ANN index
+# and vector search quietly degrades to a sequential scan.
+RAW_SQL_INDEXES = {
+    "ix_experiences_embedding_hnsw",
+    "ix_experiences_embedding_model",
+}
+
+
 def include_object(obj, name, type_, reflected, compare_to) -> bool:
     if type_ == "table":
         return obj.schema in MADO_SCHEMAS
+    if type_ == "index" and name in RAW_SQL_INDEXES:
+        return False
     return True
 
 

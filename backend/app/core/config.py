@@ -40,8 +40,14 @@ class Settings(BaseSettings):
     # The gateway owns provider selection; "stub" runs a deterministic local provider
     # so the concierge stays exercisable with no key, no network and no spend.
     ai_provider: Literal["stub", "gemini"] = "stub"
+    # Configured separately from chat generation: embeddings are far cheaper, and
+    # wanting real semantic retrieval with local generation is a reasonable
+    # combination. "auto" follows ai_provider so the default stays unsurprising.
+    embedding_provider: Literal["auto", "hashing", "gemini"] = "auto"
     gemini_api_key: str = ""
-    ai_fast_model: str = "gemini-2.0-flash"
+    # Defaults are verified against the API rather than the model listing, which
+    # still advertises gemini-2.0-flash even though generateContent now 404s on it.
+    ai_fast_model: str = "gemini-2.5-flash"
     ai_reasoning_model: str = "gemini-2.5-pro"
     ai_request_timeout_seconds: float = 30.0
 

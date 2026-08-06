@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -380,5 +380,126 @@ register(
             "required": ["experience_id"],
         },
         handler=_get_experience_details,
+    )
+)
+
+
+async def _plan_outing(
+    *,
+    session: AsyncSession,
+    ctx: RankingContext,
+    city_slug: str,
+    starts_after: str | None = None,
+    starts_before: str | None = None,
+    budget: float | None = None,
+    max_stops: int = 3,
+    categories: list[str] | None = None,
+    free_only: bool = False,
+) -> ToolResult:
+    """Build an actual itinerary rather than a list of candidates.
+
+    This is the tool that makes PLAN_ACTIVITY mean something. Before it existed,
+    "plan me an evening" ran a search and the model was left to invent an order and
+    some timings - which is precisely the fact-inventing that spec 56.01 s3.1
+    forbids. Now the ordering, the travel allowance and the timings are computed,
+    and the model only has to phrase them.
+    """
+    from app.domains.explorer.planning import PlanRequest
+    from app.domains.explorer.planning_service import PlanningService
+
+    start = _parse_time(starts_after) or ctx.now
+    end = _parse_time(starts_before) or (start + timedelta(hours=5))
+    if end <= start:
+        end = start + timedelta(hours=5)
+
+    request = PlanRequest(
+        start=start,
+        end=end,
+        city_slug=city_slug,
+        latitude=ctx.latitude,
+        longitude=ctx.longitude,
+        budget=budget,
+        max_stops=max(1, min(6, max_stops)),
+        categories=categories or [],
+        free_only=free_only,
+    )
+
+    plan = await PlanningService(session).plan(request, ctx)
+    if plan.is_empty:
+        return ToolResult(tool="plan_outing", ok=False, error=plan.rationale)
+
+    try:
+        zone = ZoneInfo(ctx.timezone)
+    except Exception:  # noqa: BLE001 - an unknown zone must not break a reply
+        zone = UTC
+
+    items = []
+    for position, stop in enumerate(plan.stops, start=1):
+        arrive = stop.arrive_at.astimezone(zone)
+        depart = stop.depart_at.astimezone(zone)
+        items.append(
+            {
+                "id": str(stop.experience.id),
+                "title": stop.experience.title,
+                "summary": stop.experience.summary,
+                "type": stop.experience.type,
+                "category": stop.experience.category.name if stop.experience.category else None,
+                "venueName": stop.experience.venue.name if stop.experience.venue else None,
+                # Pre-rendered in the city's clock so the model never formats or
+                # converts a time itself.
+                "when": f"{arrive:%H:%M} - {depart:%H:%M}",
+                "price": "Free" if stop.estimated_cost == 0 else f"{stop.estimated_cost:.0f} ETB",
+                "reason": (
+                    f"Stop {position}"
+                    + (" - starts at a set time" if stop.is_fixed_time else "")
+                    + (
+                        f", {stop.travel_minutes} min from the last stop"
+                        if position > 1
+                        else ""
+                    )
+                ),
+            }
+        )
+
+    return ToolResult(
+        tool="plan_outing",
+        ok=True,
+        items=items,
+        entity_ids=[str(stop.experience.id) for stop in plan.stops],
+    )
+
+
+def _parse_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+register(
+    ToolDefinition(
+        name="plan_outing",
+        description=(
+            "Build an ordered, timed itinerary for a window of time, allowing for "
+            "travel between stops and treating scheduled events as fixed points."
+        ),
+        side_effect=SIDE_EFFECT_NONE,
+        risk=RISK_LOW,
+        requires_confirmation=False,
+        parameters={
+            "type": "object",
+            "properties": {
+                "starts_after": {"type": "string", "description": "ISO 8601 window start."},
+                "starts_before": {"type": "string", "description": "ISO 8601 window end."},
+                "budget": {"type": "number", "minimum": 0},
+                "max_stops": {"type": "integer", "minimum": 1, "maximum": 6},
+                "categories": {"type": "array", "items": {"type": "string"}},
+                "free_only": {"type": "boolean"},
+            },
+        },
+        handler=_plan_outing,
     )
 )

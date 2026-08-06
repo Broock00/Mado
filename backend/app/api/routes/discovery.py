@@ -12,6 +12,7 @@ from app.core.config import get_settings
 from app.core.envelope import CollectionEnvelope, Envelope, clamp_limit
 from app.domains.catalog.schemas import CamelModel, ExperienceSummary
 from app.domains.discovery.service import DiscoveryService, build_context
+from app.domains.explorer.learning import infer_preferences
 from app.domains.explorer.service import ExplorerService
 
 router = APIRouter(tags=["discovery"])
@@ -50,12 +51,23 @@ QueryDep = Annotated[DiscoveryQuery, Depends(discovery_query)]
 async def _context(session, user, params: DiscoveryQuery):
     saved_ids = await ExplorerService(session).saved_experience_ids(user.id if user else None)
     preferences = user.profile.preferences if user and user.profile else {}
+    privacy = user.profile.privacy if user and user.profile else None
+
+    # Behaviour is read once per request and handed to the ranker. Signed-in only:
+    # the events an anonymous explorer generates are keyed to a client id that is
+    # not a durable identity, and profiling one would be personalization without
+    # anyone having agreed to it.
+    inferred = None
+    if user is not None:
+        inferred = await infer_preferences(session, user_id=user.id, privacy=privacy)
+
     return build_context(
         latitude=params.latitude,
         longitude=params.longitude,
         preferences=preferences,
         saved_ids=saved_ids,
         is_raining=params.raining,
+        inferred=inferred,
     )
 
 
@@ -176,6 +188,10 @@ class SearchMeta(CamelModel):
     query: str
     total: int
     degraded: bool = False
+    # Whether vector retrieval contributed, so the client can distinguish
+    # "matched your words" from "understood what you meant" - and so a silent
+    # degradation to keyword-only is visible rather than invisible.
+    semantic: bool = False
 
 
 class SearchOut(CamelModel):
@@ -227,7 +243,12 @@ async def search(
     return Envelope(
         data=SearchOut(
             results=outcome.items,
-            meta=SearchMeta(query=q, total=outcome.total, degraded=outcome.degraded),
+            meta=SearchMeta(
+                query=q,
+                total=outcome.total,
+                degraded=outcome.degraded,
+                semantic=outcome.semantic,
+            ),
         )
     )
 

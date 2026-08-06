@@ -18,6 +18,7 @@ from app.core.errors import RateLimitError
 from app.domains.catalog.models import Experience
 from app.domains.catalog.schemas import EventInstanceOut
 from app.domains.catalog.serializers import to_detail
+from app.domains.discovery.embedding_service import embed_experience
 from app.domains.discovery.indexer import index_experience, remove_experience
 from app.domains.publisher.schemas import (
     AddEventRequest,
@@ -164,8 +165,9 @@ async def update_post(
     experience = await service.update_experience(
         user, experience_id, payload.model_dump(exclude_unset=True)
     )
-    # Keep the index in step with an edit that is already live.
+    # Keep both retrievers in step with an edit that is already live.
     if experience.is_discoverable:
+        await embed_experience(session, experience)
         await index_experience(experience)
     view = _own_view(experience)
     await session.commit()
@@ -192,6 +194,9 @@ async def publish_post(
     await trust.screen_on_publish(experience)
 
     if experience.is_discoverable:
+        # Both retrievers are refreshed together so a new post is reachable by
+        # words and by meaning from the moment it goes live.
+        await embed_experience(session, experience)
         await index_experience(experience)
     view = _own_view(experience)
     await session.commit()

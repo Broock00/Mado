@@ -22,7 +22,7 @@ import httpx
 
 from app.core.config import get_settings
 from app.core.errors import ServiceUnavailableError
-from app.core.logging import get_logger
+from app.core.logging import get_logger, redact
 
 logger = get_logger("mado.ai.provider")
 
@@ -36,6 +36,12 @@ class GenerationRequest:
     response_schema: dict[str, Any] | None = None
     temperature: float = 0.4
     max_output_tokens: int = 1024
+    # Gemini 2.5 models reason before answering, and those thinking tokens are
+    # drawn from the same budget as the answer. On a long prompt that silently
+    # starved the response: the call succeeded, finishReason was STOP, and the
+    # content came back truncated or empty. Extraction tasks gain nothing from it,
+    # so they turn it off; open-ended generation leaves it on.
+    thinking: bool = True
 
 
 @dataclass(slots=True)
@@ -91,36 +97,57 @@ class GeminiProvider:
             payload["generationConfig"]["responseMimeType"] = "application/json"
             payload["generationConfig"]["responseSchema"] = request.response_schema
 
+        if not request.thinking:
+            payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
+
         url = f"{self._base}/{model}:generateContent"
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.post(
                     url,
-                    params={"key": self._api_key},
                     json=payload,
-                    headers={"Content-Type": "application/json"},
+                    # Header auth, not `?key=`: httpx renders the full URL into the
+                    # text of any transport error, which would put the key in logs.
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-goog-api-key": self._api_key,
+                    },
                 )
                 response.raise_for_status()
                 body = response.json()
         except httpx.HTTPError as exc:
-            logger.warning("gemini_request_failed", error=str(exc), model=model)
+            logger.warning("gemini_request_failed", error=redact(str(exc)), model=model)
             raise ServiceUnavailableError(
                 "The assistant is temporarily unavailable.", code="AI_PROVIDER_UNAVAILABLE"
             ) from exc
 
+        usage = body.get("usageMetadata", {})
+        candidate = (body.get("candidates") or [{}])[0]
+        # Carried into every failure log below. A truncated or empty response is
+        # almost always a budget or safety outcome rather than a malformed model,
+        # and without these fields the two are indistinguishable from the outside.
+        diagnostics = {
+            "model": model,
+            "finish_reason": candidate.get("finishReason"),
+            "thought_tokens": usage.get("thoughtsTokenCount", 0),
+            "output_tokens": usage.get("candidatesTokenCount", 0),
+            "max_output_tokens": request.max_output_tokens,
+        }
+
         try:
-            text = body["candidates"][0]["content"]["parts"][0]["text"]
+            text = candidate["content"]["parts"][0]["text"]
         except (KeyError, IndexError):
-            logger.warning("gemini_empty_response", model=model)
+            logger.warning("gemini_empty_response", **diagnostics)
             text = ""
 
-        usage = body.get("usageMetadata", {})
         structured = None
         if request.response_schema is not None and text:
             try:
                 structured = json.loads(text)
             except json.JSONDecodeError:
-                logger.warning("gemini_structured_parse_failed", model=model)
+                logger.warning(
+                    "gemini_structured_parse_failed", **diagnostics, preview=text[:120]
+                )
 
         return GenerationResult(
             text=text,

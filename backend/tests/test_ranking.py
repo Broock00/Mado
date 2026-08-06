@@ -14,6 +14,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.domains.discovery.ranking import (
+    BROWSE_WEIGHTS,
+    SEARCH_WEIGHTS,
     RankingContext,
     apply_diversity,
     haversine_km,
@@ -215,3 +217,65 @@ class TestTimeWindows:
         start, end = weekend_window(saturday)
         assert (start - saturday) < timedelta(days=1)
         assert end.weekday() == 6
+
+
+class TestWeightProfiles:
+    """A typed query must lead ranking; an untyped feed must not be led by it.
+
+    Regression cover for a real defect: searching "buna" returned a music event
+    first, because under the browse profile a 0.26 relevance share lost to a
+    well-timed nearby item. Retrieval was correct - ranking buried it.
+    """
+
+    def test_profiles_are_normalised(self):
+        for profile in (BROWSE_WEIGHTS, SEARCH_WEIGHTS):
+            assert sum(profile.values()) == pytest.approx(1.0)
+            assert profile.keys() == BROWSE_WEIGHTS.keys()
+
+    def test_no_signal_can_outweigh_all_others(self):
+        """Spec 21 s8: no single signal dominates - true even in the search profile."""
+        for profile in (BROWSE_WEIGHTS, SEARCH_WEIGHTS):
+            largest = max(profile.values())
+            assert largest <= sum(profile.values()) - largest
+
+    def test_search_profile_lets_relevance_beat_context(self):
+        soon = datetime.now(UTC) + timedelta(hours=2)
+        # A perfect contextual match that has nothing to do with the query.
+        wrong = FakeExperience(
+            id="wrong",
+            title="Well-timed nearby event",
+            venue=FakeVenue(*CENTRE),
+            events=[FakeEvent(start_time=soon)],
+            popularity_score=1.0,
+            quality_score=1.0,
+        )
+        # What the explorer actually asked for, across town and undated.
+        right = FakeExperience(
+            id="right",
+            title="Exactly what was searched for",
+            venue=FakeVenue(9.05, 38.85),
+            popularity_score=0.0,
+            quality_score=0.3,
+        )
+        ctx = ctx_at(*CENTRE)
+        relevance = {"wrong": 0.0, "right": 1.0}
+
+        browsing = rank([wrong, right], ctx, relevance_by_id=relevance, diversify=False)
+        searching = rank(
+            [wrong, right],
+            ctx,
+            relevance_by_id=relevance,
+            diversify=False,
+            weights=SEARCH_WEIGHTS,
+        )
+
+        assert browsing[0].experience.id == "wrong", "context should carry an untyped feed"
+        assert searching[0].experience.id == "right", "a typed query must lead its own search"
+
+    def test_browse_remains_the_default(self):
+        """Callers that pass no profile keep the feed behaviour they had."""
+        exp = FakeExperience(venue=FakeVenue(*CENTRE))
+        ctx = ctx_at(*CENTRE)
+        assert score_experience(exp, ctx, relevance=0.9).score == pytest.approx(
+            score_experience(exp, ctx, relevance=0.9, weights=BROWSE_WEIGHTS).score
+        )

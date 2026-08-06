@@ -19,12 +19,26 @@ from app.domains.catalog import repository as catalog_repo
 from app.domains.catalog.models import Experience
 from app.domains.catalog.schemas import ExperienceSummary
 from app.domains.catalog.serializers import to_summary
+from app.domains.discovery.embedding_service import (
+    embed_query,
+    prune_to_best,
+    similar_by_vector,
+    vector_search,
+)
+from app.domains.discovery.fusion import (
+    KEYWORD_WEIGHT,
+    VECTOR_WEIGHT,
+    normalised_relevance,
+    reciprocal_rank_fusion,
+)
 from app.domains.discovery.ranking import (
+    SEARCH_WEIGHTS,
     RankingContext,
     rank,
     tonight_window,
     weekend_window,
 )
+from app.domains.explorer.learning import InferredPreferences
 from app.integrations.search import SearchUnavailable, get_search_client
 
 logger = get_logger("mado.discovery")
@@ -52,6 +66,9 @@ class SearchOutcome:
     # Signals that the vendor was unreachable and results came from Postgres, so
     # the UI can be honest about degraded relevance (spec 55.01 s40).
     degraded: bool = False
+    # True when vector retrieval contributed, so the client can distinguish
+    # "matched your words" from "understood what you meant".
+    semantic: bool = False
 
 
 class DiscoveryService:
@@ -69,8 +86,16 @@ class DiscoveryService:
         limit: int,
         relevance: dict[str, float] | None = None,
         diversify: bool = True,
+        weights: dict[str, float] | None = None,
     ) -> list[ExperienceSummary]:
-        ranked = rank(experiences, ctx, relevance_by_id=relevance, diversify=diversify, limit=limit)
+        ranked = rank(
+            experiences,
+            ctx,
+            relevance_by_id=relevance,
+            diversify=diversify,
+            limit=limit,
+            weights=weights,
+        )
         return [
             to_summary(
                 item.experience,
@@ -291,6 +316,22 @@ class DiscoveryService:
     async def similar_to(
         self, ctx: RankingContext, experience: Experience, *, limit: int = 12
     ) -> list[ExperienceSummary]:
+        """Related experiences, preferring semantic neighbours.
+
+        Vector similarity understands that a coffee ceremony and a roastery visit
+        are related even when they share no category or tag. The relational query
+        remains the fallback for anything not yet embedded.
+        """
+        vector_hits = await similar_by_vector(self.session, experience, limit=CANDIDATE_POOL)
+        if vector_hits:
+            ordered = [hit.experience_id for hit in vector_hits]
+            candidates = await catalog_repo.get_experiences_by_ids(self.session, ordered)
+            relevance = {str(hit.experience_id): hit.similarity for hit in vector_hits}
+            if candidates:
+                return self.summarize(
+                    candidates, ctx, limit=limit, relevance=relevance, diversify=False
+                )
+
         candidates = await catalog_repo.similar_experiences(
             self.session, experience, limit=CANDIDATE_POOL
         )
@@ -309,11 +350,20 @@ class DiscoveryService:
         experience_type: str | None = None,
         limit: int = 24,
     ) -> SearchOutcome:
-        """Retrieve candidates from the index, then rank them here.
+        """Hybrid retrieval, then platform ranking.
 
-        The vendor's relevance is one input among seven (see
-        :mod:`app.domains.discovery.ranking`), which is what keeps ranking ownership
-        inside the platform per spec 82.01 s13.
+        Two retrievers run against the same query and their results are fused by
+        rank (see :mod:`app.domains.discovery.fusion`):
+
+        * **keyword** via the search index - exact names, rare tokens
+        * **vector** via pgvector - paraphrase and intent
+
+        The fused relevance is then one input among seven to the ranker, which is
+        what keeps ranking ownership inside the platform per spec 82.01 s13.
+
+        Each retriever is optional. If the index is down we fall back to the
+        database; if embeddings are missing the keyword ranking simply stands
+        alone. Search degrades, it does not break.
         """
         filters: list[str] = []
         if city_slug:
@@ -326,11 +376,31 @@ class DiscoveryService:
         if experience_type:
             filters.append(f'type = "{experience_type}"')
 
+        # Vector retrieval runs regardless of whether the keyword index is
+        # reachable, so semantic search survives a Meilisearch outage.
+        vector_ids = await self._vector_candidates(query, city_slug=city_slug)
+
         try:
             response = await self.search.search(query, filters=filters, limit=CANDIDATE_POOL)
         except SearchUnavailable:
-            # Degrade to a database scan rather than failing the request outright.
-            logger.warning("search_degraded_to_database", query=query)
+            # The keyword index is unreachable. Vector results may still be
+            # available, and are far better than a substring scan.
+            logger.warning("keyword_search_unavailable", query=query, vector_hits=len(vector_ids))
+            if vector_ids:
+                experiences = await catalog_repo.get_experiences_by_ids(self.session, vector_ids)
+                fused = reciprocal_rank_fusion({"vector": vector_ids})
+                items = self.summarize(
+                    experiences,
+                    ctx,
+                    limit=limit,
+                    relevance=normalised_relevance(fused),
+                    diversify=False,
+                    weights=SEARCH_WEIGHTS,
+                )
+                return SearchOutcome(
+                    items=items, total=len(experiences), query=query, degraded=True
+                )
+
             candidates = await catalog_repo.query_experiences(
                 self.session,
                 city_slug=city_slug,
@@ -347,22 +417,71 @@ class DiscoveryService:
                 or (exp.summary and needle in exp.summary.casefold())
                 or needle in exp.description.casefold()
             ]
-            items = self.summarize(matched, ctx, limit=limit, diversify=False)
+            items = self.summarize(
+                matched, ctx, limit=limit, diversify=False, weights=SEARCH_WEIGHTS
+            )
             return SearchOutcome(items=items, total=len(matched), query=query, degraded=True)
 
-        ordered_ids: list[uuid.UUID] = []
-        relevance: dict[str, float] = {}
+        keyword_ids: list[uuid.UUID] = []
         for hit in response.hits:
             try:
-                identifier = uuid.UUID(hit.id)
+                keyword_ids.append(uuid.UUID(hit.id))
             except ValueError:
                 continue
-            ordered_ids.append(identifier)
-            relevance[hit.id] = hit.score
+
+        ranked_lists = {"keyword": keyword_ids}
+        if vector_ids:
+            ranked_lists["vector"] = vector_ids
+
+        fused = reciprocal_rank_fusion(
+            ranked_lists,
+            weights={"keyword": KEYWORD_WEIGHT, "vector": VECTOR_WEIGHT},
+            limit=CANDIDATE_POOL,
+        )
+        ordered_ids = [hit.experience_id for hit in fused]
 
         experiences = await catalog_repo.get_experiences_by_ids(self.session, ordered_ids)
-        items = self.summarize(experiences, ctx, limit=limit, relevance=relevance, diversify=False)
-        return SearchOutcome(items=items, total=response.estimated_total, query=query)
+        items = self.summarize(
+            experiences,
+            ctx,
+            limit=limit,
+            relevance=normalised_relevance(fused),
+            diversify=False,
+            # The explorer typed what they want; relevance leads here, unlike the feed.
+            weights=SEARCH_WEIGHTS,
+        )
+        # Semantic hits the keyword index never saw are genuine extra results, so
+        # the reported total has to account for them.
+        total = max(response.estimated_total, len(ordered_ids))
+        return SearchOutcome(items=items, total=total, query=query, semantic=bool(vector_ids))
+
+    async def _vector_candidates(
+        self, query: str, *, city_slug: str | None
+    ) -> list[uuid.UUID]:
+        """Nearest neighbours for the query, or an empty list if unavailable."""
+        if not query.strip():
+            return []
+        batch = await embed_query(query)
+        if batch is None:
+            return []
+        try:
+            hits = await vector_search(
+                self.session,
+                batch.vectors[0],
+                # The query's own producer, so a mid-flight provider fallback
+                # searches the space it actually embedded into.
+                model=batch.model,
+                max_distance=batch.max_distance,
+                city_slug=city_slug,
+                limit=CANDIDATE_POOL,
+            )
+        except Exception as exc:  # noqa: BLE001 - retrieval must never fail the request
+            logger.warning("vector_search_failed", error=str(exc))
+            return []
+        # Trim to neighbours comparable with the best one. Without this, a tight
+        # topical corpus makes nearly every listing a "match" for any query, which
+        # inflates the reported total and pads the tail with unrelated results.
+        return [hit.experience_id for hit in prune_to_best(hits)]
 
     async def suggest(self, prefix: str, *, limit: int = 8) -> list[dict]:
         if not prefix.strip():
@@ -388,13 +507,19 @@ def build_context(
     is_raining: bool = False,
     now: datetime | None = None,
     timezone: str = "Africa/Addis_Ababa",
+    inferred: InferredPreferences | None = None,
 ) -> RankingContext:
     """Assemble a :class:`RankingContext` from request and profile inputs.
 
     Preference keys mirror the Living Explorer Profile shape written by the
     onboarding flow (spec 10.01.02).
+
+    ``inferred`` is passed in rather than loaded here so this stays a pure
+    function: it reads a database, and building a ranking context should not.
+    Callers fetch it once per request via :func:`infer_preferences`.
     """
     preferences = preferences or {}
+    stated_dislikes = set(preferences.get("dislikedCategories", []) or [])
     return RankingContext(
         now=now or datetime.now(UTC),
         latitude=latitude,
@@ -402,7 +527,15 @@ def build_context(
         timezone=timezone,
         preferred_categories=set(preferences.get("categories", []) or []),
         preferred_tags=set(preferences.get("tags", []) or []),
-        disliked_categories=set(preferences.get("dislikedCategories", []) or []),
+        # Stated and learned dislikes are unioned rather than kept apart. Both mean
+        # "do not show me this", and unlike positive affinities there is no case for
+        # weighting a learned one less: repeatedly dismissing a category is about as
+        # clear as ticking a box.
+        disliked_categories=stated_dislikes
+        | (inferred.disliked_categories if inferred else set()),
+        inferred_categories=inferred.categories if inferred else {},
+        inferred_tags=inferred.tags if inferred else {},
+        inference_confidence=inferred.confidence if inferred else 0.0,
         budget=preferences.get("budget"),
         is_raining=is_raining,
         saved_experience_ids=saved_ids or set(),

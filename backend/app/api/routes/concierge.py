@@ -10,22 +10,26 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 from pydantic import Field
 
-from app.api.deps import AnonymousId, OptionalUser, SessionDep
+from app.api.deps import AnonymousId, CurrentUser, OptionalUser, SessionDep
 from app.core.config import get_settings
 from app.core.envelope import CollectionEnvelope, Envelope
-from app.core.errors import BadRequestError
+from app.core.errors import BadRequestError, NotFoundError
+from app.core.logging import get_logger
 from app.domains.ai.gateway import AIGateway, resolve_city
+from app.domains.ai.memory import MemoryService, effective_confidence, memory_enabled
 from app.domains.catalog.schemas import CamelModel
 from app.domains.discovery.service import build_context
+from app.domains.explorer.learning import infer_preferences
 from app.domains.explorer.service import ExplorerService
 
 router = APIRouter(prefix="/assistant", tags=["concierge"])
+logger = get_logger("mado.concierge")
 settings = get_settings()
 
 
@@ -94,12 +98,19 @@ async def _reply(*, session, user, anonymous_id: str | None, payload: MessageReq
     explorer = ExplorerService(session)
     saved_ids = await explorer.saved_experience_ids(user.id if user else None)
     preferences = user.profile.preferences if user and user.profile else {}
+    # None rather than {} for anonymous explorers: there is no consent on file for
+    # someone we cannot identify, and memory treats "unknown" as "no".
+    privacy = user.profile.privacy if user and user.profile else None
+    inferred = (
+        await infer_preferences(session, user_id=user.id, privacy=privacy) if user else None
+    )
     ctx = build_context(
         latitude=payload.latitude,
         longitude=payload.longitude,
         preferences=preferences,
         saved_ids=saved_ids,
         timezone=timezone,
+        inferred=inferred,
     )
 
     gateway = AIGateway(session)
@@ -117,6 +128,8 @@ async def _reply(*, session, user, anonymous_id: str | None, payload: MessageReq
         city_name=city_name,
         timezone=timezone,
         preferences=preferences,
+        user_id=user.id if user else None,
+        privacy=privacy,
     )
     await session.commit()
     return conversation, reply
@@ -254,3 +267,83 @@ async def conversation_messages(
 ) -> CollectionEnvelope[MessageOut]:
     messages = await AIGateway(session).load_history(conversation_id)
     return CollectionEnvelope(data=[MessageOut.model_validate(m) for m in messages])
+
+
+# --- Memory ------------------------------------------------------------------
+# Spec PRODUCT-00 principle 9 makes personalization revocable, which is only true
+# if the explorer can see what was remembered and remove it. A memory store with
+# no inspection surface is a black box that happens to hold personal data.
+
+
+class MemoryOut(CamelModel):
+    id: uuid.UUID
+    type: str
+    category: str | None
+    attribute: str | None
+    value: str
+    # What this memory is worth *today*, after decay - not the raw stored figure.
+    # Showing the stored value would misrepresent an old memory as still strong.
+    confidence: float
+    source: str
+    # True when the explorer stated it, false when the platform inferred it. The
+    # distinction is the point: it lets someone challenge a guess we made.
+    is_explicit: bool
+    last_reinforced_at: datetime | None
+
+
+@router.get(
+    "/memory",
+    response_model=CollectionEnvelope[MemoryOut],
+    summary="List what the concierge remembers about you",
+)
+async def list_memories(
+    session: SessionDep, user: CurrentUser
+) -> CollectionEnvelope[MemoryOut]:
+    privacy = user.profile.privacy if user.profile else None
+    if not memory_enabled(privacy):
+        return CollectionEnvelope(data=[])
+
+    memories = await MemoryService(session).list_for(user.id)
+    now = datetime.now(UTC)
+    return CollectionEnvelope(
+        data=sorted(
+            (
+                MemoryOut(
+                    id=m.id,
+                    type=m.type,
+                    category=m.category,
+                    attribute=m.attribute,
+                    value=m.value,
+                    confidence=round(effective_confidence(m, now=now), 3),
+                    source=m.source,
+                    is_explicit=m.is_explicit,
+                    last_reinforced_at=m.last_reinforced_at,
+                )
+                for m in memories
+            ),
+            key=lambda m: m.confidence,
+            reverse=True,
+        )
+    )
+
+
+@router.delete(
+    "/memory/{memory_id}",
+    status_code=204,
+    summary="Forget one thing",
+)
+async def forget_memory(memory_id: uuid.UUID, session: SessionDep, user: CurrentUser) -> None:
+    if not await MemoryService(session).forget(user.id, memory_id):
+        raise NotFoundError("Memory not found.", code="MEMORY_NOT_FOUND")
+    await session.commit()
+
+
+@router.delete(
+    "/memory",
+    status_code=204,
+    summary="Forget everything",
+)
+async def forget_all_memories(session: SessionDep, user: CurrentUser) -> None:
+    count = await MemoryService(session).forget_all(user.id)
+    await session.commit()
+    logger.info("memory_cleared", user_id=str(user.id), count=count)

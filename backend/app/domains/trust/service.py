@@ -40,6 +40,7 @@ from app.domains.catalog.models import (
 )
 from app.domains.explorer.models import ContentReport
 from app.domains.identity.models import User
+from app.domains.trust.semantic_screening import screen_semantically
 
 logger = get_logger("mado.trust")
 
@@ -139,6 +140,30 @@ def screen_text(title: str, description: str, summary: str | None = None) -> Scr
     return ScreeningResult(score, signals)
 
 
+def _combine(rules: ScreeningResult, verdict) -> ScreeningResult:
+    """Merge the two screeners, taking the worse view.
+
+    Deliberately not an average. Averaging lets a confident clearance from one
+    reader dilute a genuine concern from the other, which is the wrong direction to
+    fail in when the input is written by someone who may want a particular verdict.
+    The model can therefore raise a score but never lower one.
+    """
+    score = max(rules.score, verdict.risk)
+    signals = list(rules.signals)
+
+    if verdict.categories:
+        signals.append("content review: " + ", ".join(verdict.categories))
+    if verdict.rationale:
+        signals.append(verdict.rationale.strip().rstrip("."))
+
+    # Some categories are serious enough that a hedged score should not keep them
+    # out of the queue. A model saying "possibly fraud, 0.45" still said fraud.
+    if verdict.demands_review:
+        score = max(score, RISK_THRESHOLD_FOR_REVIEW)
+
+    return ScreeningResult(score=score, signals=signals)
+
+
 class TrustService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -153,17 +178,43 @@ class TrustService:
         silently deletes someone's work is far worse than one that delays it.
         """
         result = screen_text(experience.title, experience.description, experience.summary)
-        experience.risk_score = result.score
 
-        # A human ruling outranks any later automated re-check.
+        # A human ruling outranks any later automated re-check - and there is no
+        # point spending a model call to re-litigate a decision that cannot change
+        # the outcome.
         if experience.moderation_locked:
+            experience.risk_score = result.score
             return result
 
+        # Second, independent reading. Combined by taking the worse of the two:
+        # the pattern screener catches surface markers and cannot be argued with,
+        # the model catches intent expressed in ordinary words. Neither is allowed
+        # to clear what the other flagged, so a submission that talks its way past
+        # the model still meets the deterministic floor.
+        verdict = await screen_semantically(
+            experience.title, experience.description, experience.summary
+        )
+        if verdict.available:
+            result = _combine(result, verdict)
+
+        experience.risk_score = result.score
+
         if result.needs_review:
-            experience.moderation_status = MODERATION_PENDING
+            # FLAGGED, not PENDING. PENDING is in DISCOVERABLE_MODERATION_STATUSES,
+            # so routing here withheld nothing: a post scoring 0.85 for scam signals
+            # stayed live in the feed, in search and inside generated itineraries
+            # until a moderator happened to look. The docstring above already said
+            # "withholds it pending review"; only the status was wrong.
+            #
+            # This is still "automated systems detect, humans decide" (spec
+            # BUSINESS-07). Nothing is deleted or rejected, the author keeps and can
+            # edit their post, and a moderator makes the actual ruling. What the
+            # screener decides is only whether to promote it to strangers while that
+            # ruling is outstanding.
+            experience.moderation_status = MODERATION_FLAGGED
             experience.moderation_notes = result.as_note()
             logger.info(
-                "experience_routed_to_review",
+                "experience_withheld_for_review",
                 experience_id=str(experience.id),
                 risk=result.score,
                 signals=result.signals,

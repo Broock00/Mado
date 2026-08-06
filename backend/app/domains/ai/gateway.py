@@ -27,12 +27,14 @@ from app.core.config import get_settings
 from app.core.errors import NotFoundError
 from app.core.logging import get_logger
 from app.domains.ai import intents, tools
-from app.domains.ai.models import Conversation, Message
+from app.domains.ai.memory import MemoryService, render_for_prompt
+from app.domains.ai.models import Conversation, Message, UserMemory
 from app.domains.ai.prompts import (
     CONCIERGE_PROMPT_VERSION,
     CONCIERGE_SYSTEM_PROMPT,
     build_context_notes,
 )
+from app.domains.ai.understanding import understand
 from app.domains.catalog import repository as catalog_repo
 from app.domains.discovery.ranking import RankingContext
 from app.integrations.ai_provider import GenerationRequest, get_provider
@@ -135,17 +137,38 @@ class AIGateway:
         city_name: str,
         timezone: str,
         preferences: dict | None = None,
+        user_id: uuid.UUID | None = None,
+        privacy: dict | None = None,
     ) -> ConciergeReply:
         started = time.perf_counter()
 
-        # 1-2. Normalize and classify.
-        classification = intents.classify(text, now=ctx.now, timezone=timezone)
+        history = await self.load_history(conversation.id)
+
+        # 1. Understand. A model reads the message - intent, time, constraints and
+        # anything the explorer revealed about themselves - in one structured call.
+        # It decides what was *asked*, never what is true; facts still come from
+        # tools, below.
+        reading = await understand(
+            text,
+            now=ctx.now,
+            timezone=timezone,
+            city_name=city_name,
+            history=[{"role": m.role, "content": m.content} for m in history],
+        )
+        classification = reading.as_classification()
+
+        # 2. Recall before retrieval. What we know about this explorer can change
+        # which results are worth fetching, so it has to be available to the tools
+        # and not only to the phrasing step.
+        memories: list[UserMemory] = []
+        if user_id is not None:
+            memory_service = MemoryService(self.session)
+            memories = await memory_service.recall(user_id, text, privacy=privacy)
 
         # 3-5. Plan and execute tools. Facts are gathered before generation.
         tool_calls, results = await self._execute_plan(classification, ctx=ctx, city_slug=city_slug)
 
         # 6. Synthesize. The model phrases; it does not decide the facts.
-        history = await self.load_history(conversation.id)
         reply_text, model_name = await self._synthesize(
             classification=classification,
             results=results,
@@ -154,18 +177,23 @@ class AIGateway:
             city_name=city_name,
             ctx=ctx,
             preferences=preferences,
+            memories=memories,
         )
 
-        # 7. Validate.
+        # 7. Validate. The reader proposes its own question when it could not read
+        # the message, which is almost always more useful than a generic prompt -
+        # it knows what was unclear.
         clarification = None
-        if classification.confidence < intents.CONFIDENCE_LOW:
+        if reading.needs_clarification and reading.clarification_question:
+            clarification = reading.clarification_question
+        elif reading.is_ambiguous:
             clarification = (
                 "I want to get this right - are you after somewhere to eat, something "
                 "to watch, or something to do outdoors?"
             )
-        elif classification.time_window is not None and classification.time_window.confidence < 0.7:
+        elif reading.time_window is not None and reading.time_window.confidence < 0.7:
             clarification = (
-                f"Just to check - did you mean {classification.time_window.label} this coming week?"
+                f"Just to check - did you mean {reading.time_window.label} this coming week?"
             )
 
         latency_ms = int((time.perf_counter() - started) * 1000)
@@ -194,6 +222,14 @@ class AIGateway:
                 latency_ms=latency_ms,
             )
         )
+
+        # Write after replying, not before: a preference stated in this message
+        # should shape the *next* answer. Applying it to the current one would make
+        # the concierge appear to have known something before it was told.
+        if user_id is not None and reading.preferences:
+            await MemoryService(self.session).remember_revealed(
+                user_id, reading.preferences, privacy=privacy
+            )
 
         conversation.state = {
             **(conversation.state or {}),
@@ -244,15 +280,32 @@ class AIGateway:
         categories = constraints.get("categories")
         window = classification.time_window
 
+        # Planning is checked first, and ahead of the time-window rule below.
+        # Someone asking to plan an evening has asked for a *sequence* - answering
+        # with an unordered list of things happening tonight leaves them to work out
+        # the order, the travel and whether it is even possible, which is the entire
+        # job they delegated.
+        if classification.intent == intents.PLAN_ACTIVITY:
+            plan.append(
+                (
+                    "plan_outing",
+                    {
+                        "starts_after": window.start.isoformat() if window else None,
+                        "starts_before": window.end.isoformat() if window else None,
+                        "categories": categories,
+                        "free_only": constraints.get("free_only", False),
+                        "budget": constraints.get("budget_amount"),
+                    },
+                )
+            )
         # A stated time window is decisive, whatever the intent label. "What should
         # I do tonight?" classifies as RECOMMEND_ACTIVITY on its phrasing, but the
         # explorer plainly wants things happening tonight - answering it with an
         # all-day cafe would be wrong. Spec 56.02 s24 treats temporal expressions as
         # hard constraints, so they are checked before intent routing.
-        if window is not None or classification.intent in {
+        elif window is not None or classification.intent in {
             intents.DISCOVER_EVENTS,
             intents.SEARCH_EVENTS,
-            intents.PLAN_ACTIVITY,
         }:
             plan.append(
                 (
@@ -360,6 +413,7 @@ class AIGateway:
         city_name: str,
         ctx: RankingContext,
         preferences: dict | None,
+        memories: list[UserMemory] | None = None,
     ) -> tuple[str, str]:
         context_notes = build_context_notes(
             has_location=ctx.has_location,
@@ -367,6 +421,9 @@ class AIGateway:
             time_label=classification.time_window.label if classification.time_window else None,
             constraints=classification.constraints,
         )
+        recalled = render_for_prompt(memories or [])
+        if recalled:
+            context_notes = "\n\n".join(filter(None, [context_notes, recalled]))
         system_prompt = CONCIERGE_SYSTEM_PROMPT.format(
             city_name=city_name,
             local_time=ctx.now.strftime("%A %d %B, %H:%M UTC"),

@@ -268,10 +268,36 @@ class TestModeration:
         )
         published = client.post(f"/api/v1/posts/{post['id']}/publish", headers=auth).json()["data"]
 
-        assert published["moderationStatus"] == "pending"
+        # "flagged", not "pending". This assertion used to read "pending" and pass
+        # while the content stayed fully discoverable - the test name described
+        # withholding that was not happening. The status is only meaningful via
+        # DISCOVERABLE_MODERATION_STATUSES, which is what the next assertion checks.
+        from app.domains.catalog.repository import DISCOVERABLE_MODERATION_STATUSES
+
+        assert published["moderationStatus"] not in DISCOVERABLE_MODERATION_STATUSES
         assert published["moderationNotes"]
         # Withheld, not deleted - the author still has it.
         assert published["status"] == "published"
+
+    def test_withheld_spam_is_absent_from_discovery(self, client):
+        """The property that actually matters: a stranger cannot reach it."""
+        auth, _ = make_account(client)
+        post = make_post(
+            client,
+            auth,
+            title="EARN MONEY FAST GUARANTEED",
+            description=(
+                "100% free investment opportunity! Make money from home with crypto. "
+                "Click here now. WhatsApp +251911223344 or telegram me. Act now!"
+            ),
+        )
+        client.post(f"/api/v1/posts/{post['id']}/publish", headers=auth)
+
+        # Not readable by id, and not present in search.
+        assert client.get(f"/api/v1/experiences/{post['id']}").status_code == 404
+        results = client.get("/api/v1/search", params={"q": "EARN MONEY GUARANTEED"})
+        titles = [r["title"] for r in results.json()["data"]["results"]]
+        assert "EARN MONEY FAST GUARANTEED" not in titles
 
     def test_reports_withhold_content_at_the_threshold(self, client):
         author, _ = make_account(client, "Author")

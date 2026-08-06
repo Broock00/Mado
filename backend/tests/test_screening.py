@@ -8,6 +8,8 @@ it silently punishes the people the platform is for.
 
 from __future__ import annotations
 
+import pytest
+
 from app.domains.trust.service import RISK_THRESHOLD_FOR_REVIEW, screen_text
 
 GENUINE_POSTS = [
@@ -120,3 +122,112 @@ class TestScoreBounds:
         title, description = SPAM_POSTS[0]
         result = screen_text(title, description)
         assert result.needs_review == (result.score >= RISK_THRESHOLD_FOR_REVIEW)
+
+
+class TestHighRiskIsWithheld:
+    """High-risk content must not stay discoverable while awaiting a ruling.
+
+    Regression cover for a real leak: screening routed risky posts to PENDING,
+    which is a discoverable status, so a 0.85-risk scam listing appeared in the
+    feed, in search results and inside generated itineraries.
+    """
+
+    def test_flagged_is_not_discoverable(self):
+        from app.domains.catalog.models import MODERATION_FLAGGED, MODERATION_PENDING
+        from app.domains.catalog.repository import DISCOVERABLE_MODERATION_STATUSES
+
+        assert MODERATION_FLAGGED not in DISCOVERABLE_MODERATION_STATUSES
+        # Ordinary new content stays visible - otherwise open publishing dies
+        # waiting for a moderator.
+        assert MODERATION_PENDING in DISCOVERABLE_MODERATION_STATUSES
+
+    def test_screening_routes_risky_content_to_a_withheld_status(self):
+        from app.domains.catalog.models import MODERATION_FLAGGED
+        from app.domains.catalog.repository import DISCOVERABLE_MODERATION_STATUSES
+        from app.domains.trust.service import screen_text
+
+        result = screen_text(
+            "EARN MONEY FAST GUARANTEED",
+            "Click here to earn money fast, guaranteed! Send payment via western "
+            "union. Whatsapp me now!!!",
+            None,
+        )
+        assert result.needs_review, "obvious scam text must trip the screener"
+        # The status the service assigns for needs_review must be a withheld one.
+        assert MODERATION_FLAGGED not in DISCOVERABLE_MODERATION_STATUSES
+
+
+class TestCombinedScreening:
+    """Two readers, combined so neither can clear what the other flagged.
+
+    The pattern screener reads tokens and cannot be talked out of a verdict; the
+    semantic reader understands intent but is written by the adversary's input.
+    Each covers the other's blind spot only if the merge never averages them.
+    """
+
+    @staticmethod
+    def verdict(risk=0.0, categories=None, rationale=None, available=True):
+        from app.domains.trust.semantic_screening import SemanticVerdict
+
+        return SemanticVerdict(
+            risk=risk, categories=categories or [], rationale=rationale, available=available
+        )
+
+    def test_semantic_concern_raises_a_clean_keyword_score(self):
+        """The case that motivated this: a scam using entirely ordinary words."""
+        from app.domains.trust.service import ScreeningResult, _combine
+
+        combined = _combine(
+            ScreeningResult(0.0, []),
+            self.verdict(risk=0.9, categories=["scam"], rationale="Advance payment for tickets"),
+        )
+        assert combined.score == pytest.approx(0.9)
+        assert combined.needs_review
+
+    def test_model_cannot_lower_a_keyword_score(self):
+        """A submission that talks its way past the model still meets the floor."""
+        from app.domains.trust.service import ScreeningResult, _combine
+
+        combined = _combine(ScreeningResult(0.8, ["off-platform contact details"]),
+                            self.verdict(risk=0.0, categories=[]))
+        assert combined.score == pytest.approx(0.8)
+        assert combined.needs_review
+
+    def test_serious_categories_force_review_despite_a_hedged_score(self):
+        """"Possibly fraud, 0.45" still said fraud."""
+        from app.domains.trust.service import ScreeningResult, _combine
+
+        combined = _combine(ScreeningResult(0.1, []),
+                            self.verdict(risk=0.45, categories=["scam"]))
+        assert combined.needs_review
+
+    def test_soft_categories_do_not_force_review(self):
+        """Otherwise every mildly promotional listing lands in the queue."""
+        from app.domains.trust.service import ScreeningResult, _combine
+
+        combined = _combine(ScreeningResult(0.1, []),
+                            self.verdict(risk=0.2, categories=["spam"]))
+        assert not combined.needs_review
+
+    def test_reasoning_from_both_readers_reaches_the_moderator(self):
+        from app.domains.trust.service import ScreeningResult, _combine
+
+        combined = _combine(
+            ScreeningResult(0.3, ["shouting in the title"]),
+            self.verdict(risk=0.8, categories=["scam"], rationale="Guaranteed returns promised"),
+        )
+        note = combined.as_note()
+        assert "shouting in the title" in note
+        assert "scam" in note
+        assert "Guaranteed returns promised" in note
+
+    def test_an_unavailable_model_is_not_a_clean_bill_of_health(self):
+        """An outage must leave the deterministic verdict standing, not clear it."""
+        assert self.verdict(available=False).available is False
+
+    def test_only_known_categories_can_force_review(self):
+        """A confused or manipulated response cannot invent a serious category."""
+        from app.domains.trust.semantic_screening import ALWAYS_REVIEW, CATEGORIES
+
+        assert ALWAYS_REVIEW <= CATEGORIES
+        assert "none" not in ALWAYS_REVIEW

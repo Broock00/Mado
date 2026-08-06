@@ -3,6 +3,7 @@
 python -m app.seed              seed the pilot city and rebuild the search index
 python -m app.seed --no-index   seed only
 python -m app.seed --reindex    rebuild the search index only
+python -m app.seed --recompute  rebuild popularity and trend from interaction events
 """
 
 from __future__ import annotations
@@ -14,7 +15,9 @@ from sqlalchemy import select
 from app.core.asyncio_compat import run as run_async
 from app.core.database import SessionFactory
 from app.core.logging import configure_logging, get_logger
+from app.domains.discovery.embedding_service import backfill_embeddings
 from app.domains.discovery.indexer import reindex_all
+from app.domains.explorer.learning import recompute_engagement_scores
 from app.seed.addis_ababa import seed
 
 logger = get_logger("mado.seed.cli")
@@ -38,18 +41,52 @@ async def _grant_moderator(email: str) -> None:
         print(f"{email} is now a moderator.")
 
 
-async def _run(*, do_seed: bool, do_index: bool) -> None:
+async def _recompute() -> None:
+    """Rebuild engagement aggregates from the interaction stream.
+
+    Separate from seeding because it is a recurring maintenance pass, not a
+    one-off: in a deployed environment this runs on a schedule, and running it
+    here is the same code path.
+    """
+    async with SessionFactory() as session:
+        result = await recompute_engagement_scores(session)
+        await session.commit()
+        print(
+            f"Recomputed engagement: {result['updated']} experiences updated, "
+            f"{result['with_activity']} had activity in the window."
+        )
+        if result["with_activity"] == 0:
+            print("  No interaction events in the window - scores left at zero.")
+
+
+async def _run(
+    *, do_seed: bool, do_index: bool, do_embed: bool, only_missing_embeddings: bool = True
+) -> None:
     async with SessionFactory() as session:
         if do_seed:
             counts = await seed(session)
+            # Derive popularity and trend from the interaction history the seed
+            # just wrote, rather than letting the seed assert them. Same code path
+            # the scheduled job uses.
+            engagement = await recompute_engagement_scores(session)
             await session.commit()
             print("Seeded Addis Ababa:")
             for name, value in counts.items():
                 print(f"  {name:<15} {value}")
+            print(f"  {'scored':<15} {engagement['updated']} experiences ranked from behaviour")
 
         if do_index:
             indexed = await reindex_all(session)
             print(f"Indexed {indexed} experiences into the search cluster.")
+
+        if do_embed:
+            from app.integrations.embeddings import get_embedding_provider
+
+            provider = get_embedding_provider()
+            written = await backfill_embeddings(session, only_missing=only_missing_embeddings)
+            await session.commit()
+            kind = "semantic" if provider.is_semantic else "lexical only, not semantic"
+            print(f"Embedded {written} experiences using {provider.name} ({kind}).")
 
 
 def main() -> None:
@@ -59,6 +96,22 @@ def main() -> None:
     parser.add_argument(
         "--make-moderator", metavar="EMAIL", help="Grant moderator rights to an account."
     )
+    parser.add_argument(
+        "--recompute",
+        action="store_true",
+        help="Rebuild popularity and trend scores from interaction events.",
+    )
+    parser.add_argument("--no-embed", action="store_true", help="Skip embedding generation.")
+    parser.add_argument(
+        "--embed",
+        action="store_true",
+        help="Only generate embeddings for experiences that lack them.",
+    )
+    parser.add_argument(
+        "--re-embed",
+        action="store_true",
+        help="Regenerate every embedding (use after changing embedding provider).",
+    )
     args = parser.parse_args()
 
     configure_logging()
@@ -66,10 +119,16 @@ def main() -> None:
     if args.make_moderator:
         run_async(_grant_moderator(args.make_moderator))
         return
+    if args.recompute:
+        run_async(_recompute())
+        return
+    embed_only = args.embed or args.re_embed
     run_async(
         _run(
-            do_seed=not args.reindex,
-            do_index=not args.no_index,
+            do_seed=not (args.reindex or embed_only),
+            do_index=not (args.no_index or embed_only),
+            do_embed=not args.no_embed,
+            only_missing_embeddings=not args.re_embed,
         )
     )
 

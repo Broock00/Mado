@@ -18,7 +18,7 @@ import random
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -1102,8 +1102,10 @@ async def seed(session: AsyncSession) -> dict[str, int]:
         duration,
         indoor,
         quality,
-        popularity,
-        trend,
+        # Consumed by _seed_interactions, not written to the row: these describe
+        # the demand to simulate, and the learning loop derives the scores.
+        _popularity,
+        _trend,
         rating,
         rating_count,
     ) in enumerate(EXPERIENCES):
@@ -1131,8 +1133,12 @@ async def seed(session: AsyncSession) -> dict[str, int]:
         experience.duration_minutes = duration
         experience.is_indoor = indoor
         experience.quality_score = quality
-        experience.popularity_score = popularity
-        experience.trend_score = trend
+        # popularity_score and trend_score are deliberately NOT set here. They are
+        # outputs of the learning loop, and writing them directly would mean the
+        # Trending rail showed whatever this file asserted rather than what
+        # explorers did. The seeded `popularity` and `trend` figures below are used
+        # instead to generate a plausible interaction history, which the loop then
+        # reads - so the demo exercises the real code path rather than bypassing it.
         experience.rating_average = rating
         experience.rating_count = rating_count
         experience.accessibility = venue.accessibility
@@ -1179,6 +1185,8 @@ async def seed(session: AsyncSession) -> dict[str, int]:
 
     await session.flush()
 
+    interaction_count = await _seed_interactions(session, now=now)
+
     counts = {
         "cities": 1,
         "neighborhoods": len(neighborhoods),
@@ -1188,6 +1196,100 @@ async def seed(session: AsyncSession) -> dict[str, int]:
         "venues": len(venues),
         "experiences": len(EXPERIENCES),
         "events": event_count,
+        "interactions": interaction_count,
     }
     logger.info("seed_complete", **counts)
     return counts
+
+
+# Rough shape of a real engagement funnel: most people look, some open, few save.
+# Used to turn a target volume into a realistic mix rather than a uniform one.
+_FUNNEL = (
+    ("view", 0.70),
+    ("open_details", 0.20),
+    ("save", 0.07),
+    ("share", 0.02),
+    ("dismiss", 0.01),
+)
+
+# Busiest listing gets this many interactions across the window. Small enough to
+# seed quickly, large enough that the trend calculation has something to work with
+# above its minimum-evidence floor.
+_PEAK_INTERACTIONS = 90
+
+
+async def _seed_interactions(session: AsyncSession, *, now: datetime) -> int:
+    """Generate a plausible behavioural history for the seeded catalogue.
+
+    Written as interaction *events*, not as aggregate scores, so the learning loop
+    is what produces popularity and trend. That distinction matters beyond
+    tidiness: it means the demo environment exercises the same path production
+    does, and a bug in the aggregation shows up here instead of hiding behind
+    hardcoded numbers.
+
+    Events are attributed to synthetic anonymous ids, never to real accounts. A
+    seeded account that appeared to have browsed ninety listings would corrupt that
+    person's actual personalization with behaviour they never performed.
+    """
+    from app.domains.explorer.models import InteractionEvent
+
+    # Rebuild each run so repeated seeding does not compound into a fake boom.
+    await session.execute(
+        delete(InteractionEvent).where(InteractionEvent.anonymous_id.like("seed-%"))
+    )
+
+    experiences = {
+        experience.slug: experience
+        for experience in (
+            await session.execute(
+                select(Experience).where(
+                    Experience.attributes["seeded"].astext == "true"
+                )
+            )
+        ).scalars()
+    }
+
+    window_days = 30
+    trend_days = 7
+    created = 0
+
+    for row in EXPERIENCES:
+        slug, popularity, trend = row[1], row[13], row[14]
+        experience = experiences.get(slug)
+        if experience is None:
+            continue
+
+        total = max(3, int(_PEAK_INTERACTIONS * float(popularity)))
+        # A trending listing earns a disproportionate share of its activity in the
+        # recent window - which is exactly the pattern the trend calculation looks
+        # for, rather than simply having a lot of activity overall.
+        #
+        # The baseline sits just below the 7/30 share a flat distribution would
+        # produce, so an untrending listing genuinely reads as untrending. Setting
+        # it above that made every seeded listing look like it was taking off.
+        recent_share = 0.20 + (0.35 * float(trend))
+
+        for _ in range(total):
+            if RNG.random() < recent_share:
+                age_days = RNG.uniform(0, trend_days)
+            else:
+                age_days = RNG.uniform(trend_days, window_days)
+
+            action = RNG.choices(
+                [name for name, _ in _FUNNEL], weights=[w for _, w in _FUNNEL], k=1
+            )[0]
+            session.add(
+                InteractionEvent(
+                    anonymous_id=f"seed-{RNG.randint(1, 400):03d}",
+                    action=action,
+                    entity_type="experience",
+                    entity_id=experience.id,
+                    weight=1,
+                    context={"seeded": True},
+                    occurred_at=now - timedelta(days=age_days),
+                )
+            )
+            created += 1
+
+    await session.flush()
+    return created

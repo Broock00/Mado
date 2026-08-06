@@ -116,6 +116,10 @@ class UserMemory(Base, UUIDPrimaryKey, Timestamps):
     confidence: Mapped[float] = mapped_column(Numeric(4, 3), default=0.500, nullable=False)
     source: Mapped[str] = mapped_column(String(48), default=SOURCE_INFERRED, nullable=False)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), default=None)
+    # The model that produced `embedding`. Recall compares a query vector against
+    # these, and vectors from different models are not comparable - see the same
+    # column on catalog.experiences.
+    embedding_model: Mapped[str | None] = mapped_column(String(64), default=None)
     # Spec 54.05: memory decays. A stale inference should stop steering results.
     last_reinforced_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None

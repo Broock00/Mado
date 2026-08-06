@@ -186,7 +186,10 @@ def resolve_time_window(
     if "right now" in lowered or re.search(r"\bnow\b", lowered):
         return TimeWindow(_local(local_now), _local(local_now + timedelta(hours=3)), "right now")
 
-    if "tonight" in lowered or "this evening" in lowered:
+    # "this evening" and a bare "evening" mean the same thing to an explorer -
+    # "plan my evening" was previously falling through to no window at all, which
+    # produced plans full of breakfast.
+    if "tonight" in lowered or re.search(r"\bevenings?\b", lowered):
         start = (
             local_now
             if local_now.hour >= 16

@@ -31,7 +31,10 @@ EARTH_RADIUS_KM = 6371.0
 
 # Weights sum to 1.0. Tuning these is a product decision, so they live together,
 # named, rather than scattered as literals through the scoring code.
-WEIGHTS = {
+#
+# Browsing: the explorer has stated no intent, so context carries the feed. This is
+# spec PRODUCT-00 principle 4 - what is near, open and fitting beats what is popular.
+BROWSE_WEIGHTS = {
     "relevance": 0.26,
     "proximity": 0.20,
     "timing": 0.18,
@@ -40,6 +43,34 @@ WEIGHTS = {
     "popularity": 0.06,
     "trust": 0.04,
 }
+
+# Searching: the explorer has typed their intent, which is the strongest context
+# signal available - stronger than anything inferred. Under the browse profile a
+# query for "buna" returned a music event first, because a 0.26 relevance share
+# could not outweigh a well-timed nearby item. That is correct for a feed and wrong
+# for a search box.
+#
+# Relevance is capped at exactly 0.50: the largest share that still cannot outweigh
+# every other signal combined, which keeps spec 21 s8's "no single signal dominates"
+# literally true while letting the query lead.
+SEARCH_WEIGHTS = {
+    "relevance": 0.50,
+    "proximity": 0.13,
+    "timing": 0.12,
+    "personalization": 0.09,
+    "quality": 0.08,
+    "popularity": 0.05,
+    "trust": 0.03,
+}
+
+# Default profile, kept under the original name so existing callers are unaffected.
+WEIGHTS = BROWSE_WEIGHTS
+
+# The most a fully-confident behavioural inference may move the personalization
+# signal. Below the 0.3 a stated category preference contributes, because spec
+# 10.01.02 is explicit that stated preferences outrank inferred ones - and because
+# an inference that can outvote a stated choice makes the preference screen a lie.
+INFERENCE_CEILING = 0.22
 
 # Distance beyond which proximity stops discriminating: in a city this size,
 # everything past ~12km is simply "across town".
@@ -75,6 +106,14 @@ class RankingContext:
     preferred_categories: set[str] = field(default_factory=set)
     preferred_tags: set[str] = field(default_factory=set)
     disliked_categories: set[str] = field(default_factory=set)
+    # Learned from behaviour, held apart from the stated sets above so the two can
+    # never be confused. Signed affinities in -1..1; see explorer.learning.
+    inferred_categories: dict[str, float] = field(default_factory=dict)
+    inferred_tags: dict[str, float] = field(default_factory=dict)
+    # How much behaviour those inferences rest on, 0-1. Scales their whole
+    # contribution, so a new explorer is ranked almost entirely on stated
+    # preferences and context.
+    inference_confidence: float = 0.0
     budget: str | None = None
     is_raining: bool = False
     saved_experience_ids: set[str] = field(default_factory=set)
@@ -160,6 +199,31 @@ def _personalization_score(experience: Experience, ctx: RankingContext) -> float
     overlap = tag_slugs & ctx.preferred_tags
     if overlap:
         score += min(0.2, 0.07 * len(overlap))
+
+    # Learned affinities, applied under everything stated above.
+    #
+    # Two separate dampeners keep an inference in its place. Each affinity is
+    # already signed and bounded, and it is scaled again by INFERENCE_CEILING so
+    # even a maximal one moves the score less than a stated preference does, then
+    # by the explorer's overall evidence so a newcomer is not confidently profiled
+    # on two taps. A category the explorer explicitly chose is skipped entirely -
+    # it is already counted, and counting it twice would let behaviour amplify a
+    # stated preference beyond what was stated.
+    if ctx.inferred_categories or ctx.inferred_tags:
+        strength = INFERENCE_CEILING * max(0.0, min(1.0, ctx.inference_confidence))
+
+        if category_slug and category_slug not in ctx.preferred_categories:
+            score += strength * ctx.inferred_categories.get(category_slug, 0.0)
+
+        learned_tags = [
+            ctx.inferred_tags[slug]
+            for slug in tag_slugs
+            if slug in ctx.inferred_tags and slug not in ctx.preferred_tags
+        ]
+        if learned_tags:
+            # Mean, not sum: a listing with eight tags should not out-personalise
+            # a better-matched listing with two purely by carrying more labels.
+            score += strength * 0.6 * (sum(learned_tags) / len(learned_tags))
 
     if ctx.budget == "free" and experience.price_type == "free":
         score += 0.15
@@ -263,8 +327,10 @@ def score_experience(
     ctx: RankingContext,
     *,
     relevance: float = 0.5,
+    weights: dict[str, float] | None = None,
 ) -> ScoredExperience:
     """Score one candidate. ``relevance`` is the retrieval score, already 0-1."""
+    weights = weights or BROWSE_WEIGHTS
     proximity, distance_km = _proximity_score(experience, ctx)
     signals = {
         "relevance": max(0.0, min(1.0, relevance)),
@@ -275,7 +341,7 @@ def score_experience(
         "popularity": float(experience.popularity_score or 0.0),
         "trust": _trust_score(experience),
     }
-    total = sum(WEIGHTS[name] * value for name, value in signals.items())
+    total = sum(weights[name] * value for name, value in signals.items())
     reason = _build_reason(experience, signals, distance_km, ctx)
     return ScoredExperience(
         experience=experience,
@@ -293,11 +359,18 @@ def rank(
     relevance_by_id: dict[str, float] | None = None,
     diversify: bool = True,
     limit: int | None = None,
+    weights: dict[str, float] | None = None,
 ) -> list[ScoredExperience]:
-    """Score, optionally diversify, and truncate."""
+    """Score, optionally diversify, and truncate.
+
+    ``weights`` selects the profile: :data:`SEARCH_WEIGHTS` when the explorer typed
+    a query, :data:`BROWSE_WEIGHTS` (the default) when they did not.
+    """
     relevance_by_id = relevance_by_id or {}
     scored = [
-        score_experience(exp, ctx, relevance=relevance_by_id.get(str(exp.id), 0.5))
+        score_experience(
+            exp, ctx, relevance=relevance_by_id.get(str(exp.id), 0.5), weights=weights
+        )
         for exp in experiences
     ]
     scored.sort(key=lambda item: item.score, reverse=True)

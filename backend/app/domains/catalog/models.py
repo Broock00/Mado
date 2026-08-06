@@ -300,6 +300,12 @@ class Experience(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     rating_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     # Nullable so an experience is usable before the embedding worker reaches it.
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), default=None)
+    # Which provider produced `embedding`. Vectors from different models occupy
+    # unrelated spaces, so comparing a Gemini query vector against a stored hashing
+    # vector yields a confident-looking distance that means nothing. Recording the
+    # model lets retrieval filter to rows it can actually compare against, and lets
+    # a re-embed find the stale rows - spec 82.02 s17's independent versioning.
+    embedding_model: Mapped[str | None] = mapped_column(String(64), default=None)
 
     publisher: Mapped[Publisher] = relationship(back_populates="experiences")
     venue: Mapped[Venue | None] = relationship(back_populates="experiences", lazy="selectin")
