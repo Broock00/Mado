@@ -470,3 +470,26 @@ export interface ReviewsResponse {
   reviews: ReviewEntry[]
   mine?: ReviewEntry | null
 }
+
+
+// --- Notifications (spec NOT-001) --------------------------------------------
+
+export interface NotificationEntry {
+  id: string
+  kind: string
+  title: string
+  body?: string | null
+  link?: string | null
+  isUnread: boolean
+  deliveredAt?: string | null
+}
+
+export interface NotificationInbox {
+  notifications: NotificationEntry[]
+  unread: number
+}
+
+export interface NotificationPreferences {
+  /** Every kind with its resolved state, so a client never duplicates defaults. */
+  kinds: Record<string, boolean>
+}

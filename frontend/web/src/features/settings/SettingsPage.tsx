@@ -24,6 +24,35 @@ import { useAppStore } from '@/app/store'
 import type { MemoryEntry, PrivacySettings } from '@/lib/types'
 import { Button, Card, EmptyState, SectionHeading } from '@/design-system/primitives'
 
+/**
+ * Notification kinds, in the order they matter to an explorer.
+ *
+ * Reminders about things they saved or planned default on - saving an event is
+ * the request. Suggestions default off, because nobody asked for those.
+ */
+const NOTIFICATION_KINDS = [
+  {
+    key: 'event_reminder',
+    label: 'Reminders for things you saved',
+    description: 'A few hours before something you saved is due to start.',
+  },
+  {
+    key: 'plan_reminder',
+    label: 'Reminders for your plans',
+    description: 'Before a plan you kept is due to begin.',
+  },
+  {
+    key: 'moderation_outcome',
+    label: 'Decisions about your posts',
+    description: 'When a moderator rules on something you published or reported.',
+  },
+  {
+    key: 'nearby_suggestion',
+    label: 'Suggestions near you',
+    description: 'Occasional nudges when something you might like is on nearby. Off by default.',
+  },
+] as const
+
 const TOGGLES: { key: keyof PrivacySettings; label: string; description: string }[] = [
   {
     key: 'personalizationEnabled',
@@ -129,6 +158,19 @@ export function SettingsPage() {
     ...((user?.profile?.privacy as Partial<PrivacySettings>) ?? {}),
   }
 
+  const { data: notificationPreferences } = useQuery({
+    queryKey: ['notification-preferences'],
+    queryFn: () => api.notificationPreferences(),
+    enabled: Boolean(user),
+  })
+  const notificationKinds = notificationPreferences?.kinds
+
+  const updateNotifications = useMutation({
+    mutationFn: (kinds: Record<string, boolean>) => api.updateNotificationPreferences(kinds),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ['notification-preferences'] }),
+  })
+
   const { data: memories, isLoading: loadingMemories } = useQuery({
     queryKey: ['memories'],
     queryFn: () => api.memories(),
@@ -212,6 +254,25 @@ export function SettingsPage() {
           {(updatePrivacy.error as Error).message}
         </p>
       )}
+
+      <section className="mt-10">
+        <SectionHeading
+          title="What you are told about"
+          subtitle="Reminders about things you saved or planned are on; nothing else is."
+        />
+        <Card className="mt-3 divide-y divide-sand-200 px-5">
+          {NOTIFICATION_KINDS.map((kind) => (
+            <Toggle
+              key={kind.key}
+              label={kind.label}
+              description={kind.description}
+              checked={notificationKinds?.[kind.key] ?? false}
+              disabled={updateNotifications.isPending}
+              onChange={(next) => updateNotifications.mutate({ [kind.key]: next })}
+            />
+          ))}
+        </Card>
+      </section>
 
       <section className="mt-10">
         <SectionHeading

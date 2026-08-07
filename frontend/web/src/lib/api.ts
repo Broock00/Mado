@@ -26,6 +26,8 @@ import type {
   ExperienceSummary,
   GeocodeResult,
   Me,
+  NotificationInbox,
+  NotificationPreferences,
   ReviewEntry,
   ReviewsResponse,
   SavedItem,
@@ -489,6 +491,28 @@ export const api = {
 
   deleteItinerary: (id: string) =>
     request<void>(`/api/v1/itineraries/${id}`, { method: 'DELETE' }),
+
+  // -------------------------------------------------------- notifications
+  notifications: () =>
+    request<Envelope<NotificationInbox>>('/api/v1/notifications').then((r) => r.data),
+
+  markNotificationRead: (id: string) =>
+    request<void>(`/api/v1/notifications/${id}/read`, { method: 'POST' }),
+
+  markAllNotificationsRead: () =>
+    request<void>('/api/v1/notifications/read-all', { method: 'POST' }),
+
+  notificationPreferences: () =>
+    request<Envelope<NotificationPreferences>>('/api/v1/notifications/preferences').then(
+      (r) => r.data,
+    ),
+
+  updateNotificationPreferences: (kinds: Record<string, boolean>) =>
+    request<Envelope<NotificationPreferences>>('/api/v1/notifications/preferences', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kinds }),
+    }).then((r) => r.data),
 
   // --------------------------------------------------------------- memory
   memories: () =>

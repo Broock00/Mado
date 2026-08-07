@@ -20,6 +20,7 @@ import {
 import { useSession } from '@/app/hooks'
 import { useAppStore } from '@/app/store'
 import { ConciergeLauncher, ConciergePanel } from '@/features/concierge/ConciergePanel'
+import { NotificationBell } from '@/features/notifications/NotificationBell'
 import { cn } from '@/lib/utils'
 
 const NAV = [
@@ -84,6 +85,7 @@ export function AppShell() {
           <div className="flex items-center gap-2">
             {user ? (
               <div className="flex items-center gap-1">
+                <NotificationBell />
                 {/* A display hint only - /moderation re-checks server-side, so a
                     forged flag reveals an empty page and nothing else. */}
                 {user.isModerator && (

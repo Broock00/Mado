@@ -43,6 +43,12 @@ logger = get_logger("mado.scheduler")
 # point is that "trending" never means "trending last week".
 ENGAGEMENT_INTERVAL_SECONDS = 1800
 
+# Reminders are built and delivered on the same short cycle. Short because the
+# lead time is three hours and a longer cycle would let an event slip inside that
+# window between runs - a reminder that arrives after the concert is worse than
+# none, because it teaches an explorer to ignore the next one.
+REMINDER_INTERVAL_SECONDS = 600
+
 # Embedding backfill catches anything published while the provider was down.
 # Hourly: a listing without an embedding is still fully discoverable by keyword,
 # so this is a quality repair rather than an outage.
@@ -96,9 +102,32 @@ async def _backfill_embeddings() -> None:
             logger.info("scheduled_embedding_backfill", written=written)
 
 
+async def _reminders() -> None:
+    from app.domains.explorer.reminders import (
+        deliver_due,
+        schedule_event_reminders,
+        schedule_plan_reminders,
+    )
+
+    async with SessionFactory() as session:
+        events = await schedule_event_reminders(session)
+        plans = await schedule_plan_reminders(session)
+        delivered = await deliver_due(session)
+        await session.commit()
+
+        if events["created"] or plans["created"] or delivered:
+            logger.info(
+                "scheduled_reminders",
+                event_reminders=events["created"],
+                plan_reminders=plans["created"],
+                delivered=delivered,
+            )
+
+
 JOBS = [
     Job("engagement", ENGAGEMENT_INTERVAL_SECONDS, _recompute_engagement),
     Job("embeddings", EMBEDDING_INTERVAL_SECONDS, _backfill_embeddings),
+    Job("reminders", REMINDER_INTERVAL_SECONDS, _reminders),
 ]
 
 

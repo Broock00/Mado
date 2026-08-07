@@ -27,6 +27,7 @@ from app.domains.explorer.models import (
     Review,
     SavedItem,
 )
+from app.domains.explorer.notifications import Notification
 from app.domains.identity.models import AuthIdentity, User, UserProfile, UserSession
 from app.domains.publisher.models import Publisher
 
@@ -40,6 +41,7 @@ __all__ = [
     "EventInstance",
     "Experience",
     "InteractionEvent",
+    "Notification",
     "Itinerary",
     "ItineraryStop",
     "Media",

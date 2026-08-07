@@ -12,6 +12,7 @@ from app.api.routes import (
     concierge,
     discovery,
     me,
+    notifications,
     planning,
     publishing,
     reviews,
@@ -24,6 +25,7 @@ api_router.include_router(me.router)
 api_router.include_router(discovery.router)
 api_router.include_router(catalog.router)
 api_router.include_router(concierge.router)
+api_router.include_router(notifications.router)
 api_router.include_router(planning.router)
 api_router.include_router(publishing.router)
 api_router.include_router(reviews.router)
