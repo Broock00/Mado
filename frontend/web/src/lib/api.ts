@@ -26,6 +26,8 @@ import type {
   ExperienceSummary,
   GeocodeResult,
   Me,
+  ReviewEntry,
+  ReviewsResponse,
   SavedItem,
   SearchResponse,
   Itinerary,
@@ -443,6 +445,23 @@ export const api = {
         body: JSON.stringify({ title }),
       },
     ).then((r) => r.data),
+
+  // --------------------------------------------------------------- reviews
+  reviews: (experienceId: string) =>
+    request<Envelope<ReviewsResponse>>(`/api/v1/experiences/${experienceId}/reviews`).then(
+      (r) => r.data,
+    ),
+
+  /** PUT, not POST: one review per person, so sending a second replaces it. */
+  leaveReview: (experienceId: string, rating: number, comment?: string) =>
+    request<Envelope<ReviewEntry>>(`/api/v1/experiences/${experienceId}/reviews`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rating, comment }),
+    }).then((r) => r.data),
+
+  withdrawReview: (experienceId: string) =>
+    request<void>(`/api/v1/experiences/${experienceId}/reviews`, { method: 'DELETE' }),
 
   // ------------------------------------------------------------- planning
   // Planning and saving are separate calls because most plans are looked at

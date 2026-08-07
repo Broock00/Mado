@@ -442,3 +442,31 @@ export interface GeocodeResult {
   confidence: number
   provider: string
 }
+
+
+// --- Reviews (spec BUSINESS-03, the third content inflow) ---------------------
+
+export interface ReviewEntry {
+  id: string
+  rating: number
+  comment?: string | null
+  authorName: string
+  verifiedAttendance: boolean
+  createdAt: string
+  /** Only ever set on your own review, so a withheld one can be explained. */
+  status?: string | null
+  moderationNotes?: string | null
+}
+
+export interface RatingSummary {
+  average?: number | null
+  count: number
+  /** The spread behind the average - what an average on its own conceals. */
+  distribution: Record<number, number>
+}
+
+export interface ReviewsResponse {
+  summary: RatingSummary
+  reviews: ReviewEntry[]
+  mine?: ReviewEntry | null
+}

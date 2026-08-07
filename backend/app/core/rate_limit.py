@@ -93,6 +93,10 @@ REGISTER_LIMIT = Limit(times=60, seconds=3600, scope="register")
 # makes each attempt expensive for the attacker rather than for us.
 LOGIN_LIMIT = Limit(times=10, seconds=900, scope="login")
 
+# Reviews. Each one costs a screening call, and a genuine explorer reviews the
+# handful of places they actually went - not thirty an hour.
+REVIEW_LIMIT = Limit(times=30, seconds=3600, scope="review")
+
 # Image uploads are decoded and re-encoded server-side, which is CPU-bound. This
 # is the one limit protecting a synchronous compute path rather than a spend path.
 UPLOAD_LIMIT = Limit(times=40, seconds=3600, scope="upload")

@@ -225,6 +225,40 @@ class TrustService:
 
         return result
 
+    async def screen_review(self, review) -> ScreeningResult:
+        """Screen a review's text.
+
+        The same two readers a listing gets, because a review is the same thing
+        from the platform's point of view: free text on a public page written by
+        someone it does not vouch for. If anything it is the more attractive
+        surface - it sits beside a listing the reader already trusts.
+
+        Scored on the text alone. A review has no title, price or venue to draw
+        signal from, so the shouting and repetition heuristics carry less here
+        and the semantic reader carries more.
+        """
+        result = screen_text(
+            # No title, so the shouting heuristic is given nothing to match on
+            # rather than being fed the comment and firing on an emphatic
+            # sentence. People write reviews in capitals when they are annoyed,
+            # which is not the same as spam.
+            title="",
+            description=review.comment or "",
+            summary=None,
+        )
+
+        verdict = await screen_semantically("", review.comment or "", None)
+        if verdict.available:
+            result = _combine(result, verdict)
+
+        logger.info(
+            "review_screened",
+            review_id=str(review.id),
+            score=result.score,
+            needs_review=result.needs_review,
+        )
+        return result
+
     # ---------------------------------------------------------------- reports
 
     async def report(

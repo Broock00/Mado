@@ -26,6 +26,7 @@ import { api } from '@/lib/api'
 import { useDiscoveryParams, useToggleSave } from '@/app/hooks'
 import { Badge, Button, Card, EmptyState, SectionHeading, Skeleton } from '@/design-system/primitives'
 import { ExperienceCard } from './ExperienceCard'
+import { Reviews } from '@/features/reviews/Reviews'
 import { ReportDialog } from '@/features/trust/ReportDialog'
 import { formatDistance, formatPrice, formatWhen } from '@/lib/utils'
 
@@ -176,6 +177,10 @@ export function ExperienceDetailPage() {
               </ul>
             </section>
           )}
+
+          {/* Above "you might also like": what people said about *this* matters
+              more than what else there is. */}
+          <Reviews experienceId={data.id} />
 
           {similar && similar.length > 0 && (
             <section>

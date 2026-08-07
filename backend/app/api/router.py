@@ -14,6 +14,7 @@ from app.api.routes import (
     me,
     planning,
     publishing,
+    reviews,
     trust,
 )
 
@@ -25,4 +26,5 @@ api_router.include_router(catalog.router)
 api_router.include_router(concierge.router)
 api_router.include_router(planning.router)
 api_router.include_router(publishing.router)
+api_router.include_router(reviews.router)
 api_router.include_router(trust.router)

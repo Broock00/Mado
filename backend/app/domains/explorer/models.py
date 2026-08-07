@@ -31,7 +31,7 @@ from app.core.database import Base
 from app.core.mixins import SoftDelete, Timestamps, UUIDPrimaryKey
 
 if TYPE_CHECKING:
-    pass
+    from app.domains.identity.models import User
 
 SCHEMA = "explorer"
 
@@ -75,6 +75,14 @@ class Review(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     # True when attendance was confirmed - spec BUSINESS-07 weights these higher
     # in both the displayed average and fraud scoring.
     verified_attendance: Mapped[bool] = mapped_column(default=False, nullable=False)
+    # Screening notes, when a review was withheld. Shown to its author so they
+    # know why their words are not appearing, rather than leaving them to
+    # conclude the platform simply lost them.
+    moderation_notes: Mapped[str | None] = mapped_column(Text, default=None)
+
+    # Eager by default: a review is never useful without knowing who wrote it,
+    # and a list of twenty would otherwise be twenty extra queries.
+    author: Mapped[User] = relationship(lazy="selectin")
 
 
 class ContentReport(Base, UUIDPrimaryKey, Timestamps):
