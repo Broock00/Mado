@@ -12,6 +12,24 @@ from app.domains.catalog.schemas import CamelModel
 MIN_PASSWORD_LENGTH = 10
 
 
+def check_password_strength(value: str) -> str:
+    """Enforce a floor on password strength (spec 10.01.01 "Password Management").
+
+    Length carries most of the entropy, so the composition rule is deliberately
+    light: requiring a mix of character classes on top of a 10-character minimum
+    mostly teaches users to append "1!".
+
+    Shared by registration, reset and change rather than duplicated. A password
+    floor that applies at signup but not at reset is not a floor - it is a
+    formality anyone can step around by asking for a reset link.
+    """
+    if value.strip() != value:
+        raise ValueError("Password must not begin or end with whitespace.")
+    if value.isdigit() or value.isalpha():
+        raise ValueError("Password must combine letters with numbers or symbols.")
+    return value
+
+
 class RegisterRequest(CamelModel):
     email: EmailStr
     password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=200)
@@ -21,20 +39,7 @@ class RegisterRequest(CamelModel):
     # (spec 10.01.01 "Guest Mode").
     anonymous_id: str | None = None
 
-    @field_validator("password")
-    @classmethod
-    def password_strength(cls, value: str) -> str:
-        """Enforce a floor on password strength (spec 10.01.01 "Password Management").
-
-        Length carries most of the entropy, so the composition rule is deliberately
-        light: requiring a mix of character classes on top of a 10-character minimum
-        mostly teaches users to append "1!".
-        """
-        if value.strip() != value:
-            raise ValueError("Password must not begin or end with whitespace.")
-        if value.isdigit() or value.isalpha():
-            raise ValueError("Password must combine letters with numbers or symbols.")
-        return value
+    _check_password = field_validator("password")(check_password_strength)
 
 
 class LoginRequest(CamelModel):
@@ -122,3 +127,44 @@ class SavedItemOut(CamelModel):
     entity_id: uuid.UUID
     note: str | None = None
     created_at: datetime
+
+
+# --------------------------------------------------- email and password flows
+
+
+class EmailRequest(CamelModel):
+    email: EmailStr
+
+
+class ConfirmTokenRequest(CamelModel):
+    token: str = Field(min_length=8, max_length=200)
+
+
+class ResetPasswordRequest(CamelModel):
+    token: str = Field(min_length=8, max_length=200)
+    password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=200)
+
+    _check_password = field_validator("password")(check_password_strength)
+
+
+class ChangePasswordRequest(CamelModel):
+    current_password: str = Field(min_length=1, max_length=200)
+    password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=200)
+
+    _check_password = field_validator("password")(check_password_strength)
+
+
+class SessionOut(CamelModel):
+    """One signed-in device.
+
+    `isCurrent` is what makes the list usable - without it someone trying to
+    sign out a device they no longer have has no way to tell which row is the
+    browser they are reading this in.
+    """
+
+    id: uuid.UUID
+    created_at: datetime
+    expires_at: datetime
+    user_agent: str | None = None
+    platform: str | None = None
+    is_current: bool = False

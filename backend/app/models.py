@@ -29,9 +29,11 @@ from app.domains.explorer.models import (
 )
 from app.domains.explorer.notifications import Notification
 from app.domains.identity.models import AuthIdentity, User, UserProfile, UserSession
+from app.domains.identity.tokens import AccountToken
 from app.domains.publisher.models import Publisher
 
 __all__ = [
+    "AccountToken",
     "Base",
     "AuthIdentity",
     "Category",

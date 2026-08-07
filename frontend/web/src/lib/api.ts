@@ -323,6 +323,47 @@ export const api = {
     tokenStore.clear()
   },
 
+  // --------------------------------------------- email and password flows
+  sendVerificationEmail: () =>
+    request<Envelope<{ sent: boolean }>>('/api/v1/auth/verify-email/send', {
+      method: 'POST',
+    }).then((r) => r.data),
+
+  confirmEmail: (token: string) =>
+    request<Envelope<Me>>('/api/v1/auth/verify-email/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    }).then((r) => r.data),
+
+  forgotPassword: (email: string) =>
+    request<Envelope<{ sent: boolean }>>('/api/v1/auth/password/forgot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    }).then((r) => r.data),
+
+  resetPassword: (token: string, password: string) =>
+    request<Envelope<AuthResponse>>('/api/v1/auth/password/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, password }),
+    }).then((r) => r.data),
+
+  changePassword: (currentPassword: string, password: string) =>
+    request<Envelope<TokenPair>>('/api/v1/auth/password/change', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword, password }),
+    }).then((r) => r.data),
+
+  // ----------------------------------------------------------- sessions
+  sessions: () =>
+    request<CollectionEnvelope<AuthSession>>('/api/v1/auth/sessions').then((r) => r.data),
+
+  revokeSession: (sessionId: string) =>
+    request<void>(`/api/v1/auth/sessions/${sessionId}`, { method: 'DELETE' }),
+
   // --------------------------------------------------------- publishing
   myPublisher: () =>
     request<Envelope<Publisher>>('/api/v1/posts/me').then((r) => r.data),

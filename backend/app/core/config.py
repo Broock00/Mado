@@ -75,6 +75,30 @@ class Settings(BaseSettings):
     # seconds and would otherwise be testing the limiter rather than the feature.
     rate_limit_enabled: bool = True
 
+    # Email. With no host configured the sender writes messages to the log
+    # instead, so verification and password reset work end to end in development
+    # without a relay - and an operator who forgot to configure one can see
+    # exactly what would have gone out rather than discovering silence.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True
+    email_from: str = "Mado <no-reply@mado.local>"
+
+    # Where the links in those emails point. The API cannot infer this - it may
+    # sit behind a proxy on a different host from the app the explorer is using.
+    web_base_url: str = "http://localhost:5173"
+
+    # Whether publishing requires a confirmed email address.
+    #
+    # Off by default because it is only meaningful once mail actually sends: with
+    # the log sender, turning it on locks every publisher out of the thing they
+    # came to do. Production should set MADO_REQUIRE_VERIFIED_EMAIL_TO_PUBLISH=1
+    # alongside SMTP - an unverified address is a free, unlimited supply of
+    # publishing accounts, which is the cheapest possible spam vector.
+    require_verified_email_to_publish: bool = False
+
     media_root: str = "var/media"
     # Public prefix images are served from. Split from media_root so a CDN can be
     # put in front without moving the files.

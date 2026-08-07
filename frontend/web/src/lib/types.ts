@@ -269,6 +269,19 @@ export interface AuthResponse {
   tokens: TokenPair
 }
 
+/** One signed-in device, as the account settings list them. */
+export interface AuthSession {
+  id: string
+  createdAt: string
+  expiresAt: string
+  userAgent?: string | null
+  platform?: string | null
+  /** Marks the row the reader is most likely looking at it from. A hint for a
+   *  human, never an authorization decision - the server treats every row the
+   *  same. */
+  isCurrent: boolean
+}
+
 export interface SavedItem {
   id: string
   entityType: string

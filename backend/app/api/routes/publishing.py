@@ -14,7 +14,7 @@ import uuid
 from fastapi import APIRouter, File, Form, Query, Request, UploadFile, status
 from pydantic import Field
 
-from app.api.deps import CurrentUser, SessionDep
+from app.api.deps import CurrentUser, SessionDep, VerifiedPublisher
 from app.core import rate_limit
 from app.core.envelope import CollectionEnvelope, Envelope
 from app.core.errors import RateLimitError, ValidationError
@@ -196,7 +196,10 @@ async def update_post(
 )
 async def publish_post(
     experience_id: uuid.UUID,
-    user: CurrentUser,
+    # Confirming an address is required here and nowhere else in this file:
+    # drafting, editing and unpublishing all stay open to an unverified account,
+    # because none of them put anything in front of an explorer.
+    user: VerifiedPublisher,
     session: SessionDep,
     request: Request,
 ) -> Envelope[OwnExperienceOut]:

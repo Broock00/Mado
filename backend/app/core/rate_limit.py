@@ -253,3 +253,13 @@ async def close() -> None:
     if _redis is not None:
         await _redis.aclose()
         _redis = None
+
+# Emails sent to an address the requester merely typed. This is the one limit
+# that protects a third party rather than the platform: without it, the
+# forgot-password form is a way to have Mado repeatedly mail someone else's
+# inbox. Keyed on the address, not the caller, so rotating IPs does not help.
+EMAIL_SEND_LIMIT = Limit(times=5, seconds=3600, scope="email_send")
+
+# Attempts to spend a token from a link. Low, because a legitimate explorer
+# clicks a link once and anyone trying many is guessing.
+TOKEN_CONFIRM_LIMIT = Limit(times=20, seconds=3600, scope="token_confirm")

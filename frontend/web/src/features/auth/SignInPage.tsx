@@ -104,9 +104,18 @@ export function SignInPage() {
           </div>
 
           <div>
-            <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-sand-700">
-              Password
-            </label>
+            <div className="mb-1.5 flex items-baseline justify-between gap-3">
+              <label htmlFor="password" className="block text-sm font-medium text-sand-700">
+                Password
+              </label>
+              {/* Only when signing in. Offering "forgot password" beside a field
+                  someone is inventing a password for is noise. */}
+              {mode === 'signin' && (
+                <Link to="/forgot-password" className="text-xs text-sand-600 hover:underline">
+                  Forgot it?
+                </Link>
+              )}
+            </div>
             <Input
               id="password"
               type="password"

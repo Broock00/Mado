@@ -23,6 +23,7 @@ import { api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
 import type { MemoryEntry, PrivacySettings } from '@/lib/types'
 import { Button, Card, EmptyState, SectionHeading } from '@/design-system/primitives'
+import { AccountSecurity } from './AccountSecurity'
 
 /**
  * Notification kinds, in the order they matter to an explorer.
@@ -254,6 +255,8 @@ export function SettingsPage() {
           {(updatePrivacy.error as Error).message}
         </p>
       )}
+
+      <AccountSecurity />
 
       <section className="mt-10">
         <SectionHeading

@@ -15,6 +15,7 @@ from typing import Annotated
 from fastapi import Depends, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.database import get_session
 from app.core.errors import AuthenticationError, PermissionDeniedError
 from app.core.security import decode_access_token
@@ -96,7 +97,34 @@ async def current_user(
     raise AuthenticationError()
 
 
-CurrentUser = Annotated[User, Depends(current_user)]
+CurrentUserDep = Annotated[User, Depends(current_user)]
+
+
+async def verified_publisher(user: CurrentUserDep) -> User:
+    """Require a confirmed email address before anything reaches the city.
+
+    Applied to publishing, not to drafting - someone should be able to write
+    while they wait for the email. And not to reading, saving or planning, which
+    cost nobody anything if the account turns out to be disposable.
+
+    An unverified address is an unlimited supply of publishing accounts, which
+    makes it the cheapest spam vector a platform has. Behind a setting because
+    the gate only means anything once mail actually sends: with the log sender
+    it would lock out every publisher for no security gain at all.
+    """
+    if not get_settings().require_verified_email_to_publish:
+        return user
+    if user.is_verified:
+        return user
+    raise PermissionDeniedError(
+        "Confirm your email address before publishing. We sent you a link when "
+        "you signed up - ask for another from your settings.",
+        code="EMAIL_NOT_VERIFIED",
+    )
+
+
+CurrentUser = CurrentUserDep
+VerifiedPublisher = Annotated[User, Depends(verified_publisher)]
 OptionalUser = Annotated[User | None, Depends(optional_current_user)]
 
 

@@ -10,6 +10,9 @@ import { SearchPage } from '@/features/search/SearchPage'
 import { ExperienceDetailPage } from '@/features/experiences/ExperienceDetailPage'
 import { SavedPage } from '@/features/saved/SavedPage'
 import { SignInPage } from '@/features/auth/SignInPage'
+import { VerifyEmailPage } from '@/features/auth/VerifyEmailPage'
+import { ForgotPasswordPage } from '@/features/auth/ForgotPasswordPage'
+import { ResetPasswordPage } from '@/features/auth/ResetPasswordPage'
 import { MyPostsPage } from '@/features/publishing/MyPostsPage'
 import { ComposePage } from '@/features/publishing/ComposePage'
 import { PlanPage } from '@/features/planning/PlanPage'
@@ -37,6 +40,12 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <DiscoverPage /> },
       { path: 'search', element: <SearchPage /> },
+      // Reached from a link in an email, so they live inside the shell: someone
+      // arriving here has a header to navigate away from, and a page with no way
+      // out is how a confirmation flow turns into a support request.
+      { path: 'verify-email', element: <VerifyEmailPage /> },
+      { path: 'forgot-password', element: <ForgotPasswordPage /> },
+      { path: 'reset-password', element: <ResetPasswordPage /> },
       { path: 'experiences/:experienceId', element: <ExperienceDetailPage /> },
       { path: 'saved', element: <SavedPage /> },
       { path: 'posts', element: <MyPostsPage /> },
