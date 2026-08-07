@@ -35,6 +35,8 @@ import type {
   Itinerary,
   MemoryEntry,
   ModerationItem,
+  AdminAccount,
+  PublisherVerification,
   Plan,
   PlanRequestInput,
   PrivacySettings,
@@ -543,6 +545,58 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ approve, note }),
     }).then((r) => r.data),
+
+  // ------------------------------------------------------- administration
+  // Search rather than browse: an administrator looking for a specific person
+  // should search for them, and paginating the whole user table is not a
+  // workflow worth building.
+  adminAccounts: (query: string, status?: string) =>
+    request<CollectionEnvelope<AdminAccount>>(
+      `/api/v1/admin/accounts?${new URLSearchParams({
+        ...(query ? { q: query } : {}),
+        ...(status ? { status } : {}),
+      })}`,
+    ).then((r) => r.data),
+
+  setAccountSuspended: (userId: string, suspended: boolean, reason?: string) =>
+    request<Envelope<AdminAccount>>(`/api/v1/admin/accounts/${userId}/suspend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ suspended, reason }),
+    }).then((r) => r.data),
+
+  setAccountModerator: (userId: string, moderator: boolean) =>
+    request<Envelope<AdminAccount>>(`/api/v1/admin/accounts/${userId}/moderator`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ moderator }),
+    }).then((r) => r.data),
+
+  // ------------------------------------------------------- verification
+  requestVerification: (note?: string) =>
+    request<Envelope<PublisherVerification>>('/api/v1/posts/verification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note }),
+    }).then((r) => r.data),
+
+  myVerification: () =>
+    request<Envelope<PublisherVerification>>('/api/v1/posts/verification').then((r) => r.data),
+
+  pendingVerifications: () =>
+    request<CollectionEnvelope<PublisherVerification>>(
+      '/api/v1/moderation/verifications',
+    ).then((r) => r.data),
+
+  decideVerification: (publisherId: string, approve: boolean, note?: string) =>
+    request<Envelope<PublisherVerification>>(
+      `/api/v1/moderation/verifications/${publisherId}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approve, note }),
+      },
+    ).then((r) => r.data),
 }
 
 export { BASE_URL }

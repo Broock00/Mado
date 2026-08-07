@@ -433,6 +433,40 @@ export interface ModerationItem {
   createdAt: string
 }
 
+/**
+ * An account, as an administrator sees it.
+ *
+ * Deliberately thin. The email is here because identifying the right account is
+ * the whole job, but nothing about what the person searched for, planned or was
+ * recommended appears - an admin console is not a surveillance surface.
+ */
+export interface AdminAccount {
+  id: string
+  displayName: string
+  email?: string | null
+  status: 'active' | 'suspended' | string
+  isModerator: boolean
+  isVerified: boolean
+  createdAt: string
+  /** The pair a decision actually turns on: how much they published, and how
+   *  much of it drew reports. Neither number alone says which they are. */
+  publishedCount: number
+  reportedCount: number
+}
+
+export type VerificationStatus = 'unverified' | 'requested' | 'verified' | string
+
+export interface PublisherVerification {
+  id: string
+  name: string
+  slug: string
+  verificationStatus: VerificationStatus
+  /** Whatever the publisher offered as evidence. */
+  verificationNote?: string | null
+  verificationRequestedAt?: string | null
+  trustLevel: number
+}
+
 
 export interface GeocodeResult {
   latitude: number

@@ -15,6 +15,7 @@ import { useAppStore } from '@/app/store'
 import { Badge, Button, Card, EmptyState, Skeleton } from '@/design-system/primitives'
 import { formatPrice, formatWhen } from '@/lib/utils'
 import type { OwnPost } from '@/lib/types'
+import { VerificationCard } from './VerificationCard'
 
 const STATUS_TONE = {
   published: 'success',
@@ -77,6 +78,12 @@ export function MyPostsPage() {
           </Button>
         </Link>
       </div>
+
+      {/* Only once they have something published. A publisher row can outlive
+          its listings - archived, or withheld by moderation - and offering
+          "get verified" directly above "you have not posted anything yet"
+          reads as a broken page rather than an invitation. */}
+      {posts && posts.length > 0 && <VerificationCard />}
 
       {justPublished && (
         <div className="mb-5 rounded-card border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-900">

@@ -22,9 +22,18 @@ experience to have an accountable owner, and a personal publisher is exactly tha
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -71,6 +80,17 @@ class Publisher(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     verification_status: Mapped[str] = mapped_column(
         String(32), default="unverified", nullable=False
     )
+    # What the publisher offered as evidence when asking to be verified, and
+    # when they asked. Real columns rather than a JSONB bag: a moderator reads
+    # both on every decision, and they are the record of why the badge was given.
+    verification_note: Mapped[str | None] = mapped_column(Text, default=None)
+    verification_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    verification_decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+
     trust_level: Mapped[int] = mapped_column(Integer, default=TRUST_LEVEL_COMMUNITY, nullable=False)
     # Dynamic 0-1 score from accuracy, cancellation rate, metadata completeness and
     # satisfaction (spec BUSINESS-07). Influences ranking; never shown raw to users.

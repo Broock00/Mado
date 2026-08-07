@@ -93,6 +93,10 @@ REGISTER_LIMIT = Limit(times=60, seconds=3600, scope="register")
 # makes each attempt expensive for the attacker rather than for us.
 LOGIN_LIMIT = Limit(times=10, seconds=900, scope="login")
 
+# Verification requests. Each one lands in a human queue, so the limit exists to
+# stop a queue being flooded rather than to control spend.
+VERIFICATION_LIMIT = Limit(times=5, seconds=86400, scope="verification")
+
 # Reviews. Each one costs a screening call, and a genuine explorer reviews the
 # handful of places they actually went - not thirty an hour.
 REVIEW_LIMIT = Limit(times=30, seconds=3600, scope="review")
