@@ -1,0 +1,177 @@
+# Continuous integration.
+#
+# The backend job runs the real stack rather than mocks: Postgres with PostGIS
+# and pgvector, Redis, Meilisearch, and the API itself. That is deliberate and
+# it is the reason this job takes minutes rather than seconds.
+#
+# Most of what can break here is not Python logic. It is a migration that does
+# not apply, a geography column that needs an extension the image does not have,
+# a search index that is not created, or a query that only fails when the
+# planner sees real rows. A suite that stubs the database would pass through
+# every one of those.
+#
+# The AI provider stays on the deterministic stub. No Gemini key reaches CI:
+# builds must not depend on a third party being up, must not spend money on
+# every push, and must not need a production secret to run on a fork.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A superseded run tells you about code nobody is looking at any more.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Matches the local interpreter. The floor in pyproject is 3.11, but CI should
+  # run what developers run - a version gap turns "works on my machine" into a
+  # thing CI cannot reproduce.
+  PYTHON_VERSION: "3.14"
+  NODE_VERSION: "22"
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      # Defaults in app/core/config.py already point at these, but stating them
+      # means a change to the defaults cannot silently repoint CI at something
+      # else.
+      MADO_ENVIRONMENT: test
+      MADO_DATABASE_URL: postgresql+psycopg://mado:mado@localhost:5432/mado
+      MADO_REDIS_URL: redis://localhost:6379/0
+      MADO_MEILISEARCH_URL: http://localhost:7700
+      MADO_MEILISEARCH_API_KEY: mado-dev-master-key
+      MADO_AI_PROVIDER: stub
+      MADO_EMBEDDING_PROVIDER: hashing
+      # Off for the same reason the local .env turns them off: the integration
+      # tests create hundreds of accounts and posts in seconds, and a
+      # maintenance job firing mid-suite would rewrite the scores a test is
+      # asserting about. Both are on in every deployment.
+      MADO_RATE_LIMIT_ENABLED: "false"
+      MADO_SCHEDULER_ENABLED: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # Before the stack starts. Lint failures should come back in under a
+      # minute rather than after Postgres has finished pulling.
+      - name: Lint
+        working-directory: backend
+        run: ruff check app tests
+
+      - name: Start the data platform
+        # The same compose file developers use, so there is one definition of
+        # the stack. Postgres is built rather than pulled: no published image
+        # carries both PostGIS and pgvector, and Mado needs them in the same
+        # database. `--wait` blocks on the healthchecks already declared there.
+        run: docker compose -f infrastructure/docker-compose.yml up -d --wait
+
+      - name: Apply migrations
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Check for migration drift
+        working-directory: backend
+        # Catches a model changed without a migration. That failure is invisible
+        # locally - the developer who changed the model usually has the column
+        # already, from an earlier autogenerate they discarded - and it surfaces
+        # as a production deploy that cannot start.
+        run: alembic check
+
+      - name: Seed the pilot city
+        working-directory: backend
+        # The integration tests browse and publish against Addis Ababa, so the
+        # city, its neighbourhoods and its categories have to exist.
+        run: python -m app.seed
+
+      - name: Start the API
+        working-directory: backend
+        run: |
+          python run.py > "${{ runner.temp }}/api.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/health > /dev/null; then
+              echo "API is up."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "The API did not become healthy within 60s."
+          cat "${{ runner.temp }}/api.log"
+          exit 1
+
+      - name: Test
+        working-directory: backend
+        # MADO_SKIP_API_TESTS is deliberately not set. The integration tests fail
+        # rather than skip when the API is unreachable, because a skip reads as a
+        # pass at a glance and nobody is glancing at CI.
+        run: pytest -q
+
+      - name: API log
+        # The tests talk to a separate process, so a failure inside the API shows
+        # up here as an unhelpful 500. This is where the traceback actually is.
+        if: failure()
+        run: cat "${{ runner.temp }}/api.log"
+
+      - name: Stack logs
+        if: failure()
+        run: docker compose -f infrastructure/docker-compose.yml logs --tail 100
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: frontend/web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/web/package-lock.json
+
+      - name: Install
+        # `ci` rather than `install`: it installs exactly the lockfile and fails
+        # if package.json has drifted from it, which is the whole point of
+        # having one.
+        run: npm ci
+
+      - name: Lint
+        run: npx oxlint
+
+      - name: Typecheck
+        # The types in lib/types.ts are hand-written against the backend
+        # schemas, so this is the only thing standing between a renamed API
+        # field and a runtime undefined.
+        run: npx tsc --noEmit
+
+      - name: Test
+        # No frontend tests exist yet. Wired up so the first one added is run
+        # rather than sitting unnoticed until somebody remembers to change CI.
+        run: npx vitest run --passWithNoTests
+
+      - name: Build
+        run: npm run build

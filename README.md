@@ -185,16 +185,50 @@ cd backend
 .venv/Scripts/python.exe -m pytest tests/ -q
 ```
 
-92 tests: ranking and explanation logic, intent classification and temporal
-resolution, spam screening, and API contract tests covering the envelope,
-anonymous access, publishing ownership and lifecycle, and moderation. They run
-against the live stack; the API tests skip
-themselves automatically when the server is not running.
+414 tests: ranking and explanation logic, intent comprehension and temporal
+resolution, planning, feed reconciliation, spam screening, account
+administration, one-time token handling, and API contract tests covering the
+envelope, anonymous access, publishing ownership and lifecycle, and moderation.
+
+Most run in-process. The API contract tests talk to a running server, and they
+**fail rather than skip** when it is unreachable — a skip reads as a pass at a
+glance, and a broken build once reported "117 passed, 48 skipped" with a green
+tick. To run only the in-process tests, opt out deliberately:
+
+```bash
+MADO_SKIP_API_TESTS=1 .venv/Scripts/python.exe -m pytest -q
+```
 
 ```bash
 cd frontend/web
+npx oxlint             # lint
+npx tsc --noEmit       # typecheck
 npm run build          # typecheck + production build
 ```
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request.
+
+The backend job stands up the real stack — the same `infrastructure/docker-compose.yml`
+developers use — applies migrations, seeds Addis Ababa, starts the API and runs
+the whole suite against it. That is slower than mocking the database and it is
+the point: a migration that does not apply, a missing Postgres extension or a
+query that only fails on real rows would all pass a mocked suite.
+
+Two things it does not do:
+
+- **No Gemini key.** The stub provider is deterministic, so builds do not depend
+  on a third party being up, do not spend money on every push, and run on forks.
+  Semantic behaviour is therefore not exercised in CI; it is verified by hand.
+- **No formatting gate.** `ruff check` runs; `ruff format` does not, because the
+  tree predates it and the reformat would be a large diff unrelated to any
+  change under review.
+
+It also runs `alembic check`, which fails when a model has been changed without
+a migration. That drift is invisible locally — the developer who changed the
+model usually already has the column — and otherwise surfaces as a deploy that
+will not start.
 
 ---
 
