@@ -30,6 +30,7 @@ import type { PickedLocation } from '@/features/map/LocationPicker'
 import { Badge, Button, Card, Input } from '@/design-system/primitives'
 import { cn } from '@/lib/utils'
 import type { CreatePostInput, OwnPost } from '@/lib/types'
+import { WritingHelp } from './WritingHelp'
 
 const TYPES: { value: CreatePostInput['type']; label: string; hint: string }[] = [
   { value: 'place', label: 'A place', hint: 'Somewhere people can go any time it is open' },
@@ -305,6 +306,15 @@ export function ComposePage() {
               {form.description.trim().length} characters — at least 40 to publish
             </p>
           </div>
+
+          {/* Directly under the description it helps with, rather than at the
+              top of the form. Nothing to suggest until something is written. */}
+          <WritingHelp
+            title={form.title}
+            description={form.description}
+            summary={form.summary}
+            onApply={(patch) => setForm((current) => ({ ...current, ...patch }))}
+          />
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div>

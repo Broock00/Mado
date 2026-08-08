@@ -35,6 +35,7 @@ import type {
   Itinerary,
   MemoryEntry,
   ModerationItem,
+  AssistSuggestions,
   PublisherAnalytics,
   ExplorerSummary,
   CollectionCard,
@@ -590,6 +591,13 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ approve, note }),
+    }).then((r) => r.data),
+
+  assistDraft: (payload: { title: string; description: string; summary?: string }) =>
+    request<Envelope<AssistSuggestions>>('/api/v1/posts/assist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     }).then((r) => r.data),
 
   // ---------------------------------------------------------- analytics

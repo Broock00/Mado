@@ -282,6 +282,20 @@ export interface AuthSession {
   isCurrent: boolean
 }
 
+/** Suggestions for a draft listing. Every field is optional: anything that
+ *  failed the server's grounding check is simply absent. */
+export interface AssistSuggestions {
+  summary?: string | null
+  description?: string | null
+  categorySlug?: string | null
+  tags: string[]
+  /** Questions a reader would still have. Nothing to apply - the platform does
+   *  not know the answers and must not appear to. */
+  missing: string[]
+  /** False when no model is configured; the control hides itself. */
+  available: boolean
+}
+
 /* ---------------------------------------------------------------- analytics */
 
 export interface DayPoint {

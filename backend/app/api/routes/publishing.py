@@ -24,6 +24,7 @@ from app.domains.catalog.schemas import CamelModel, EventInstanceOut
 from app.domains.catalog.serializers import to_detail
 from app.domains.discovery.embedding_service import embed_experience
 from app.domains.discovery.indexer import index_experience, remove_experience
+from app.domains.publisher.assistant import ContentAssistant
 from app.domains.publisher.schemas import (
     AddEventRequest,
     AddMediaRequest,
@@ -547,3 +548,67 @@ async def create_venue(
     view = VenueOut.model_validate(venue)
     await session.commit()
     return Envelope(data=view)
+
+
+# ------------------------------------------------------------- writing help
+
+
+class AssistRequest(CamelModel):
+    title: str = Field(min_length=1, max_length=240)
+    description: str = Field(min_length=1, max_length=8000)
+    summary: str | None = Field(default=None, max_length=400)
+
+
+class AssistResponse(CamelModel):
+    # Every field is optional. A suggestion that failed the grounding check is
+    # simply absent - the publisher is not told the assistant tried to invent a
+    # price, because that is our problem rather than theirs.
+    summary: str | None = None
+    description: str | None = None
+    category_slug: str | None = None
+    tags: list[str] = []
+    # Questions a reader would still have. The most useful part: the model is
+    # far better at noticing an omission than at filling one in.
+    missing: list[str] = []
+    # False when there is no model configured. The client hides the control
+    # rather than offering a button that quietly does nothing.
+    available: bool = True
+
+
+@router.post(
+    "/assist",
+    response_model=Envelope[AssistResponse],
+    summary="Suggestions for a draft",
+    description=(
+        "Suggests a summary, a tightened description, a category and tags, and "
+        "asks what a reader would still want to know. Nothing is applied - every "
+        "suggestion comes back for you to accept or ignore.\n\n"
+        "The assistant may not add facts. Suggestions are checked against your "
+        "draft before being offered, and any that introduce a number or a price "
+        "you did not write are discarded rather than shown."
+    ),
+)
+async def assist(
+    payload: AssistRequest,
+    user: CurrentUser,
+    session: SessionDep,
+    request: Request,
+) -> Envelope[AssistResponse]:
+    # A model call per press, so it shares the concierge's budget rather than
+    # the free draft limit.
+    await rate_limit.check(
+        rate_limit.identify(request, str(user.id)), rate_limit.CONCIERGE_LIMIT
+    )
+    suggestions = await ContentAssistant(session).suggest(
+        title=payload.title, description=payload.description, summary=payload.summary
+    )
+    return Envelope(
+        data=AssistResponse(
+            summary=suggestions.summary,
+            description=suggestions.description,
+            category_slug=suggestions.category_slug,
+            tags=suggestions.tags,
+            missing=suggestions.missing,
+            available=suggestions.available,
+        )
+    )
