@@ -299,6 +299,28 @@ export interface AssistSuggestions {
   available: boolean
 }
 
+/* --------------------------------------------------- flags and the record */
+
+export interface FeatureFlag {
+  key: string
+  description: string
+  enabled: boolean
+  rolloutPercentage: number
+  updatedAt?: string | null
+}
+
+export interface AuditEntry {
+  id: string
+  actorLabel: string
+  action: string
+  subjectType: string
+  subjectId?: string | null
+  subjectLabel?: string | null
+  reason?: string | null
+  context: Record<string, unknown>
+  occurredAt: string
+}
+
 /* ------------------------------------------------------------- reservations */
 
 export interface Availability {

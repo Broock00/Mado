@@ -123,6 +123,31 @@ function patchSavedState(
   })
 }
 
+/**
+ * Whether one feature is on for whoever is looking (spec ADM-003).
+ *
+ * The whole resolved map is fetched once and shared, rather than a request per
+ * flag. The server sends resolved booleans only - a client has no business
+ * knowing a feature exists at 5% while it is off for this explorer.
+ *
+ * Returns `false` while loading and `false` if the request fails. Both are
+ * deliberate: a flag turns something new on, so not knowing means the behaviour
+ * that existed before, and a flag that flickered on as its request landed would
+ * be worse than one that arrives a moment late.
+ */
+export function useFlag(key: string): boolean {
+  const { data } = useQuery({
+    queryKey: ['my-flags'],
+    queryFn: () => api.myFlags(),
+    // Changed by a moderator rather than by the explorer, so it will not change
+    // under them mid-session; refetching per page would be a request for
+    // nothing.
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+  return data?.[key] ?? false
+}
+
 /** Request browser location, recording consent or refusal. */
 export function useRequestLocation() {
   const setLocation = useAppStore((s) => s.setLocation)

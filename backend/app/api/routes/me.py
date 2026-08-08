@@ -6,7 +6,7 @@ import uuid
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import CurrentUser, SessionDep
+from app.api.deps import AnonymousId, CurrentUser, OptionalUser, SessionDep
 from app.core.envelope import CollectionEnvelope, Envelope
 from app.domains.explorer.service import ExplorerService
 from app.domains.identity.schemas import (
@@ -139,3 +139,22 @@ async def export_data(user: CurrentUser) -> Envelope[dict]:
             "userId": str(user.id),
         }
     )
+
+
+@router.get(
+    "/flags",
+    response_model=Envelope[dict[str, bool]],
+    summary="Which features are on for you",
+    description=(
+        "Resolved values, not the flag definitions - a client has no business "
+        "knowing a feature exists at 5% while it is off for this explorer.\n\n"
+        "Returned as one map because a page needs all of them to render, and "
+        "asking per flag would be a request per feature."
+    ),
+)
+async def my_flags(
+    session: SessionDep, user: OptionalUser, anonymous_id: AnonymousId
+) -> Envelope[dict[str, bool]]:
+    from app.domains.trust.flags import FlagService
+
+    return Envelope(data=await FlagService(session).evaluate(user, anonymous_id))

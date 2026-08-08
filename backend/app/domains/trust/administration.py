@@ -39,6 +39,7 @@ from app.core.errors import ConflictError, NotFoundError, PermissionDeniedError
 from app.core.logging import get_logger
 from app.domains.identity.models import User, UserProfile
 from app.domains.publisher.models import Publisher
+from app.domains.trust import audit
 
 logger = get_logger("mado.administration")
 
@@ -197,6 +198,18 @@ class AdministrationService:
             )
 
         user.status = STATUS_SUSPENDED if suspended else STATUS_ACTIVE
+
+        # In the same transaction as the change, not fire-and-forget. If the
+        # record cannot be written the suspension does not happen either: a
+        # moderator action nobody can account for is worse than one that failed.
+        audit.AuditLog(self.session).record(
+            actor=actor,
+            action=audit.ACCOUNT_SUSPENDED if suspended else audit.ACCOUNT_RESTORED,
+            subject_type="user",
+            subject_id=user.id,
+            subject_label=user.profile.display_name if user.profile else None,
+            reason=reason,
+        )
         logger.info(
             "account_status_changed",
             user_id=str(user.id),
@@ -225,6 +238,13 @@ class AdministrationService:
             )
 
         user.is_moderator = moderator
+        audit.AuditLog(self.session).record(
+            actor=actor,
+            action=audit.MODERATOR_GRANTED if moderator else audit.MODERATOR_REVOKED,
+            subject_type="user",
+            subject_id=user.id,
+            subject_label=user.profile.display_name if user.profile else None,
+        )
         logger.info(
             "moderator_rights_changed",
             user_id=str(user.id),
@@ -302,6 +322,14 @@ class AdministrationService:
             # again is possible without an administrator having to reset it.
             publisher.verification_status = VERIFICATION_UNVERIFIED
 
+        audit.AuditLog(self.session).record(
+            actor=actor,
+            action=audit.VERIFICATION_APPROVED if approve else audit.VERIFICATION_REFUSED,
+            subject_type="publisher",
+            subject_id=publisher.id,
+            subject_label=publisher.name,
+            reason=note,
+        )
         logger.info(
             "verification_decided",
             publisher_id=str(publisher.id),

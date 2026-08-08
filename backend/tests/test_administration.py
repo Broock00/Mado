@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import app.models  # noqa: F401  (audit entries are built here, so mappers must resolve)
 from app.core.errors import (
     AuthenticationError,
     ConflictError,
@@ -37,7 +38,15 @@ pytestmark = pytest.mark.anyio
 def account(**overrides):
     """A stand-in for a User row, with only the columns this service touches."""
     return SimpleNamespace(
-        **{"id": uuid.uuid4(), "status": STATUS_ACTIVE, "is_moderator": False, **overrides}
+        **{
+            "id": uuid.uuid4(),
+            "status": STATUS_ACTIVE,
+            "is_moderator": False,
+            # The service labels audit entries from here. Present on the stub
+            # because it is present on the row: `_load` eager-loads it.
+            "profile": SimpleNamespace(display_name="Someone"),
+            **overrides,
+        }
     )
 
 
@@ -45,6 +54,7 @@ def publisher(**overrides):
     return SimpleNamespace(
         **{
             "id": uuid.uuid4(),
+            "name": "A publisher",
             "verification_status": VERIFICATION_UNVERIFIED,
             "verification_note": None,
             "verification_requested_at": None,
@@ -55,6 +65,17 @@ def publisher(**overrides):
     )
 
 
+def recording_session():
+    """A session that only collects what was added.
+
+    Enough for these tests because every administrative action now writes an
+    audit entry through the caller's session, and holding on to them lets a test
+    assert the record exists rather than only the state change.
+    """
+    added: list = []
+    return SimpleNamespace(add=added.append, added=added)
+
+
 def service_over(*accounts, publisher_row=None) -> AdministrationService:
     """A service whose loads are satisfied from memory rather than a database.
 
@@ -62,7 +83,7 @@ def service_over(*accounts, publisher_row=None) -> AdministrationService:
     session in would test SQLAlchemy, which is not where these bugs live.
     """
     by_id = {a.id: a for a in accounts}
-    service = AdministrationService(session=None)  # type: ignore[arg-type]
+    service = AdministrationService(session=recording_session())
 
     async def _load(user_id):
         found = by_id.get(user_id)
@@ -78,6 +99,65 @@ def service_over(*accounts, publisher_row=None) -> AdministrationService:
     service._load = _load  # type: ignore[method-assign]
     service._publisher_for = _publisher_for  # type: ignore[method-assign]
     return service
+
+
+class TestEveryDecisionLeavesARecord:
+    """Spec ADM-004. The point of the audit log is that it is not optional.
+
+    Asserted at this level rather than in the audit tests because the failure
+    being guarded against is a new administrative action shipping without one -
+    which the audit module cannot notice on its own.
+    """
+
+    async def test_a_suspension_is_recorded_with_its_reason(self):
+        actor, target = account(is_moderator=True), account()
+        service = service_over(actor, target)
+        await service.set_suspended(
+            actor, target.id, suspended=True, reason="Repeated scam listings"
+        )
+
+        entry = only_entry(service)
+        assert entry.action == "account.suspended"
+        assert entry.subject_id == target.id
+        assert entry.reason == "Repeated scam listings"
+
+    async def test_lifting_one_is_a_separate_action_not_the_same_one_again(self):
+        """"Status changed" would need the context read to know which happened."""
+        actor = account(is_moderator=True)
+        target = account(status=STATUS_SUSPENDED)
+        service = service_over(actor, target)
+        await service.set_suspended(actor, target.id, suspended=False)
+        assert only_entry(service).action == "account.restored"
+
+    async def test_granting_moderator_rights_is_recorded(self):
+        actor, target = account(is_moderator=True), account()
+        service = service_over(actor, target)
+        await service.set_moderator(actor, target.id, moderator=True)
+        assert only_entry(service).action == "moderator.granted"
+
+    async def test_a_verification_decision_is_recorded_against_the_publisher(self):
+        row = publisher(verification_status=VERIFICATION_REQUESTED)
+        service = TestVerificationDecisions().service_for(row)
+        await service.decide_verification(account(is_moderator=True), row.id, approve=False)
+
+        entry = only_entry(service)
+        assert entry.action == "verification.refused"
+        assert entry.subject_type == "publisher"
+        assert entry.subject_label == row.name
+
+    async def test_a_refused_action_records_nothing(self):
+        """A guard that fired means the action did not happen, and a record of
+        something that did not happen is worse than no record."""
+        actor = account(is_moderator=True)
+        service = service_over(actor)
+        with pytest.raises(ConflictError):
+            await service.set_suspended(actor, actor.id, suspended=True)
+        assert service.session.added == []
+
+
+def only_entry(service):
+    assert len(service.session.added) == 1
+    return service.session.added[0]
 
 
 class TestSuspension:
@@ -206,7 +286,7 @@ class TestVerificationDecisions:
     """`decide_verification` loads through the session, so it gets a stub of one."""
 
     def service_for(self, row):
-        service = AdministrationService(session=SimpleNamespace())
+        service = AdministrationService(session=recording_session())
 
         async def _get(_model, publisher_id):
             return row if row is not None and row.id == publisher_id else None

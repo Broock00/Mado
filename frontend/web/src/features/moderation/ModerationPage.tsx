@@ -15,9 +15,10 @@
  *   presented with the same weight. A queue that makes rejection the easy path
  *   trains moderators to reject.
  *
- * Three surfaces, because they are three decisions a moderator makes about the
- * same city and splitting them across pages would hide two of them: content
- * waiting on a ruling, publishers waiting on verification, and accounts.
+ * Four surfaces, because they are four things a moderator does about the same
+ * city and splitting them across pages would hide three of them: content
+ * waiting on a ruling, publishers waiting on verification, accounts, and the
+ * levers plus the record of who pulled them.
  *
  * Every action here is reversible and none of them delete anything - which is
  * the whole of spec BUSINESS-07 restated as an interface constraint.
@@ -32,6 +33,7 @@ import {
   Flag,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   UserCog,
   XCircle,
 } from 'lucide-react'
@@ -41,11 +43,13 @@ import { useAppStore } from '@/app/store'
 import type { AdminAccount, ModerationItem, PublisherVerification } from '@/lib/types'
 import { Badge, Button, Card, EmptyState, Input } from '@/design-system/primitives'
 import { cn } from '@/lib/utils'
+import { Operations } from './Operations'
 
 const TABS = [
   { key: 'content', label: 'Content', icon: ShieldCheck },
   { key: 'verification', label: 'Verification', icon: BadgeCheck },
   { key: 'accounts', label: 'Accounts', icon: UserCog },
+  { key: 'operations', label: 'Operations', icon: SlidersHorizontal },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']
@@ -695,6 +699,7 @@ export function ModerationPage() {
       {tab === 'content' && <ContentQueue />}
       {tab === 'verification' && <VerificationQueue />}
       {tab === 'accounts' && <AccountAdmin actorId={user.id} />}
+      {tab === 'operations' && <Operations />}
     </div>
   )
 }

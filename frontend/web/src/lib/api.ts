@@ -35,6 +35,8 @@ import type {
   Itinerary,
   MemoryEntry,
   ModerationItem,
+  FeatureFlag,
+  AuditEntry,
   Availability,
   Reservation,
   Attendee,
@@ -723,6 +725,31 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ experienceIds }),
     }).then((r) => r.data),
+
+  // ------------------------------------------------- flags and the record
+  /** Resolved for the current explorer - never the definitions. */
+  myFlags: () => request<Envelope<Record<string, boolean>>>('/api/v1/me/flags').then((r) => r.data),
+
+  flags: () => request<CollectionEnvelope<FeatureFlag>>('/api/v1/flags').then((r) => r.data),
+
+  createFlag: (key: string, description: string) =>
+    request<Envelope<FeatureFlag>>('/api/v1/flags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, description }),
+    }).then((r) => r.data),
+
+  updateFlag: (key: string, patch: { enabled?: boolean; rolloutPercentage?: number }) =>
+    request<Envelope<FeatureFlag>>(`/api/v1/flags/${key}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }).then((r) => r.data),
+
+  auditTrail: (days = 30) =>
+    request<CollectionEnvelope<AuditEntry>>(`/api/v1/admin/audit${query({ days })}`).then(
+      (r) => r.data,
+    ),
 
   // ------------------------------------------------------- administration
   // Search rather than browse: an administrator looking for a specific person

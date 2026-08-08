@@ -18,11 +18,14 @@ from pydantic import Field
 from app.api.deps import CurrentUser, SessionDep
 from app.core import rate_limit
 from app.core.envelope import CollectionEnvelope, Envelope
+from app.core.logging import get_request_id
 from app.domains.catalog.schemas import CamelModel
 from app.domains.trust.administration import (
     AdministrationService,
     require_moderator,
 )
+from app.domains.trust.audit import AuditLog, window_since
+from app.domains.trust.flags import FlagService
 
 router = APIRouter(tags=["administration"])
 
@@ -218,3 +221,146 @@ async def decide_verification(
     )
     await session.commit()
     return Envelope(data=PublisherVerificationOut.model_validate(publisher))
+
+
+# ------------------------------------------------------- flags and the record
+
+
+class FlagOut(CamelModel):
+    key: str
+    description: str
+    enabled: bool
+    rollout_percentage: int
+    updated_at: datetime | None = None
+
+
+class CreateFlagRequest(CamelModel):
+    key: str = Field(min_length=3, max_length=120)
+    description: str = Field(min_length=1, max_length=500)
+
+
+class UpdateFlagRequest(CamelModel):
+    enabled: bool | None = None
+    rollout_percentage: int | None = Field(default=None, ge=0, le=100)
+    description: str | None = Field(default=None, max_length=500)
+
+
+class AuditEntryOut(CamelModel):
+    id: uuid.UUID
+    actor_label: str
+    action: str
+    subject_type: str
+    subject_id: uuid.UUID | None = None
+    subject_label: str | None = None
+    reason: str | None = None
+    context: dict = {}
+    occurred_at: datetime
+
+
+@router.get(
+    "/flags",
+    response_model=CollectionEnvelope[FlagOut],
+    summary="Every feature flag",
+    description="Moderators only. Explorers get resolved values from /me/flags.",
+)
+async def list_flags(session: SessionDep, user: CurrentUser) -> CollectionEnvelope[FlagOut]:
+    require_moderator(user)
+    flags = await FlagService(session).all()
+    return CollectionEnvelope(
+        data=[
+            FlagOut(
+                key=f.key,
+                description=f.description,
+                enabled=f.enabled,
+                rollout_percentage=f.rollout_percentage,
+                updated_at=f.updated_at,
+            )
+            for f in flags
+        ]
+    )
+
+
+@router.post(
+    "/flags",
+    status_code=status.HTTP_201_CREATED,
+    response_model=Envelope[FlagOut],
+    summary="Register a flag",
+    description="Created switched off - a flag that arrives on has shipped the feature.",
+)
+async def create_flag(
+    payload: CreateFlagRequest,
+    session: SessionDep,
+    user: CurrentUser,
+    request: Request,
+) -> Envelope[FlagOut]:
+    require_moderator(user)
+    flag = await FlagService(session).create(
+        user, payload.key, payload.description, request_id=get_request_id()
+    )
+    view = FlagOut(
+        key=flag.key,
+        description=flag.description,
+        enabled=flag.enabled,
+        rollout_percentage=flag.rollout_percentage,
+        updated_at=flag.updated_at,
+    )
+    await session.commit()
+    return Envelope(data=view)
+
+
+@router.patch(
+    "/flags/{key}",
+    response_model=Envelope[FlagOut],
+    summary="Turn a flag on, off, or partly on",
+)
+async def update_flag(
+    key: str,
+    payload: UpdateFlagRequest,
+    session: SessionDep,
+    user: CurrentUser,
+) -> Envelope[FlagOut]:
+    require_moderator(user)
+    flag = await FlagService(session).set(
+        user,
+        key,
+        enabled=payload.enabled,
+        rollout_percentage=payload.rollout_percentage,
+        description=payload.description,
+        request_id=get_request_id(),
+    )
+    view = FlagOut(
+        key=flag.key,
+        description=flag.description,
+        enabled=flag.enabled,
+        rollout_percentage=flag.rollout_percentage,
+        updated_at=flag.updated_at,
+    )
+    await session.commit()
+    return Envelope(data=view)
+
+
+@router.get(
+    "/admin/audit",
+    response_model=CollectionEnvelope[AuditEntryOut],
+    summary="What administrators have done",
+    description=(
+        "Every administrative action: suspensions, moderator rights, "
+        "verification rulings, moderation decisions and flag changes. Append "
+        "only - there is no endpoint that edits or removes an entry.\n\n"
+        "This records authority being used, not people being watched. Nothing "
+        "an explorer does appears here."
+    ),
+)
+async def audit_trail(
+    session: SessionDep,
+    user: CurrentUser,
+    action: str | None = Query(default=None),
+    subject: uuid.UUID | None = Query(default=None),
+    days: int = Query(default=30, ge=1, le=365),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> CollectionEnvelope[AuditEntryOut]:
+    require_moderator(user)
+    entries = await AuditLog(session).recent(
+        action=action, subject_id=subject, since=window_since(days), limit=limit
+    )
+    return CollectionEnvelope(data=[AuditEntryOut.model_validate(e) for e in entries])

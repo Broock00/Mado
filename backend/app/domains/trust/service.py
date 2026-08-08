@@ -40,6 +40,7 @@ from app.domains.catalog.models import (
 )
 from app.domains.explorer.models import ContentReport
 from app.domains.identity.models import User
+from app.domains.trust import audit
 from app.domains.trust.semantic_screening import screen_semantically
 
 logger = get_logger("mado.trust")
@@ -435,6 +436,18 @@ class TrustService:
             report.resolved_at = now
             report.resolved_by_user_id = moderator.id
             report.resolution_note = note
+
+        audit.AuditLog(self.session).record(
+            actor=moderator,
+            action=audit.CONTENT_APPROVED if approve else audit.CONTENT_REJECTED,
+            subject_type="experience",
+            subject_id=experience.id,
+            subject_label=experience.title,
+            reason=note,
+            # The score that put it in the queue, kept beside the ruling. A
+            # later review of moderator decisions needs to see what they saw.
+            context={"riskScore": float(experience.risk_score or 0)},
+        )
 
         await self.session.flush()
         logger.info(
