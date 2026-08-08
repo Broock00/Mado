@@ -14,6 +14,7 @@ import { VerifyEmailPage } from '@/features/auth/VerifyEmailPage'
 import { ForgotPasswordPage } from '@/features/auth/ForgotPasswordPage'
 import { ResetPasswordPage } from '@/features/auth/ResetPasswordPage'
 import { MyPostsPage } from '@/features/publishing/MyPostsPage'
+import { PublisherDashboard } from '@/features/analytics/PublisherDashboard'
 import { ComposePage } from '@/features/publishing/ComposePage'
 import { PlanPage } from '@/features/planning/PlanPage'
 import { ItineraryPage } from '@/features/planning/ItineraryPage'
@@ -43,6 +44,7 @@ const router = createBrowserRouter([
       { index: true, element: <DiscoverPage /> },
       { path: 'search', element: <SearchPage /> },
       { path: 'collections', element: <CollectionsPage /> },
+      { path: 'posts/analytics', element: <PublisherDashboard /> },
       // Public: a shared link has to work for someone who has never signed in.
       { path: 'collections/:collectionId', element: <CollectionDetailPage /> },
       // Reached from a link in an email, so they live inside the shell: someone

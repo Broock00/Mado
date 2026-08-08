@@ -24,6 +24,7 @@ import { useAppStore } from '@/app/store'
 import type { MemoryEntry, PrivacySettings } from '@/lib/types'
 import { Button, Card, EmptyState, SectionHeading } from '@/design-system/primitives'
 import { AccountSecurity } from './AccountSecurity'
+import { MyActivity } from '@/features/analytics/MyActivity'
 
 /**
  * Notification kinds, in the order they matter to an explorer.
@@ -255,6 +256,8 @@ export function SettingsPage() {
           {(updatePrivacy.error as Error).message}
         </p>
       )}
+
+      <MyActivity />
 
       <AccountSecurity />
 

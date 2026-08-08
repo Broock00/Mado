@@ -282,6 +282,70 @@ export interface AuthSession {
   isCurrent: boolean
 }
 
+/* ---------------------------------------------------------------- analytics */
+
+export interface DayPoint {
+  day: string
+  views: number
+  saves: number
+}
+
+export interface ExperienceMetrics {
+  experienceId: string
+  title: string
+  status: string
+  moderationStatus: string
+  views: number
+  uniqueViewers: number
+  saves: number
+  /** Net of unsaves. Saved forty times and unsaved thirty-nine is not popular. */
+  netSaves: number
+  /** Null when there were too few views for a ratio to mean anything - not 0,
+   *  which would read as "nobody saves this". */
+  saveRate?: number | null
+  ratingAverage?: number | null
+  ratingCount: number
+  reportCount: number
+}
+
+export interface PublisherAnalytics {
+  windowDays: number
+  totalViews: number
+  uniqueViewers: number
+  totalSaves: number
+  netSaves: number
+  saveRate?: number | null
+  publishedCount: number
+  draftCount: number
+  withheldCount: number
+  reviewCount: number
+  ratingAverage?: number | null
+  reportCount: number
+  series: DayPoint[]
+  experiences: ExperienceMetrics[]
+  /** The threshold the server applied, so the explanation always matches it. */
+  minRateSample: number
+}
+
+export interface CategoryWeight {
+  slug: string
+  name: string
+  /** A weighted score, not a number of events. Never render it as "9 times". */
+  weight: number
+}
+
+export interface ExplorerSummary {
+  savedCount: number
+  collectionCount: number
+  planCount: number
+  reviewCount: number
+  exploredCount: number
+  recentDays: number
+  topCategories: CategoryWeight[]
+  memberSince?: string | null
+  isEmpty: boolean
+}
+
 /* -------------------------------------------------------------- collections */
 
 export type CollectionVisibility = 'private' | 'unlisted' | 'public'

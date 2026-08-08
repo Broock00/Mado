@@ -9,7 +9,15 @@
 
 import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, Eye, EyeOff, PencilLine, Plus, ShieldAlert } from 'lucide-react'
+import {
+  AlertTriangle,
+  BarChart3,
+  Eye,
+  EyeOff,
+  PencilLine,
+  Plus,
+  ShieldAlert,
+} from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
 import { Badge, Button, Card, EmptyState, Skeleton } from '@/design-system/primitives'
@@ -71,12 +79,20 @@ export function MyPostsPage() {
             Anything you share appears in discovery for everyone in the city.
           </p>
         </div>
-        <Link to="/compose" className="shrink-0">
-          <Button>
-            <Plus className="size-4" aria-hidden />
-            New post
-          </Button>
-        </Link>
+        <div className="flex shrink-0 gap-2">
+          <Link to="/posts/analytics">
+            <Button variant="secondary">
+              <BarChart3 className="size-4" aria-hidden />
+              How they are doing
+            </Button>
+          </Link>
+          <Link to="/compose">
+            <Button>
+              <Plus className="size-4" aria-hidden />
+              New post
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Only once they have something published. A publisher row can outlive

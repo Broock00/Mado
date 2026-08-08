@@ -35,6 +35,8 @@ import type {
   Itinerary,
   MemoryEntry,
   ModerationItem,
+  PublisherAnalytics,
+  ExplorerSummary,
   CollectionCard,
   CollectionDetail,
   CollectionVisibility,
@@ -589,6 +591,15 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ approve, note }),
     }).then((r) => r.data),
+
+  // ---------------------------------------------------------- analytics
+  publisherAnalytics: (windowDays: number) =>
+    request<Envelope<PublisherAnalytics>>(
+      `/api/v1/analytics/publisher${query({ window: windowDays })}`,
+    ).then((r) => r.data),
+
+  myActivity: () =>
+    request<Envelope<ExplorerSummary>>('/api/v1/analytics/me').then((r) => r.data),
 
   // -------------------------------------------------------- collections
   publicCollections: (city?: string) =>
