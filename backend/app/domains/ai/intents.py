@@ -28,6 +28,10 @@ COMPARE_EVENTS = "COMPARE_EVENTS"
 SAVE_EVENT = "SAVE_EVENT"
 ASK_ABOUT_VENUE = "ASK_ABOUT_VENUE"
 GENERAL_ASSISTANCE = "GENERAL_ASSISTANCE"
+# Adjusting a plan already on the table (spec AI-004). Never produced by the
+# patterns below - it is only meaningful with a pending plan to refer to, which
+# the rules cannot see.
+REFINE_PLAN = "REFINE_PLAN"
 
 # Spec 56.01 s10.
 CONFIDENCE_HIGH = 0.90

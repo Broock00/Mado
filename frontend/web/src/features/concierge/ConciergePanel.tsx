@@ -31,6 +31,7 @@ interface Turn {
   // and showing it as a row of cards discards the order and the timings that
   // make it one.
   plan?: OfferedPlan | null
+  planChange?: string | null
   conversationId?: string
   results?: ConciergeResult[]
   actions?: SuggestedAction[]
@@ -73,6 +74,7 @@ export function ConciergePanel() {
           role: 'assistant',
           text: response.message,
           plan: response.plan,
+          planChange: response.planChange,
           conversationId: response.conversationId,
           results: response.results,
           actions: response.suggestedActions,
@@ -183,6 +185,14 @@ export function ConciergePanel() {
                   <p className="whitespace-pre-line text-sm leading-relaxed text-sand-800">
                     {turn.text}
                   </p>
+
+                  {/* What changed, above the plan. An explorer comparing two
+                      lists of four stops will not spot that the third moved. */}
+                  {turn.planChange && (
+                    <p className="mt-2 rounded-lg bg-sand-100 px-3 py-2 text-xs text-sand-700">
+                      {turn.planChange}
+                    </p>
+                  )}
 
                   {turn.plan && turn.plan.stops.length > 0 && turn.conversationId && (
                     <OfferedPlanCard

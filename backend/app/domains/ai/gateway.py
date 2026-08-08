@@ -16,7 +16,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -26,7 +26,7 @@ from sqlalchemy.orm import selectinload
 from app.core.config import get_settings
 from app.core.errors import NotFoundError
 from app.core.logging import get_logger
-from app.domains.ai import intents, tools
+from app.domains.ai import intents, refinement, tools
 from app.domains.ai.memory import MemoryService, render_for_prompt
 from app.domains.ai.models import Conversation, Message, UserMemory
 from app.domains.ai.prompts import (
@@ -37,6 +37,7 @@ from app.domains.ai.prompts import (
 from app.domains.ai.understanding import understand
 from app.domains.catalog import repository as catalog_repo
 from app.domains.discovery.ranking import RankingContext
+from app.domains.explorer.planning import PlanRequest
 from app.integrations.ai_provider import GenerationRequest, get_provider
 
 logger = get_logger("mado.ai.gateway")
@@ -67,6 +68,10 @@ class ConciergeReply:
     # `items` because a plan is a sequence with timings and travel between stops,
     # and rendering it as a row of cards discards the part that makes it a plan.
     plan: dict[str, Any] | None = None
+    # What a refinement actually changed, worked out by comparing the two plans
+    # rather than taken from the model's account of its own work. An explorer
+    # comparing two lists of four stops will not spot that the third one moved.
+    plan_change: str | None = None
 
 
 class AIGateway:
@@ -178,12 +183,18 @@ class AIGateway:
         # anything the explorer revealed about themselves - in one structured call.
         # It decides what was *asked*, never what is true; facts still come from
         # tools, below.
+        # The plan currently on the table, if any. Passed into comprehension so a
+        # short follow-up ("make it cheaper") can be read as an adjustment to it
+        # rather than as a fresh, contextless request.
+        pending_plan = (conversation.state or {}).get("pendingPlan")
+
         reading = await understand(
             text,
             now=ctx.now,
             timezone=timezone,
             city_name=city_name,
             history=[{"role": m.role, "content": m.content} for m in history],
+            pending_plan=pending_plan,
         )
         classification = reading.as_classification()
 
@@ -196,9 +207,19 @@ class AIGateway:
             memories = await memory_service.recall(user_id, text, privacy=privacy)
 
         # 3-5. Plan and execute tools. Facts are gathered before generation.
-        tool_calls, results, plan = await self._execute_plan(
-            classification, ctx=ctx, city_slug=city_slug
-        )
+        plan_diff = None
+        if classification.intent == intents.REFINE_PLAN and pending_plan:
+            tool_calls, results, plan, plan_diff = await self._refine_plan(
+                text,
+                reading=reading,
+                pending=pending_plan,
+                ctx=ctx,
+                city_slug=city_slug,
+            )
+        else:
+            tool_calls, results, plan = await self._execute_plan(
+                classification, ctx=ctx, city_slug=city_slug
+            )
 
         # 6. Synthesize. The model phrases; it does not decide the facts.
         reply_text, model_name = await self._synthesize(
@@ -302,7 +323,133 @@ class AIGateway:
             latency_ms=latency_ms,
             clarification=clarification,
             plan=plan,
+            plan_change=plan_diff.describe() if plan_diff is not None else None,
         )
+
+    async def _run_tools(
+        self,
+        plan: list[tuple[str, dict[str, Any]]],
+        *,
+        ctx: RankingContext,
+        city_slug: str,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
+        """Execute a tool plan, collecting calls, items and the last payload.
+
+        Extracted so refinement and first-time planning run tools the same way.
+        A second copy of this loop would be a second place for "a failed tool
+        must not fail the turn" to stop being true.
+        """
+        tool_calls: list[dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
+        payload: dict[str, Any] | None = None
+
+        for name, raw_arguments in plan:
+            arguments = {k: v for k, v in raw_arguments.items() if v is not None}
+            try:
+                outcome = await tools.execute_tool(
+                    name, arguments, session=self.session, ctx=ctx, city_slug=city_slug
+                )
+            except Exception as exc:  # noqa: BLE001
+                # A failed tool must not fail the turn: the concierge answers with
+                # what it has (spec 56.01 s3.8 "safe failure").
+                logger.warning("tool_execution_failed", tool=name, error=str(exc))
+                tool_calls.append({"tool": name, "arguments": arguments, "ok": False})
+                continue
+
+            tool_calls.append(
+                {
+                    "tool": name,
+                    "arguments": arguments,
+                    "ok": outcome.ok,
+                    "resultCount": len(outcome.items),
+                    "freshness": outcome.freshness,
+                }
+            )
+            if outcome.ok:
+                results.extend(outcome.items)
+                if outcome.payload is not None:
+                    payload = outcome.payload
+
+        return tool_calls, results, payload
+
+    async def _refine_plan(
+        self,
+        text: str,
+        *,
+        reading,
+        pending: dict[str, Any],
+        ctx: RankingContext,
+        city_slug: str,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None, Any]:
+        """Adjust the plan already on the table (spec AI-004).
+
+        Rebuilds the request that produced it, applies one delta, and re-solves
+        with the untouched stops pinned. The alternative - planning again from
+        the new message alone - discards the constraints the explorer gave two
+        turns ago and the stops they already agreed to, which is why it reads as
+        a fresh roll of the dice rather than an adjustment.
+        """
+        stops = pending.get("stops") or []
+        previous = _request_from(pending, ctx=ctx, city_slug=city_slug)
+
+        read = refinement.from_model(
+            reading.entities.get("refinement"), stop_count=len(stops)
+        ) or refinement.read_rules(text, stop_count=len(stops))
+
+        if read is None:
+            # Understood that they were talking about the plan but not what they
+            # wanted changed. Returning the plan untouched is right: asking is
+            # the next step, and altering something at random would be worse
+            # than admitting the message was unclear.
+            logger.info("refinement_unreadable", text_length=len(text))
+            return [], [], pending, None
+
+        stop_ids = [
+            uuid.UUID(stop["experienceId"])
+            for stop in stops
+            if _is_uuid(stop.get("experienceId"))
+        ]
+        request = refinement.apply(
+            read,
+            previous,
+            stop_experience_ids=stop_ids,
+            # What the plan actually costs, so "cheaper" means cheaper than this
+            # evening rather than cheaper than a budget it was already under.
+            current_cost=_as_float(pending.get("totalCost")),
+        )
+
+        arguments = {
+            "starts_after": request.start.isoformat(),
+            "starts_before": request.end.isoformat(),
+            "budget": request.budget,
+            "max_stops": request.max_stops,
+            "categories": request.categories,
+            "free_only": request.free_only,
+            "keep": [str(i) for i in request.keep_experience_ids],
+            "avoid": [str(i) for i in request.avoid_experience_ids],
+        }
+        tool_calls, results, plan = await self._run_tools(
+            [("plan_outing", arguments)], ctx=ctx, city_slug=city_slug
+        )
+
+        if plan is None:
+            # The refinement emptied the plan - "cheaper" with nothing cheap to
+            # find. Keeping the previous plan is the honest outcome: the explorer
+            # still has what they had, and the reply says it could not be done.
+            logger.info("refinement_produced_nothing", kind=read.kind)
+            return tool_calls, results, pending, None
+
+        diff = refinement.diff_plans(pending, plan)
+        logger.info(
+            "plan_refined",
+            kind=read.kind,
+            degraded=read.degraded,
+            added=len(diff.added),
+            removed=len(diff.removed),
+            kept=diff.kept_count,
+            cost_delta=round(diff.cost_delta, 2),
+        )
+        return tool_calls, results, plan, diff
 
     async def _execute_plan(
         self, classification: intents.Classification, *, ctx: RankingContext, city_slug: str
@@ -378,36 +525,9 @@ class AIGateway:
                 )
             )
 
-        tool_calls: list[dict[str, Any]] = []
-        results: list[dict[str, Any]] = []
-        payload: dict[str, Any] | None = None
-
-        for name, raw_arguments in plan:
-            arguments = {k: v for k, v in raw_arguments.items() if v is not None}
-            try:
-                outcome = await tools.execute_tool(
-                    name, arguments, session=self.session, ctx=ctx, city_slug=city_slug
-                )
-            except Exception as exc:  # noqa: BLE001
-                # A failed tool must not fail the turn: the concierge answers with
-                # what it has (spec 56.01 s3.8 "safe failure").
-                logger.warning("tool_execution_failed", tool=name, error=str(exc))
-                tool_calls.append({"tool": name, "arguments": arguments, "ok": False})
-                continue
-
-            tool_calls.append(
-                {
-                    "tool": name,
-                    "arguments": arguments,
-                    "ok": outcome.ok,
-                    "resultCount": len(outcome.items),
-                    "freshness": outcome.freshness,
-                }
-            )
-            if outcome.ok:
-                results.extend(outcome.items)
-                if outcome.payload is not None:
-                    payload = outcome.payload
+        tool_calls, results, payload = await self._run_tools(
+            plan, ctx=ctx, city_slug=city_slug
+        )
 
         # De-duplicate across tools while preserving rank order.
         seen: set[str] = set()
@@ -514,6 +634,59 @@ class AIGateway:
         model = settings.ai_fast_model
         result = await self.provider.generate(request, model=model)
         return result.text.strip(), result.model
+
+
+def _as_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_uuid(value: Any) -> bool:
+    try:
+        uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _request_from(pending: dict[str, Any], *, ctx: RankingContext, city_slug: str) -> PlanRequest:
+    """Rebuild the request that produced the plan being refined.
+
+    The plan payload carries its own request precisely so this does not have to
+    be re-derived from prose. Re-reading the original message would lose
+    everything the explorer said in the turns since, and re-deriving from the
+    refinement alone would lose everything they said before it.
+    """
+    stored = pending.get("request") or {}
+
+    def _time(key: str, fallback: datetime) -> datetime:
+        raw = stored.get(key)
+        if not isinstance(raw, str):
+            return fallback
+        try:
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            return fallback
+
+    start = _time("startsAt", ctx.now)
+    end = _time("endsAt", start + timedelta(hours=5))
+
+    return PlanRequest(
+        start=start,
+        end=end if end > start else start + timedelta(hours=5),
+        city_slug=stored.get("city") or city_slug,
+        latitude=stored.get("latitude", ctx.latitude),
+        longitude=stored.get("longitude", ctx.longitude),
+        budget=stored.get("budget"),
+        max_stops=int(stored.get("maxStops") or 3),
+        categories=list(stored.get("categories") or []),
+        free_only=bool(stored.get("freeOnly")),
+        avoid_experience_ids=[
+            uuid.UUID(i) for i in (stored.get("avoid") or []) if _is_uuid(i)
+        ],
+    )
 
 
 def _render_plan_block(plan: dict[str, Any]) -> str:

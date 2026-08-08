@@ -103,6 +103,16 @@ class PlanRequest:
     # Category slugs the plan should be built around, if any were stated.
     categories: list[str] = field(default_factory=list)
     free_only: bool = False
+    # Refinement (spec AI-004). Experiences the explorer already accepted and
+    # ones they rejected.
+    #
+    # `keep` is what makes refining feel like refining. Asked to make an evening
+    # cheaper, a planner that re-solves from scratch hands back a different
+    # evening - and the two stops the explorer had already agreed to are gone
+    # for no reason they can see. Keeping them is not an optimisation, it is
+    # the difference between a conversation and a slot machine.
+    keep_experience_ids: list[uuid.UUID] = field(default_factory=list)
+    avoid_experience_ids: list[uuid.UUID] = field(default_factory=list)
 
     @property
     def available_minutes(self) -> float:
@@ -227,8 +237,19 @@ def build_plan(
     value_by_id = {str(item.experience.id): item.score for item in scored}
     pool = [item.experience for item in scored]
 
+    # Rejected outright. "Not that one" has to be honoured even if the ranker
+    # still thinks it is the best thing in the city - especially then.
+    if request.avoid_experience_ids:
+        avoided = set(request.avoid_experience_ids)
+        pool = [exp for exp in pool if exp.id not in avoided]
+
     if request.free_only:
-        pool = [exp for exp in pool if exp.price_type == "free"]
+        # A kept stop survives a filter it would otherwise fail. The explorer
+        # accepted it knowing what it cost; dropping it while answering "make
+        # the rest cheaper" would be obeying the letter of the request and
+        # ignoring the point.
+        kept = set(request.keep_experience_ids)
+        pool = [exp for exp in pool if exp.price_type == "free" or exp.id in kept]
     if request.categories:
         wanted = set(request.categories)
         preferred = [e for e in pool if e.category and e.category.slug in wanted]
@@ -245,6 +266,7 @@ def build_plan(
 
     unmet: list[str] = []
     stops = _place_anchors(pool, request, limit, value_by_id)
+    stops = _place_kept(stops, pool, request, limit, origin)
     stops = _fill_gaps(stops, pool, request, limit, value_by_id, origin, unmet)
     stops = _two_opt(stops, request, origin)
     stops = _retime(stops, request, origin)
@@ -348,6 +370,67 @@ def _place_anchors(
         )
     anchors.sort(key=lambda stop: stop.arrive_at)
     return anchors
+
+
+def _place_kept(
+    stops: list[PlannedStop],
+    pool: list[Experience],
+    request: PlanRequest,
+    limit: int,
+    origin: tuple[float, float] | None,
+) -> list[PlannedStop]:
+    """Seat the stops the explorer already agreed to, before anything else competes.
+
+    Placed after the fixed-time anchors and before gap filling, which is the only
+    order that works. Anchors cannot move at all - a concert starts when it
+    starts - so they win any conflict. Everything else is discretionary, and a
+    stop the explorer has already said yes to should outrank one the ranker
+    merely likes.
+
+    Kept stops are given provisional times here and properly timed by `_retime`
+    along with everything else, so a refined plan is internally consistent rather
+    than a new plan with old timings pasted in.
+    """
+    if not request.keep_experience_ids:
+        return stops
+
+    seated = {stop.experience.id for stop in stops}
+    by_id = {experience.id: experience for experience in pool}
+
+    # In the order the explorer saw them, not the order the ranker prefers.
+    for experience_id in request.keep_experience_ids:
+        if len(stops) >= limit or experience_id in seated:
+            continue
+        experience = by_id.get(experience_id)
+        if experience is None:
+            # It fell out of the candidate pool - unpublished, withheld, or the
+            # event has passed. Silently dropping it is right; `unmet` in the
+            # caller reports the shortfall.
+            continue
+
+        fixed = _fixed_start(experience, request)
+        if fixed is not None:
+            start, occurrence_id = fixed
+        else:
+            start, occurrence_id = request.start, None
+
+        stops.append(
+            PlannedStop(
+                experience=experience,
+                arrive_at=start,
+                depart_at=start + timedelta(minutes=_dwell_minutes(experience)),
+                travel_minutes=0,
+                travel_km=None,
+                estimated_cost=_cost_of(experience),
+                is_fixed_time=fixed is not None,
+                event_instance_id=occurrence_id,
+                note="Kept from your plan",
+            )
+        )
+        seated.add(experience_id)
+
+    stops.sort(key=lambda stop: stop.arrive_at)
+    return _retime(stops, request, origin)
 
 
 def _overlaps(start: datetime, end: datetime, stop: PlannedStop) -> bool:

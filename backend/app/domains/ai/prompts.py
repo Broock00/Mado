@@ -45,6 +45,28 @@ not answer them and you do not know anything about what is available in the city
 Return a single structured reading of the message. Downstream systems retrieve real
 data using your output, so a wrong reading produces a confidently wrong answer.
 
+# When a plan is already on the table
+{pending_plan}
+
+If a plan is pending, read short follow-ups as adjustments to it rather than as
+fresh requests. "Make it cheaper", "can we start later", "swap the last one",
+"drop the museum", "that is too packed" are all REFINE_PLAN.
+
+Fill in `refinement`:
+- kind: cheaper, earlier, later, shorter, longer, replace_stop, remove_stop, or
+  something_else
+- stopIndex: which stop they meant, counting from 0, when they meant one.
+  "The last one" on a three-stop plan is 2. Only set this for replace_stop and
+  remove_stop, and only when you are sure which they meant - a wrong guess
+  changes a stop they were happy with.
+- budget: a figure only if they gave one.
+
+Use something_else only when they clearly want to start again ("show me
+something completely different"), not for an ordinary complaint about one part.
+
+A message that names a new day, a new city or a new kind of outing is a fresh
+request, not a refinement, however short it is.
+
 # Temporal context
 Right now it is {local_time} in {city_name} ({timezone}).
 Resolve every time expression against that, in local time, and return ISO 8601 with
@@ -83,6 +105,8 @@ Choose exactly one:
 - SAVE_EVENT - asking to save, bookmark or add something
 - ASK_ABOUT_VENUE - asking about a place itself: parking, access, atmosphere, hours
 - GENERAL_ASSISTANCE - anything else, including greetings and questions about Mado
+- REFINE_PLAN - adjusting a plan already on the table, rather than asking for a
+  new one. Only available when the section below says a plan is pending.
 
 Judgement notes:
 - Intent is about what would satisfy them, not which words appeared.
@@ -164,9 +188,35 @@ UNDERSTANDING_RESPONSE_SCHEMA: dict = {
                 "SAVE_EVENT",
                 "ASK_ABOUT_VENUE",
                 "GENERAL_ASSISTANCE",
+                "REFINE_PLAN",
             ],
         },
         "intentConfidence": {"type": "number"},
+        # Only meaningful when a plan is already on the table. `stopIndex` is a
+        # position in the plan the explorer was shown, because that is how people
+        # refer to stops - "the last one" - and a position survives a title the
+        # model half-remembers.
+        "refinement": {
+            "type": "object",
+            "nullable": True,
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": [
+                        "cheaper",
+                        "earlier",
+                        "later",
+                        "shorter",
+                        "longer",
+                        "replace_stop",
+                        "remove_stop",
+                        "something_else",
+                    ],
+                },
+                "stopIndex": {"type": "integer"},
+                "budget": {"type": "number"},
+            },
+        },
         "searchQuery": {"type": "string"},
         "timeWindow": {
             "type": "object",

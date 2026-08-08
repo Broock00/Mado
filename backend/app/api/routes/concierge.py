@@ -101,6 +101,9 @@ class ConciergeResponse(CamelModel):
     # Present when this turn produced an itinerary. Nothing is stored until the
     # explorer accepts it - most plans are looked at once and asked again.
     plan: OfferedPlan | None = None
+    # One sentence naming what a refinement changed. Absent on a first plan,
+    # because there is nothing to have changed.
+    plan_change: str | None = None
     # Rendered as result cards, not prose (spec 57.04 s10).
     results: list[ResultItem] = Field(default_factory=list)
     suggested_actions: list[SuggestedAction] = Field(default_factory=list)
@@ -206,6 +209,7 @@ async def send_message(
             model=reply.model,
             latency_ms=reply.latency_ms,
             plan=_to_offered_plan(reply.plan),
+            plan_change=reply.plan_change,
         )
     )
 

@@ -311,6 +311,9 @@ def test_schema_intents_match_the_taxonomy():
         intents.SAVE_EVENT,
         intents.ASK_ABOUT_VENUE,
         intents.GENERAL_ASSISTANCE,
+        # Only reachable when a plan is pending, but it is still part of the
+        # contract the model answers against (spec AI-004).
+        intents.REFINE_PLAN,
     }
     assert schema_intents == code_intents
 
@@ -320,6 +323,7 @@ def test_understanding_prompt_declares_its_placeholders():
         city_name="Addis Ababa",
         local_time="Friday 07 August 2026, 15:00",
         timezone="Africa/Addis_Ababa",
+        pending_plan="No plan is pending.",
     )
     assert "Addis Ababa" in rendered
     assert "{" not in rendered.replace("{city_name}", "")  # no unfilled placeholders

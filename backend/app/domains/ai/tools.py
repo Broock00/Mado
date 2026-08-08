@@ -13,6 +13,7 @@ never as prose the model is free to reinterpret.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -399,6 +400,8 @@ async def _plan_outing(
     max_stops: int = 3,
     categories: list[str] | None = None,
     free_only: bool = False,
+    keep: list[str] | None = None,
+    avoid: list[str] | None = None,
 ) -> ToolResult:
     """Build an actual itinerary rather than a list of candidates.
 
@@ -426,6 +429,10 @@ async def _plan_outing(
         max_stops=max(1, min(6, max_stops)),
         categories=categories or [],
         free_only=free_only,
+        # Refinement (spec AI-004). Stops the explorer already accepted, and
+        # ones they turned down.
+        keep_experience_ids=_as_uuids(keep),
+        avoid_experience_ids=_as_uuids(avoid),
     )
 
     plan = await PlanningService(session).plan(request, ctx)
@@ -508,9 +515,24 @@ async def _plan_outing(
                 "maxStops": request.max_stops,
                 "categories": request.categories,
                 "freeOnly": request.free_only,
+                # Carried forward so the next refinement inherits what the last
+                # one rejected. Without it, "not that one" is forgotten as soon
+                # as the explorer asks for anything else.
+                "avoid": [str(i) for i in request.avoid_experience_ids],
             },
         },
     )
+
+
+def _as_uuids(values: list[str] | None) -> list[uuid.UUID]:
+    """Parse ids, dropping anything malformed rather than failing the turn."""
+    parsed: list[uuid.UUID] = []
+    for value in values or []:
+        try:
+            parsed.append(uuid.UUID(str(value)))
+        except (TypeError, ValueError):
+            continue
+    return parsed
 
 
 def _parse_time(value: str | None) -> datetime | None:

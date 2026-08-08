@@ -40,7 +40,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.core.logging import get_logger
-from app.domains.ai import intents
+from app.domains.ai import intents, refinement
 from app.domains.ai.prompts import (
     UNDERSTANDING_PROMPT_VERSION,
     UNDERSTANDING_RESPONSE_SCHEMA,
@@ -110,6 +110,7 @@ async def understand(
     timezone: str,
     city_name: str,
     history: list[dict[str, str]] | None = None,
+    pending_plan: dict | None = None,
 ) -> Understanding:
     """Read one message. Never raises - comprehension must not fail a turn."""
     provider = get_provider()
@@ -118,7 +119,9 @@ async def understand(
     # asking it. Going straight to the rules keeps local development working and
     # avoids a pointless round-trip.
     if getattr(provider, "name", "stub") == "stub":
-        return _from_rules(text, now=now, timezone=timezone, reason="offline_provider")
+        return _from_rules(
+            text, now=now, timezone=timezone, reason="offline_provider", pending_plan=pending_plan
+        )
 
     try:
         local_now = now.astimezone(ZoneInfo(timezone))
@@ -130,6 +133,7 @@ async def understand(
         city_name=city_name,
         local_time=local_now.strftime("%A %d %B %Y, %H:%M"),
         timezone=timezone,
+        pending_plan=_describe_pending(pending_plan),
     )
 
     request = GenerationRequest(
@@ -149,12 +153,16 @@ async def understand(
         result = await provider.generate(request, model=_fast_model())
     except Exception as exc:  # noqa: BLE001 - fall back rather than fail the turn
         logger.warning("understanding_call_failed", error=str(exc))
-        return _from_rules(text, now=now, timezone=timezone, reason="provider_error")
+        return _from_rules(
+            text, now=now, timezone=timezone, reason="provider_error", pending_plan=pending_plan
+        )
 
     payload = result.structured
     if not isinstance(payload, dict) or not payload.get("intent"):
         logger.warning("understanding_unparseable", model=result.model)
-        return _from_rules(text, now=now, timezone=timezone, reason="unparseable")
+        return _from_rules(
+            text, now=now, timezone=timezone, reason="unparseable", pending_plan=pending_plan
+        )
 
     understanding = _from_payload(payload, now=now, timezone=timezone)
     logger.info(
@@ -166,6 +174,28 @@ async def understand(
         preferences=len(understanding.preferences),
     )
     return understanding
+
+
+def _describe_pending(plan: dict | None) -> str:
+    """Show the model the plan being talked about, numbered as the explorer saw it.
+
+    Numbered because "the last one" and "the second" are how people refer to
+    stops, and a position is far more reliable than a title the model has to
+    match against half-remembered prose.
+    """
+    stops = (plan or {}).get("stops") or []
+    if not stops:
+        return "No plan is pending. REFINE_PLAN is not available this turn."
+
+    lines = [
+        f"{index}. {stop.get('title', 'Untitled')}"
+        + (f" - {stop.get('arriveAt', '')[11:16]}" if stop.get("arriveAt") else "")
+        for index, stop in enumerate(stops)
+    ]
+    total = (plan or {}).get("totalCost")
+    footer = f"\nTotal about {total:.0f} birr." if isinstance(total, int | float) else ""
+    body = "\n".join(lines)
+    return f"A plan is pending. The explorer is looking at:\n{body}{footer}"
 
 
 def _fast_model() -> str:
@@ -219,6 +249,11 @@ def _from_payload(payload: dict, *, now: datetime, timezone: str) -> Understandi
     query = (payload.get("searchQuery") or "").strip()
     if query:
         entities["query"] = query
+
+    # Carried as-is; the gateway validates it against the plan actually pending,
+    # because the model can only report what it believed was on the table.
+    if isinstance(payload.get("refinement"), dict):
+        entities["refinement"] = payload["refinement"]
 
     return Understanding(
         intent=intent,
@@ -308,13 +343,37 @@ def _clamp(value, *, default: float) -> float:
 # --- degraded path -----------------------------------------------------------
 
 
-def _from_rules(text: str, *, now: datetime, timezone: str, reason: str) -> Understanding:
+def _from_rules(
+    text: str,
+    *,
+    now: datetime,
+    timezone: str,
+    reason: str,
+    pending_plan: dict | None = None,
+) -> Understanding:
     """Deterministic comprehension, for when the model is unavailable.
 
     Retained only as a floor. It understands a fraction of what the model does, so
     the result is marked degraded and the caller is expected to be more willing to
     ask a clarifying question rather than act on a shaky reading.
     """
+    # Refinement first, and only when there is a plan to refine. Without this the
+    # rules read "make it cheaper" as a fresh search and hand back an unrelated
+    # list - throwing away the plan the explorer was in the middle of adjusting.
+    stops = (pending_plan or {}).get("stops") or []
+    if stops:
+        read = refinement.read_rules(text, stop_count=len(stops))
+        if read is not None:
+            logger.info("understanding_degraded_refinement", reason=reason, kind=read.kind)
+            return Understanding(
+                intent=intents.REFINE_PLAN,
+                confidence=intents.CONFIDENCE_MODERATE,
+                entities={"refinement": {"kind": read.kind, "stopIndex": read.stop_index,
+                                         "budget": read.budget}},
+                degraded=True,
+                prompt_version=f"{UNDERSTANDING_PROMPT_VERSION}-degraded",
+            )
+
     classification = intents.classify(text, now=now, timezone=timezone)
     logger.info("understanding_degraded", reason=reason, intent=classification.intent)
 

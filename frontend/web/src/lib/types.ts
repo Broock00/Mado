@@ -224,6 +224,9 @@ export interface ConciergeResponse {
    * asked for.
    */
   plan?: OfferedPlan | null
+  /** One sentence naming what a refinement changed. Absent on a first plan.
+   *  Derived by comparing the two plans, not from the model's own account. */
+  planChange?: string | null
   results: ConciergeResult[]
   suggestedActions: SuggestedAction[]
   clarification?: string | null
