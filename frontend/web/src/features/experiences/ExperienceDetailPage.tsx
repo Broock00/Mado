@@ -28,6 +28,7 @@ import { AddToCollection } from '@/features/collections/AddToCollection'
 import { Badge, Button, Card, EmptyState, SectionHeading, Skeleton } from '@/design-system/primitives'
 import { ExperienceCard } from './ExperienceCard'
 import { Reviews } from '@/features/reviews/Reviews'
+import { ReserveButton } from '@/features/reservations/ReserveButton'
 import { ReportDialog } from '@/features/trust/ReportDialog'
 import { formatDistance, formatPrice, formatWhen } from '@/lib/utils'
 
@@ -151,28 +152,34 @@ export function ExperienceDetailPage() {
               <h2 className="mb-3 text-lg font-semibold text-sand-900">Upcoming dates</h2>
               <ul className="divide-y divide-sand-200 overflow-hidden rounded-card border border-sand-200 bg-white">
                 {data.upcomingEvents.slice(0, 6).map((event) => (
-                  <li key={event.id} className="flex items-center justify-between gap-4 px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <Calendar className="size-4 shrink-0 text-sand-400" aria-hidden />
-                      <div>
-                        <p className="text-sm font-medium text-sand-800">
-                          {new Date(event.startTime).toLocaleString(undefined, {
-                            weekday: 'short',
-                            day: 'numeric',
-                            month: 'short',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </p>
-                        <p className="text-xs text-sand-500">{formatWhen(event.startTime)}</p>
+                  <li key={event.id} className="px-4 py-3">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <Calendar className="size-4 shrink-0 text-sand-400" aria-hidden />
+                        <div>
+                          <p className="text-sm font-medium text-sand-800">
+                            {new Date(event.startTime).toLocaleString(undefined, {
+                              weekday: 'short',
+                              day: 'numeric',
+                              month: 'short',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </p>
+                          <p className="text-xs text-sand-500">{formatWhen(event.startTime)}</p>
+                        </div>
                       </div>
+                      {event.remaining != null && (
+                        <span className="flex items-center gap-1 text-xs text-sand-500">
+                          <Users className="size-3.5" aria-hidden />
+                          {event.remaining} left
+                        </span>
+                      )}
                     </div>
-                    {event.remaining != null && (
-                      <span className="flex items-center gap-1 text-xs text-sand-500">
-                        <Users className="size-3.5" aria-hidden />
-                        {event.remaining} left
-                      </span>
-                    )}
+
+                    {/* Per date, not per listing. A place at next Tuesday's
+                        supper club is not a place at the one after. */}
+                    <ReserveButton occurrence={event} />
                   </li>
                 ))}
               </ul>

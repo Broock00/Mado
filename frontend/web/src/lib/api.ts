@@ -35,6 +35,9 @@ import type {
   Itinerary,
   MemoryEntry,
   ModerationItem,
+  Availability,
+  Reservation,
+  Attendee,
   TokenPair,
   AuthSession,
   PlanRoute,
@@ -606,6 +609,39 @@ export const api = {
   itineraryRoute: (itineraryId: string, mode?: 'walk' | 'drive') =>
     request<Envelope<PlanRoute>>(
       `/api/v1/itineraries/${itineraryId}/route${query({ mode })}`,
+    ).then((r) => r.data),
+
+  // ------------------------------------------------------- reservations
+  availability: (occurrenceId: string) =>
+    request<Envelope<Availability>>(`/api/v1/events/${occurrenceId}/availability`).then(
+      (r) => r.data,
+    ),
+
+  reserve: (occurrenceId: string, partySize: number, note?: string) =>
+    request<Envelope<Reservation>>(`/api/v1/events/${occurrenceId}/reserve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ partySize, note }),
+    }).then((r) => r.data),
+
+  myReservations: () =>
+    request<CollectionEnvelope<Reservation>>('/api/v1/reservations').then((r) => r.data),
+
+  changePartySize: (reservationId: string, partySize: number) =>
+    request<Envelope<Reservation>>(`/api/v1/reservations/${reservationId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ partySize }),
+    }).then((r) => r.data),
+
+  cancelReservation: (reservationId: string) =>
+    request<Envelope<Reservation>>(`/api/v1/reservations/${reservationId}`, {
+      method: 'DELETE',
+    }).then((r) => r.data),
+
+  attendees: (occurrenceId: string) =>
+    request<CollectionEnvelope<Attendee>>(
+      `/api/v1/posts/events/${occurrenceId}/attendees`,
     ).then((r) => r.data),
 
   // ---------------------------------------------------------- analytics

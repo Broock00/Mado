@@ -30,11 +30,13 @@ from app.domains.explorer.models import (
     SavedItem,
 )
 from app.domains.explorer.notifications import Notification
+from app.domains.explorer.reservations import Reservation
 from app.domains.identity.models import AuthIdentity, User, UserProfile, UserSession
 from app.domains.identity.tokens import AccountToken
 from app.domains.publisher.models import Publisher
 
 __all__ = [
+    "Reservation",
     "Collection",
     "CollectionItem",
     "AccountToken",

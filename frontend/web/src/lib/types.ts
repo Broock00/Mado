@@ -299,6 +299,37 @@ export interface AssistSuggestions {
   available: boolean
 }
 
+/* ------------------------------------------------------------- reservations */
+
+export interface Availability {
+  /** available | limited | full | cancelled */
+  status: string
+  capacity?: number | null
+  /** Null when the publisher set no capacity - unlimited, not zero. */
+  remaining?: number | null
+  isUnlimited: boolean
+  canReserve: boolean
+}
+
+export interface Reservation {
+  id: string
+  eventInstanceId: string
+  experienceId: string
+  experienceTitle: string
+  startsAt: string
+  partySize: number
+  status: string
+  note?: string | null
+}
+
+export interface Attendee {
+  reservationId: string
+  name: string
+  partySize: number
+  note?: string | null
+  reservedAt: string
+}
+
 /* ------------------------------------------------------------ route guidance */
 
 export interface RouteLeg {

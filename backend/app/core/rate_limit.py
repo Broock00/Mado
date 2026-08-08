@@ -263,3 +263,8 @@ EMAIL_SEND_LIMIT = Limit(times=5, seconds=3600, scope="email_send")
 # Attempts to spend a token from a link. Low, because a legitimate explorer
 # clicks a link once and anyone trying many is guessing.
 TOKEN_CONFIRM_LIMIT = Limit(times=20, seconds=3600, scope="token_confirm")
+
+# Reservations. Higher than publishing because changing your mind about a party
+# size is normal, and low enough that a script cannot exhaust a supper club's
+# seats by holding and releasing them in a loop.
+RESERVE_LIMIT = Limit(times=30, seconds=3600, scope="reserve")
