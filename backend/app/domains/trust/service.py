@@ -259,6 +259,51 @@ class TrustService:
         )
         return result
 
+    async def screen_collection(self, collection) -> ScreeningResult:
+        """Screen a collection on its way to public.
+
+        Only the title and description are read. The *contents* are listings
+        that were each screened when they were published - re-judging them
+        because somebody grouped them would punish a curator for other people's
+        posts, and a themed list of things the platform already publishes is not
+        itself a policy problem.
+
+        What is new here is the framing: a title and a blurb the platform is
+        about to show strangers, written by someone it does not vouch for. That
+        is the same surface a listing presents, so it gets the same two readers.
+
+        Called only when going public. Private and unlisted collections are
+        never screened - reading someone's private notes to check them against
+        policy is not moderation.
+        """
+        result = screen_text(
+            collection.title, collection.description or "", summary=None
+        )
+
+        verdict = await screen_semantically(
+            collection.title, collection.description or "", None
+        )
+        if verdict.available:
+            result = _combine(result, verdict)
+
+        if result.needs_review:
+            # Withheld from the public listing, still reachable by its link. The
+            # owner shared that link deliberately; what is in question is whether
+            # the platform should promote it, not whether they may have it.
+            collection.moderation_status = MODERATION_FLAGGED
+            collection.moderation_notes = result.as_note()
+            logger.info(
+                "collection_withheld_for_review",
+                collection_id=str(collection.id),
+                risk=result.score,
+                signals=result.signals,
+            )
+        else:
+            collection.moderation_status = MODERATION_APPROVED
+            collection.moderation_notes = result.as_note()
+
+        return result
+
     # ---------------------------------------------------------------- reports
 
     async def report(

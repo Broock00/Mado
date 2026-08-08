@@ -282,6 +282,32 @@ export interface AuthSession {
   isCurrent: boolean
 }
 
+/* -------------------------------------------------------------- collections */
+
+export type CollectionVisibility = 'private' | 'unlisted' | 'public'
+
+export interface CollectionCard {
+  id: string
+  slug: string
+  title: string
+  description?: string | null
+  citySlug?: string | null
+  visibility: CollectionVisibility
+  source: string
+  itemCount: number
+  previewImageUrls: string[]
+  isMine: boolean
+  /** Only ever populated for the owner - a reader does not need to know a page
+   *  is awaiting review, they need it withheld, which the listing query does. */
+  moderationStatus?: string | null
+}
+
+export interface CollectionDetail extends CollectionCard {
+  experiences: ExperienceSummary[]
+  /** Keyed by experience id: why the curator put each one in. */
+  notes: Record<string, string>
+}
+
 export interface SavedItem {
   id: string
   entityType: string

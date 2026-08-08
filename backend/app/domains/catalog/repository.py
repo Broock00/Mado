@@ -32,7 +32,14 @@ from app.domains.catalog.models import (
 DISCOVERABLE_MODERATION_STATUSES = (MODERATION_APPROVED, MODERATION_PENDING)
 
 
-def _with_card_relations(stmt: Select) -> Select:
+def with_card_relations(stmt: Select) -> Select:
+    """Eager-load everything `to_summary` touches.
+
+    Public because any query feeding a card needs exactly this set, and a caller
+    that assembles its own inevitably misses one - `venue.neighborhood` is the
+    usual casualty. The miss is not a slow query under asyncio, it is a
+    MissingGreenlet at request time with no application frame in the traceback.
+    """
     return stmt.options(
         selectinload(Experience.venue).selectinload(Venue.neighborhood),
         selectinload(Experience.category),
@@ -53,7 +60,7 @@ def published_experiences() -> Select:
     nearby and concierge answers at once - there is no path that forgets to
     check.
     """
-    return _with_card_relations(
+    return with_card_relations(
         select(Experience).where(
             Experience.status == STATUS_PUBLISHED,
             Experience.deleted_at.is_(None),

@@ -14,6 +14,7 @@ import {
   Route,
   Search as SearchIcon,
   Settings,
+  Library,
   ShieldCheck,
   User,
 } from 'lucide-react'
@@ -28,6 +29,7 @@ const NAV = [
   { to: '/search', label: 'Search', icon: SearchIcon, end: false },
   { to: '/plans', label: 'Plan', icon: Route, end: false },
   { to: '/saved', label: 'Saved', icon: Bookmark, end: false },
+  { to: '/collections', label: 'Lists', icon: Library, end: false },
   // Publishing is a peer of discovery, not a separate console: a publisher is
   // just an explorer who posts.
   { to: '/posts', label: 'Posts', icon: PenSquare, end: false },

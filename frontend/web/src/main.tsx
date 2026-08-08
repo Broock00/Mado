@@ -18,6 +18,8 @@ import { ComposePage } from '@/features/publishing/ComposePage'
 import { PlanPage } from '@/features/planning/PlanPage'
 import { ItineraryPage } from '@/features/planning/ItineraryPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
+import { CollectionsPage } from '@/features/collections/CollectionsPage'
+import { CollectionDetailPage } from '@/features/collections/CollectionDetailPage'
 import { ModerationPage } from '@/features/moderation/ModerationPage'
 import { NotFoundPage } from '@/features/NotFoundPage'
 
@@ -40,6 +42,9 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <DiscoverPage /> },
       { path: 'search', element: <SearchPage /> },
+      { path: 'collections', element: <CollectionsPage /> },
+      // Public: a shared link has to work for someone who has never signed in.
+      { path: 'collections/:collectionId', element: <CollectionDetailPage /> },
       // Reached from a link in an email, so they live inside the shell: someone
       // arriving here has a header to navigate away from, and a page with no way
       // out is how a confirmation flow turns into a support request.

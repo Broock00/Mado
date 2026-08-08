@@ -20,6 +20,8 @@ from app.domains.catalog.models import (
     experience_tags,
 )
 from app.domains.explorer.models import (
+    Collection,
+    CollectionItem,
     ContentReport,
     InteractionEvent,
     Itinerary,
@@ -33,6 +35,8 @@ from app.domains.identity.tokens import AccountToken
 from app.domains.publisher.models import Publisher
 
 __all__ = [
+    "Collection",
+    "CollectionItem",
     "AccountToken",
     "Base",
     "AuthIdentity",

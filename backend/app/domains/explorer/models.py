@@ -29,6 +29,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.core.mixins import SoftDelete, Timestamps, UUIDPrimaryKey
+from app.domains.catalog.models import MODERATION_APPROVED, MODERATION_REJECTED
 
 if TYPE_CHECKING:
     from app.domains.identity.models import User
@@ -247,3 +248,145 @@ class ItineraryStop(Base, UUIDPrimaryKey, Timestamps):
     note: Mapped[str | None] = mapped_column(String(300), default=None)
 
     itinerary: Mapped[Itinerary] = relationship(back_populates="stops")
+
+
+# ------------------------------------------------------------------ collections
+#
+# Taxonomy (spec PRODUCT-01): a Collection groups experiences around a theme -
+# "best coffee shops", "rainy-day ideas". An Itinerary is an ordered sequence
+# across time. The distinction is not pedantry: an itinerary claims you could
+# actually do all of it in the order given, and a collection claims nothing of
+# the sort. Conflating them would mean either promising feasibility a themed list
+# cannot deliver, or dropping the timing an itinerary exists for.
+
+VISIBILITY_PRIVATE = "private"
+VISIBILITY_UNLISTED = "unlisted"
+VISIBILITY_PUBLIC = "public"
+
+# Where the collection came from. Only "user" is written today; the others are
+# in the taxonomy and get a value here so adding them later is a seed, not a
+# migration.
+SOURCE_USER = "user"
+SOURCE_AI = "ai"
+SOURCE_EDITORIAL = "editorial"
+SOURCE_PUBLISHER = "publisher"
+
+
+class Collection(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
+    """A themed set of experiences.
+
+    Three visibilities, and each earns its place:
+
+    * **private** - nobody but the owner.
+    * **unlisted** - anyone holding the link. This is what "share" usually means:
+      sending a friend your coffee list. Requiring a moderator to approve that
+      before you could text it to one person would be absurd.
+    * **public** - listed, and screened on the way there, because at that point
+      it is a page the platform is putting in front of strangers.
+
+    Soft-deleted rather than removed. A shared link that turns into a 404 the
+    moment the owner tidies up is worse than one that says the collection is
+    gone, and an owner who deletes by accident should be recoverable.
+    """
+
+    __tablename__ = "collections"
+    __table_args__ = (
+        Index("ix_collections_user", "user_id", "created_at"),
+        # Public browsing reads this pair; private ones must never appear.
+        Index("ix_collections_visibility", "visibility", "moderation_status"),
+        {"schema": SCHEMA},
+    )
+
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="CASCADE"),
+        default=None,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Unique and stable, so a shared link keeps working after a rename. Derived
+    # from the title once, at creation, and never regenerated for that reason.
+    slug: Mapped[str] = mapped_column(String(240), unique=True, nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    city_slug: Mapped[str | None] = mapped_column(String(120), default=None, index=True)
+    visibility: Mapped[str] = mapped_column(
+        String(16), default=VISIBILITY_PRIVATE, server_default=VISIBILITY_PRIVATE, nullable=False
+    )
+    source: Mapped[str] = mapped_column(
+        String(16), default=SOURCE_USER, server_default=SOURCE_USER, nullable=False
+    )
+    # Screening state, mirroring how a published listing is handled. A private
+    # collection is never screened - reading someone's private notes to check
+    # them for policy violations is not moderation, it is surveillance.
+    moderation_status: Mapped[str] = mapped_column(
+        String(16), default="approved", server_default="approved", nullable=False
+    )
+    moderation_notes: Mapped[str | None] = mapped_column(Text, default=None)
+    report_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+
+    items: Mapped[list[CollectionItem]] = relationship(
+        back_populates="collection",
+        cascade="all, delete-orphan",
+        order_by="CollectionItem.position",
+        lazy="selectin",
+    )
+
+    @property
+    def is_shareable(self) -> bool:
+        """Whether someone holding the link should be shown it."""
+        return (
+            self.deleted_at is None
+            and self.visibility in {VISIBILITY_UNLISTED, VISIBILITY_PUBLIC}
+            and self.moderation_status != MODERATION_REJECTED
+        )
+
+    @property
+    def is_discoverable(self) -> bool:
+        """Whether it belongs in a public listing.
+
+        Stricter than shareable: a collection awaiting review is reachable by
+        anyone the owner already sent the link to, but is not put in front of
+        people who did not ask for it.
+        """
+        return (
+            self.deleted_at is None
+            and self.visibility == VISIBILITY_PUBLIC
+            and self.moderation_status == MODERATION_APPROVED
+        )
+
+
+class CollectionItem(Base, UUIDPrimaryKey, Timestamps):
+    """One experience in a collection.
+
+    `position` is display order and nothing more. It carries no claim about time,
+    sequence or feasibility - that is what an Itinerary is for. Naming it
+    `position` rather than `order` is deliberate for the same reason.
+    """
+
+    __tablename__ = "collection_items"
+    __table_args__ = (
+        # The same experience twice in one themed list is always a mistake.
+        UniqueConstraint("collection_id", "experience_id", name="uq_collection_item"),
+        Index("ix_collection_items_collection", "collection_id", "position"),
+        {"schema": SCHEMA},
+    )
+
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.collections.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    experience_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("catalog.experiences.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Why this one is in the list, in the curator's words. The single most useful
+    # thing a shared collection carries and the reason it beats a bare list.
+    note: Mapped[str | None] = mapped_column(Text, default=None)
+
+    collection: Mapped[Collection] = relationship(back_populates="items")

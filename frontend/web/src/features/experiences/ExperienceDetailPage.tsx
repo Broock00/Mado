@@ -24,6 +24,7 @@ import {
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useDiscoveryParams, useToggleSave } from '@/app/hooks'
+import { AddToCollection } from '@/features/collections/AddToCollection'
 import { Badge, Button, Card, EmptyState, SectionHeading, Skeleton } from '@/design-system/primitives'
 import { ExperienceCard } from './ExperienceCard'
 import { Reviews } from '@/features/reviews/Reviews'
@@ -226,6 +227,13 @@ export function ExperienceDetailPage() {
                 to save experiences
               </p>
             )}
+
+            {/* Beside Save rather than inside it. Saving is a reflex and
+                curating is a decision; collapsing them would put a menu in
+                front of the one-tap action. */}
+            <div className="mt-2 flex justify-center">
+              <AddToCollection experienceId={data.id} citySlug={data.citySlug} />
+            </div>
 
             {data.venue && (
               <div className="mt-5 border-t border-sand-200 pt-4">

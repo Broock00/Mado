@@ -35,6 +35,9 @@ import type {
   Itinerary,
   MemoryEntry,
   ModerationItem,
+  CollectionCard,
+  CollectionDetail,
+  CollectionVisibility,
   AdminAccount,
   PublisherVerification,
   Plan,
@@ -585,6 +588,77 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ approve, note }),
+    }).then((r) => r.data),
+
+  // -------------------------------------------------------- collections
+  publicCollections: (city?: string) =>
+    request<CollectionEnvelope<CollectionCard>>(
+      `/api/v1/collections${query({ city })}`,
+    ).then((r) => r.data),
+
+  myCollections: () =>
+    request<CollectionEnvelope<CollectionCard>>('/api/v1/collections/mine').then((r) => r.data),
+
+  collection: (collectionId: string) =>
+    request<Envelope<CollectionDetail>>(`/api/v1/collections/${collectionId}`).then((r) => r.data),
+
+  collectionBySlug: (slug: string) =>
+    request<Envelope<CollectionDetail>>(`/api/v1/collections/by-slug/${slug}`).then(
+      (r) => r.data,
+    ),
+
+  createCollection: (payload: {
+    title: string
+    description?: string
+    citySlug?: string
+    visibility?: CollectionVisibility
+  }) =>
+    request<Envelope<CollectionDetail>>('/api/v1/collections', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then((r) => r.data),
+
+  updateCollection: (
+    collectionId: string,
+    payload: { title?: string; description?: string; visibility?: CollectionVisibility },
+  ) =>
+    request<Envelope<CollectionDetail>>(`/api/v1/collections/${collectionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then((r) => r.data),
+
+  deleteCollection: (collectionId: string) =>
+    request<void>(`/api/v1/collections/${collectionId}`, { method: 'DELETE' }),
+
+  addToCollection: (collectionId: string, experienceId: string, note?: string) =>
+    request<Envelope<CollectionDetail>>(`/api/v1/collections/${collectionId}/items`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ experienceId, note }),
+    }).then((r) => r.data),
+
+  removeFromCollection: (collectionId: string, experienceId: string) =>
+    request<void>(`/api/v1/collections/${collectionId}/items/${experienceId}`, {
+      method: 'DELETE',
+    }),
+
+  annotateCollectionItem: (collectionId: string, experienceId: string, note: string | null) =>
+    request<Envelope<CollectionDetail>>(
+      `/api/v1/collections/${collectionId}/items/${experienceId}/note`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note }),
+      },
+    ).then((r) => r.data),
+
+  reorderCollection: (collectionId: string, experienceIds: string[]) =>
+    request<Envelope<CollectionDetail>>(`/api/v1/collections/${collectionId}/order`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ experienceIds }),
     }).then((r) => r.data),
 
   // ------------------------------------------------------- administration
