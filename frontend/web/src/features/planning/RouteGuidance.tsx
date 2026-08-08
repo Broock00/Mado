@@ -17,7 +17,7 @@
  *   already read the times deserves to be told they moved.
  */
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   AlertTriangle,
@@ -57,7 +57,10 @@ export function RouteGuidance({ itinerary }: { itinerary: Itinerary }) {
     retry: false,
   })
 
-  const titles = itinerary.stops.map((stop) => stop.title)
+  // Memoised because RouteMap keys an effect on it. A fresh array every render
+  // made the route line and every marker rebuild on each GPS tick, which kept
+  // MapLibre permanently mid-update and stopped it ever painting.
+  const titles = useMemo(() => itinerary.stops.map((stop) => stop.title), [itinerary.stops])
   const progress = useNavigation(route, location.fix, navigating)
 
   if (itinerary.stops.length < 2) return null

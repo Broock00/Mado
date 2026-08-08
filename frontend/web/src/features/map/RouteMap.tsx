@@ -23,6 +23,7 @@ import {
   Map as MapLibreMap,
   Marker,
   LngLatBounds,
+  type GeoJSONSourceSpecification,
   type StyleSpecification,
 } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -49,7 +50,15 @@ const FALLBACK_CENTRE: [number, number] = [38.7525, 9.0192]
 
 const ROUTE_SOURCE = 'route'
 const DONE_SOURCE = 'route-done'
+const LIVE_SOURCE = 'route-live'
 const ACCURACY_SOURCE = 'accuracy'
+
+/** The planned route, before navigation starts. */
+const PLANNED_COLOUR = '#15803d'
+/** The part already covered, muted so it reads as behind you. */
+const DONE_COLOUR = '#a8a29e'
+/** The live line from where you are to where you are going. */
+const LIVE_COLOUR = '#2563eb'
 
 export interface RouteMapProps {
   route: PlanRoute | null | undefined
@@ -148,7 +157,7 @@ export function RouteMap({
     const anyEstimated = (route?.legs ?? []).some((leg) => leg.isEstimated)
 
     setLine(instance, ROUTE_SOURCE, path, {
-      colour: '#15803d',
+      colour: PLANNED_COLOUR,
       width: 5,
       dashed: anyEstimated,
     })
@@ -188,17 +197,27 @@ export function RouteMap({
     if (!instance || !styleReady.current) return
 
     const path = routePath(route)
+
     if (path.length < 2 || alongMetres == null || alongMetres <= 0) {
-      setLine(instance, DONE_SOURCE, [], { colour: '#a8a29e', width: 5 })
+      setLine(instance, DONE_SOURCE, [], { colour: DONE_COLOUR, width: 5 })
+      setLine(instance, LIVE_SOURCE, [], { colour: LIVE_COLOUR, width: 6 })
       return
     }
 
-    const [behind] = splitPathAt(path, alongMetres)
-    // Drawn over the route in a muted colour rather than by shortening the route
-    // line, so the whole journey stays visible - somebody wants to see where
-    // they are going, not only what is left.
-    setLine(instance, DONE_SOURCE, behind, { colour: '#a8a29e', width: 5 })
-  }, [route, alongMetres, ready])
+    const [behind, ahead] = splitPathAt(path, alongMetres)
+
+    // Behind you, muted. Drawn over the planned route rather than by shortening
+    // it, so the whole journey stays visible.
+    setLine(instance, DONE_SOURCE, behind, { colour: DONE_COLOUR, width: 5 })
+
+    // Ahead of you, blue, and starting at your actual position rather than at
+    // the point on the line nearest to it. Those are different places whenever
+    // the fix is off the path, and a line that begins a few metres away reads
+    // as somebody else's route - the whole point is that it connects *you* to
+    // where you are going.
+    const live = fix ? [[fix.longitude, fix.latitude] as Position, ...ahead] : ahead
+    setLine(instance, LIVE_SOURCE, live, { colour: LIVE_COLOUR, width: 6 })
+  }, [route, alongMetres, fix, ready])
 
   // --- the explorer --------------------------------------------------------
 
@@ -209,12 +228,12 @@ export function RouteMap({
     if (!fix) {
       liveMarker.current?.remove()
       liveMarker.current = null
-      setLine(instance, ACCURACY_SOURCE, [], { colour: '#2563eb', width: 1 })
+      setLine(instance, ACCURACY_SOURCE, [], { colour: LIVE_COLOUR, width: 1 })
       return
     }
 
     setLine(instance, ACCURACY_SOURCE, accuracyCircle(fix), {
-      colour: '#2563eb',
+      colour: LIVE_COLOUR,
       width: 1,
       opacity: 0.45,
     })
@@ -241,32 +260,83 @@ export function RouteMap({
     }
   }, [fix, follow, ready])
 
-  return <div ref={container} className={className ?? 'h-72 w-full rounded-card'} />
+  // Two elements, deliberately.
+  //
+  // MapLibre adds `maplibregl-map` to its container's classList, and React owns
+  // the `className` attribute of anything it renders. Put both on one element
+  // and the next time React writes className - here, when the map grows on
+  // starting navigation - it rewrites the whole attribute and silently deletes
+  // MapLibre's class, taking the CSS that positions the canvas with it. The map
+  // turns white while the instance is still alive and the data still correct,
+  // which is a very hard failure to read.
+  //
+  // So the outer element carries the layout that changes, and the inner one is
+  // handed to MapLibre and never touched by React again.
+  return (
+    <div className={className ?? 'h-72 w-full'}>
+      <div ref={container} className="size-full" />
+    </div>
+  )
 }
 
-/** Add or replace a line layer. Idempotent, so effects can re-run freely. */
+/** The inline data a geojson source accepts. Taken from MapLibre's own type
+ *  rather than the global `GeoJSON` namespace, which is not declared here. */
+type SourceData = Exclude<GeoJSONSourceSpecification['data'], string>
+
+/** Geometry signatures per source, so identical updates can be skipped. */
+const lastData = new Map<string, string>()
+
+function signatureOf(path: Position[]): string {
+  const first = path[0]
+  const last = path[path.length - 1]
+  return `${path.length}:${first?.[0]},${first?.[1]},${last?.[0]},${last?.[1]}`
+}
+
+/**
+ * Add or replace a line layer. Idempotent, so effects can re-run freely.
+ *
+ * An empty path clears the line rather than removing the layer, and it clears
+ * it with an empty FeatureCollection - never a LineString with no coordinates.
+ * That is invalid GeoJSON: the spec requires at least two positions, and
+ * feeding it to a source leaves the source in a broken state rather than an
+ * empty one. Clearing happens on ordinary transitions - stopping navigation
+ * empties the accuracy ring - so this is a normal path, not an edge case.
+ */
 function setLine(
   instance: MapLibreMap,
   id: string,
   path: Position[],
   options: { colour: string; width: number; dashed?: boolean; opacity?: number },
 ) {
-  const data = {
-    type: 'Feature' as const,
-    properties: {},
-    geometry: { type: 'LineString' as const, coordinates: path },
-  }
+  const data: SourceData =
+    path.length >= 2
+      ? {
+          type: 'Feature',
+          properties: {},
+          geometry: { type: 'LineString', coordinates: path },
+        }
+      : { type: 'FeatureCollection', features: [] }
+
+  const signature = path.length >= 2 ? signatureOf(path) : 'empty'
 
   const existing = instance.getSource(id)
   if (existing && 'setData' in existing) {
-    // Updated in place rather than removed and re-added: on every GPS tick the
-    // remove/add cycle makes the line flicker.
-    ;(existing as { setData: (value: typeof data) => void }).setData(data)
+    // Skipped when the geometry has not actually changed. Re-setting identical
+    // data still invalidates the source, and doing that on every GPS tick keeps
+    // the style perpetually mid-update.
+    if (lastData.get(id) === signature) return
+    lastData.set(id, signature)
+
+    // Updated in place rather than removed and re-added: the remove/add cycle
+    // makes the line flicker.
+    ;(existing as { setData: (value: SourceData) => void }).setData(data)
     return
   }
 
+  // Nothing to draw and nothing to clear.
   if (path.length < 2) return
 
+  lastData.set(id, signature)
   instance.addSource(id, { type: 'geojson', data })
   instance.addLayer({
     id,

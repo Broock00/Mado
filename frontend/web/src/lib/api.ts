@@ -35,6 +35,8 @@ import type {
   Itinerary,
   MemoryEntry,
   ModerationItem,
+  TokenPair,
+  AuthSession,
   PlanRoute,
   AssistSuggestions,
   PublisherAnalytics,
