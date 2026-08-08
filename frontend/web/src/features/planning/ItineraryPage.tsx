@@ -14,6 +14,7 @@ import { ArrowLeft, CalendarX } from 'lucide-react'
 import { api } from '@/lib/api'
 import { Button, Card, EmptyState, Skeleton } from '@/design-system/primitives'
 import { PlanSummary, PlanTimeline } from './PlanTimeline'
+import { RouteGuidance } from './RouteGuidance'
 import { clockTime } from './timeline-format'
 
 export function ItineraryPage() {
@@ -92,6 +93,8 @@ export function ItineraryPage() {
           <PlanTimeline stops={itinerary.stops} />
         </div>
       </Card>
+
+      <RouteGuidance itinerary={itinerary} />
     </div>
   )
 }

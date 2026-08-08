@@ -51,9 +51,6 @@ class Settings(BaseSettings):
     ai_reasoning_model: str = "gemini-2.5-pro"
     ai_request_timeout_seconds: float = 30.0
 
-    # Where uploaded images are written. Local disk in development; spec 82.01
-    # names S3-compatible object storage for production, which changes this
-    # setting and app/integrations/media_storage.py and nothing else.
     # Maps and geocoding. Spec 82.01 s10 treats maps as infrastructure: the
     # vendor renders tiles and resolves addresses, and Mado owns the catalogue
     # and the ranking. Swapping vendors is therefore a config change.
@@ -63,6 +60,20 @@ class Settings(BaseSettings):
     #   local      offline stand-in resolving against known neighbourhoods
     geocoding_provider: Literal["auto", "google", "nominatim", "local"] = "auto"
     google_maps_api_key: str = ""
+
+    # Routing (spec MAP-002, vendor strategy 82.01). Same shape as geocoding:
+    #   auto      Google when a key is set, OSRM otherwise (default)
+    #   google    Google Routes
+    #   osrm      OpenStreetMap routing
+    #   estimate  offline straight-line arithmetic, no network at all
+    routing_provider: Literal["auto", "google", "osrm", "estimate"] = "auto"
+    # The public demo server is rate limited and not for production use. Point
+    # this at a self-hosted instance before relying on it.
+    osrm_url: str = "https://router.project-osrm.org"
+    # Which profiles the configured OSRM instance actually serves. The public
+    # server carries driving only, and asking it to walk returns a driving route
+    # with a walking label - worse than an honest estimate.
+    osrm_profiles: list[str] = ["drive"]
 
     # Background maintenance. Popularity, trend and embedding backfill run on a
     # timer inside the API process (spec 70.02 keeps this a single deployable).
@@ -99,6 +110,9 @@ class Settings(BaseSettings):
     # publishing accounts, which is the cheapest possible spam vector.
     require_verified_email_to_publish: bool = False
 
+    # Where uploaded images are written. Local disk in development; spec 82.01
+    # names S3-compatible object storage for production, which changes this
+    # setting and app/integrations/media_storage.py and nothing else.
     media_root: str = "var/media"
     # Public prefix images are served from. Split from media_root so a CDN can be
     # put in front without moving the files.

@@ -299,6 +299,43 @@ export interface AssistSuggestions {
   available: boolean
 }
 
+/* ------------------------------------------------------------ route guidance */
+
+export interface RouteLeg {
+  fromIndex: number
+  toIndex: number
+  mode: 'walk' | 'drive' | string
+  durationMinutes: number
+  distanceKm: number
+  /** GeoJSON order: [[lon, lat], ...]. */
+  geometry: number[][]
+  /** True when the router could not serve this hop and it is a straight line.
+   *  Drawn dashed - a solid line claims a road that nobody verified. */
+  isEstimated: boolean
+}
+
+export interface RoutePoint {
+  index: number
+  latitude: number
+  longitude: number
+}
+
+export interface PlanRoute {
+  legs: RouteLeg[]
+  /** Where each located stop is, for the numbered markers. Stops with no
+   *  located venue are absent rather than placed at a guess. */
+  points: RoutePoint[]
+  totalDurationMinutes: number
+  totalDistanceKm: number
+  provider: string
+  /** True only when nothing at all was routed for real. */
+  isEstimated: boolean
+  estimatedLegs: number
+  /** Minutes the real route adds over what the plan assumed. Positive is worse. */
+  driftMinutes: number
+  warning?: string | null
+}
+
 /* ---------------------------------------------------------------- analytics */
 
 export interface DayPoint {

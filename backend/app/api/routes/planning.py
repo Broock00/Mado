@@ -12,18 +12,22 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Query, Request
 from pydantic import Field, field_validator
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import AnonymousId, OptionalUser, SessionDep
 from app.core import rate_limit
 from app.core.config import get_settings
 from app.core.envelope import CollectionEnvelope, Envelope
 from app.core.errors import BadRequestError
+from app.domains.catalog.models import Experience
 from app.domains.catalog.schemas import CamelModel
 from app.domains.discovery.service import build_context
 from app.domains.explorer.learning import infer_preferences
 from app.domains.explorer.planning import PlanRequest
 from app.domains.explorer.planning_service import PlanningService
 from app.domains.explorer.service import ExplorerService
+from app.integrations import routing
 
 router = APIRouter(tags=["planning"])
 settings = get_settings()
@@ -314,3 +318,147 @@ def _to_itinerary_out(itinerary) -> ItineraryOut:
             for stop in itinerary.stops
         ],
     )
+
+
+# ------------------------------------------------------------- route guidance
+
+
+class RouteLegOut(CamelModel):
+    from_index: int
+    to_index: int
+    mode: str
+    duration_minutes: int
+    distance_km: float
+    # GeoJSON order, [[lon, lat], ...]. Ready for a map layer as-is.
+    geometry: list[list[float]] = []
+    # True when no router answered and this is a straight line. The map draws
+    # those dashed - a solid line through three buildings claims a road exists.
+    is_estimated: bool = False
+
+
+class RoutePointOut(CamelModel):
+    """Where a stop is, for placing a numbered marker.
+
+    Returned here rather than added to StopOut: this is the one endpoint that
+    already has to resolve venues, and putting coordinates on every itinerary
+    read would load venues for the many callers that only render a timeline.
+    Stops with no located venue are simply absent.
+    """
+
+    index: int
+    latitude: float
+    longitude: float
+
+
+class RouteOut(CamelModel):
+    legs: list[RouteLegOut]
+    points: list[RoutePointOut] = []
+    total_duration_minutes: int
+    total_distance_km: float
+    provider: str
+    # True only when nothing was routed for real. `estimatedLegs` is what the
+    # interface usually wants: a route can be mostly real roads with one hop the
+    # router could not serve.
+    is_estimated: bool
+    estimated_legs: int
+    # How much longer the real route takes than the plan assumed, in minutes.
+    # Positive means the evening is tighter than it looked.
+    drift_minutes: int
+    # Set when the drift is large enough to act on, phrased for a person.
+    warning: str | None = None
+
+
+@router.get(
+    "/itineraries/{itinerary_id}/route",
+    response_model=Envelope[RouteOut],
+    summary="How to get between the stops",
+    description=(
+        "Real road geometry and durations for a plan, fetched once for the "
+        "sequence that was actually chosen. The planner uses a cheap estimate "
+        "while solving - routing every candidate pair would be hundreds of "
+        "calls - so this can disagree with the times on the plan, and says by "
+        "how much rather than quietly replacing them."
+    ),
+)
+async def itinerary_route(
+    itinerary_id: uuid.UUID,
+    session: SessionDep,
+    user: OptionalUser,
+    anonymous_id: AnonymousId,
+    mode: str | None = Query(default=None, description="walk or drive; per-leg default otherwise"),
+) -> Envelope[RouteOut]:
+    itinerary = await PlanningService(session).get(
+        itinerary_id, user_id=user.id if user else None, anonymous_id=anonymous_id
+    )
+    stops = sorted(itinerary.stops, key=lambda s: s.position)
+
+    # Coordinates come from the venues, not the plan: a stop stores only what it
+    # needs to render if the listing disappears, and a route needs where the
+    # place actually is.
+    coordinates = await _stop_coordinates(session, [s.experience_id for s in stops])
+    points = [coordinates.get(stop.experience_id) for stop in stops]
+
+    chosen = [mode] * max(0, len(points) - 1) if mode in routing.MODES else None
+    route = await routing.route_plan(points, modes=chosen)
+
+    planned = sum(stop.travel_minutes for stop in stops)
+    drift = routing.drift_minutes(route, planned)
+
+    warning = None
+    if drift >= routing.MATERIAL_DRIFT_MINUTES:
+        warning = (
+            f"Getting between these takes about {drift} minutes longer than the plan "
+            f"allowed. You may want to start earlier or drop a stop."
+        )
+
+    return Envelope(
+        data=RouteOut(
+            legs=[
+                RouteLegOut(
+                    from_index=leg.from_index,
+                    to_index=leg.to_index,
+                    mode=leg.mode,
+                    duration_minutes=leg.duration_minutes,
+                    distance_km=leg.distance_km,
+                    geometry=leg.geometry,
+                    is_estimated=leg.is_estimated,
+                )
+                for leg in route.legs
+            ],
+            points=[
+                RoutePointOut(index=index, latitude=point[0], longitude=point[1])
+                for index, point in enumerate(points)
+                if point is not None
+            ],
+            total_duration_minutes=route.total_duration_minutes,
+            total_distance_km=route.total_distance_km,
+            provider=route.provider,
+            is_estimated=route.is_estimated,
+            estimated_legs=route.estimated_legs,
+            drift_minutes=drift,
+            warning=warning,
+        )
+    )
+
+
+async def _stop_coordinates(
+    session, experience_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, tuple[float, float] | None]:
+    """Where each stop actually is, or None when the venue has no coordinates."""
+    if not experience_ids:
+        return {}
+
+    result = await session.execute(
+        select(Experience)
+        .where(Experience.id.in_(experience_ids))
+        .options(selectinload(Experience.venue))
+    )
+    found: dict[uuid.UUID, tuple[float, float] | None] = {}
+    for experience in result.scalars().unique():
+        venue = experience.venue
+        found[experience.id] = (
+            (venue.latitude, venue.longitude)
+            if venue is not None and venue.latitude is not None and venue.longitude is not None
+            else None
+        )
+    return found

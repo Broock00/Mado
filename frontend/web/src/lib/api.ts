@@ -35,6 +35,7 @@ import type {
   Itinerary,
   MemoryEntry,
   ModerationItem,
+  PlanRoute,
   AssistSuggestions,
   PublisherAnalytics,
   ExplorerSummary,
@@ -599,6 +600,11 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     }).then((r) => r.data),
+
+  itineraryRoute: (itineraryId: string, mode?: 'walk' | 'drive') =>
+    request<Envelope<PlanRoute>>(
+      `/api/v1/itineraries/${itineraryId}/route${query({ mode })}`,
+    ).then((r) => r.data),
 
   // ---------------------------------------------------------- analytics
   publisherAnalytics: (windowDays: number) =>
