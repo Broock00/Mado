@@ -26,6 +26,8 @@ import type {
   ExperienceSummary,
   GeocodeResult,
   Me,
+  UserProfile,
+  LanguageOption,
   NotificationInbox,
   NotificationPreferences,
   ReviewEntry,
@@ -125,11 +127,32 @@ export function anonymousId(): string {
   return id
 }
 
+/**
+ * The language this device is reading in, read straight from storage.
+ *
+ * Deliberately not imported from the React context: this module is called from
+ * outside React (token refresh, retries) and reaching into a hook from here
+ * would be a circular dependency between transport and rendering.
+ */
+function currentLanguage(): string | null {
+  try {
+    const value = localStorage.getItem('mado.language')
+    return value === 'en' || value === 'am' ? value : null
+  } catch {
+    return null
+  }
+}
+
 function buildHeaders(extra?: HeadersInit): Headers {
   const headers = new Headers(extra)
   headers.set('Accept', 'application/json')
   headers.set('X-Mado-Anonymous-Id', anonymousId())
   headers.set('X-Mado-Platform', 'web')
+  // What this device is currently reading in. The server prefers a stated
+  // profile preference over this, so it only decides anything for a signed-out
+  // explorer - which is exactly the case the browser header exists for.
+  const language = currentLanguage()
+  if (language) headers.set('Accept-Language', language)
   const token = tokenStore.access
   if (token) headers.set('Authorization', `Bearer ${token}`)
   return headers
@@ -288,6 +311,23 @@ export const api = {
 
   // ------------------------------------------------------------ explorer
   me: () => request<Envelope<Me>>('/api/v1/me').then((r) => r.data),
+
+  updateProfile: (patch: {
+    displayName?: string
+    bio?: string
+    language?: string
+    timezone?: string
+    homeCitySlug?: string
+  }) =>
+    request<Envelope<UserProfile>>('/api/v1/me', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }).then((r) => r.data),
+
+  /** Public. Each name is in its own language. */
+  languages: () =>
+    request<CollectionEnvelope<LanguageOption>>('/api/v1/me/languages').then((r) => r.data),
 
   savedItems: () =>
     request<CollectionEnvelope<SavedItem>>('/api/v1/me/saved').then((r) => r.data),

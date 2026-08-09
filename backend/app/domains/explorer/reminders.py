@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.logging import get_logger
+from app.core.messages import translate
 from app.domains.catalog.models import EventInstance
 from app.domains.explorer.models import Itinerary, SavedItem
 from app.domains.explorer.notifications import (
@@ -120,10 +121,18 @@ async def schedule_event_reminders(
         notification = await service.schedule(
             user.id,
             kind=KIND_EVENT_REMINDER,
-            title=f"{experience.title} is on tonight",
-            body=(
-                f"Starts at {_local_time(starts, preferences.timezone)}"
-                + (f" at {experience.venue.name}" if experience.venue else "")
+            title=translate(
+                "reminder.event.title", preferences.language, title=experience.title
+            ),
+            # Two templates rather than one plus a concatenated clause. Gluing
+            # " at {venue}" onto the end assumes the venue belongs at the end of
+            # the sentence, which is true in English and not in Amharic - the
+            # verb goes last there, so the phrase has to be built as a whole.
+            body=translate(
+                "reminder.event.body_at_venue" if experience.venue else "reminder.event.body",
+                preferences.language,
+                time=_local_time(starts, preferences.timezone),
+                venue=experience.venue.name if experience.venue else "",
             ),
             deliver_at=starts - REMINDER_LEAD,
             subject_id=occurrence.id,
@@ -196,9 +205,14 @@ async def schedule_plan_reminders(
         notification = await service.schedule(
             user.id,
             kind=KIND_PLAN_REMINDER,
-            title=f"{itinerary.title} starts soon",
+            title=translate("reminder.plan.title", preferences.language, title=itinerary.title),
             body=(
-                f"First stop {first.title} at {_local_time(starts, preferences.timezone)}"
+                translate(
+                    "reminder.plan.body",
+                    preferences.language,
+                    stop=first.title,
+                    time=_local_time(starts, preferences.timezone),
+                )
                 if first
                 else None
             ),

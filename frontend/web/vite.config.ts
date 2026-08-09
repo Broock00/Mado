@@ -26,5 +26,13 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
+    // Threads rather than the default child processes. Forking a worker per
+    // test file fails outright on some Windows setups - "Timeout waiting for
+    // worker to respond", with no tests run and an exit code that looks like a
+    // configuration error rather than an environment one. These tests are pure
+    // functions over in-memory data with nothing to isolate between files, so
+    // the extra isolation a process gives buys nothing that would justify a
+    // suite that only runs on some machines.
+    pool: 'threads',
   },
 })

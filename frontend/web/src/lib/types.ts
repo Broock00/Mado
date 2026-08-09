@@ -234,6 +234,14 @@ export interface ConciergeResponse {
   latencyMs?: number | null
 }
 
+/** One of the languages Mado is available in, named in itself. */
+export interface LanguageOption {
+  code: string
+  name: string
+  /** Whether the request that returned this was answered in this language. */
+  current: boolean
+}
+
 export interface UserProfile {
   userId: string
   displayName: string

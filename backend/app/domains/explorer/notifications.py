@@ -51,6 +51,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.core.language import normalise as normalise_language
 from app.core.logging import get_logger
 from app.core.mixins import Timestamps, UUIDPrimaryKey
 
@@ -136,6 +137,11 @@ class Preferences:
 
     enabled: frozenset[str]
     timezone: str = "Africa/Addis_Ababa"
+    # Carried alongside the timezone for the same reason: a reminder is written
+    # once, by a background job, and read hours later. Both have to be the
+    # recipient's at the moment it is composed, because nobody is around to
+    # convert either afterwards.
+    language: str = "en"
 
     def wants(self, kind: str) -> bool:
         return kind in self.enabled
@@ -159,6 +165,7 @@ def resolve_preferences(profile) -> Preferences:
     return Preferences(
         enabled=frozenset(enabled),
         timezone=getattr(profile, "timezone", None) or "Africa/Addis_Ababa",
+        language=normalise_language(getattr(profile, "language", None)) or "en",
     )
 
 

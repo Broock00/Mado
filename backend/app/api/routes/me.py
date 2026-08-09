@@ -6,8 +6,9 @@ import uuid
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import AnonymousId, CurrentUser, OptionalUser, SessionDep
+from app.api.deps import AnonymousId, CurrentUser, Language, OptionalUser, SessionDep
 from app.core.envelope import CollectionEnvelope, Envelope
+from app.domains.catalog.schemas import CamelModel
 from app.domains.explorer.service import ExplorerService
 from app.domains.identity.schemas import (
     MeOut,
@@ -20,6 +21,36 @@ from app.domains.identity.schemas import (
 from app.domains.identity.service import IdentityService
 
 router = APIRouter(prefix="/me", tags=["explorer"])
+
+
+class LanguageOut(CamelModel):
+    code: str
+    """The name in its own language, never translated."""
+    name: str
+    current: bool
+
+
+@router.get(
+    "/languages",
+    response_model=CollectionEnvelope[LanguageOut],
+    summary="Languages Mado is available in",
+    description=(
+        "Public, and each name is written in its own language - a picker that "
+        "says \"Amharic\" to somebody who does not read English has failed at "
+        "the one job it has.\n\n"
+        "`current` is what this request was answered in, resolved from your "
+        "stated preference or, failing that, your `Accept-Language` header."
+    ),
+)
+async def languages(language: Language) -> CollectionEnvelope[LanguageOut]:
+    from app.core.language import LANGUAGE_NAMES, SUPPORTED
+
+    return CollectionEnvelope(
+        data=[
+            LanguageOut(code=code, name=LANGUAGE_NAMES[code], current=code == language)
+            for code in SUPPORTED
+        ]
+    )
 
 
 @router.get("", response_model=Envelope[MeOut], summary="Get the signed-in explorer")

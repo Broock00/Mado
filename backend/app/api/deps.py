@@ -20,7 +20,7 @@ from app.core.database import get_session
 from app.core.errors import AuthenticationError, PermissionDeniedError
 from app.core.logging import get_logger
 from app.core.security import decode_access_token
-from app.domains.identity.models import User
+from app.domains.identity.models import User, UserProfile
 
 logger = get_logger("mado.deps")
 
@@ -249,6 +249,36 @@ async def verified_experience_writer(user: ExperienceWriter) -> User:
 
 
 VerifiedExperienceWriter = Annotated[User, Depends(verified_experience_writer)]
+
+
+async def current_language(
+    request: Request,
+    user: OptionalUser,
+    session: SessionDep,
+    accept_language: Annotated[str | None, Header()] = None,
+) -> str:
+    """The language to answer this request in (spec 11.07).
+
+    A stated preference beats a browser header: somebody who chose Amharic in
+    their settings means it on a borrowed laptop that asks for English.
+
+    Put on the request as well as returned, so the middleware can set
+    `Content-Language` without resolving it a second time - and so a caches or
+    a proxy in front of this knows the response varied by language.
+    """
+    from app.core.language import resolve
+
+    stated = None
+    if user is not None:
+        profile = await session.get(UserProfile, user.id)
+        stated = getattr(profile, "language", None)
+
+    language = resolve(stated, accept_language)
+    request.state.language = language
+    return language
+
+
+Language = Annotated[str, Depends(current_language)]
 
 
 def get_anonymous_id(request: Request) -> str | None:

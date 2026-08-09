@@ -22,17 +22,21 @@ import { useSession } from '@/app/hooks'
 import { useAppStore } from '@/app/store'
 import { ConciergeLauncher, ConciergePanel } from '@/features/concierge/ConciergePanel'
 import { NotificationBell } from '@/features/notifications/NotificationBell'
+import { useLanguage } from '@/app/language-context'
 import { cn } from '@/lib/utils'
 
+// Labels are message keys rather than words. The nav is rendered on every
+// screen, so it is the one place where an untranslated string is guaranteed to
+// be seen by everybody.
 const NAV = [
-  { to: '/', label: 'Discover', icon: Compass, end: true },
-  { to: '/search', label: 'Search', icon: SearchIcon, end: false },
-  { to: '/plans', label: 'Plan', icon: Route, end: false },
-  { to: '/saved', label: 'Saved', icon: Bookmark, end: false },
-  { to: '/collections', label: 'Lists', icon: Library, end: false },
+  { to: '/', key: 'nav.discover', icon: Compass, end: true },
+  { to: '/search', key: 'nav.search', icon: SearchIcon, end: false },
+  { to: '/plans', key: 'nav.plan', icon: Route, end: false },
+  { to: '/saved', key: 'nav.saved', icon: Bookmark, end: false },
+  { to: '/collections', key: 'nav.lists', icon: Library, end: false },
   // Publishing is a peer of discovery, not a separate console: a publisher is
   // just an explorer who posts.
-  { to: '/posts', label: 'Posts', icon: PenSquare, end: false },
+  { to: '/posts', key: 'nav.posts', icon: PenSquare, end: false },
 ]
 // Five is the practical ceiling for the mobile tab bar; anything beyond it goes
 // in the account area rather than shrinking every target below a comfortable
@@ -43,6 +47,7 @@ export function AppShell() {
   const user = useAppStore((s) => s.user)
   const signOut = useAppStore((s) => s.signOut)
   const location = useLocation()
+  const { t } = useLanguage()
 
   return (
     <div className="min-h-dvh bg-sand-50">
@@ -79,7 +84,7 @@ export function AppShell() {
                   )
                 }
               >
-                {item.label}
+                {t(item.key)}
               </NavLink>
             ))}
           </nav>
@@ -93,7 +98,7 @@ export function AppShell() {
                 {user.isModerator && (
                   <NavLink
                     to="/moderation"
-                    aria-label="Moderation queue"
+                    aria-label={t('nav.moderation')}
                     className={({ isActive }) =>
                       cn(
                         'rounded-lg p-2 transition-colors',
@@ -108,7 +113,7 @@ export function AppShell() {
                 )}
                 <NavLink
                   to="/settings"
-                  aria-label="Privacy and data"
+                  aria-label={t('nav.settings')}
                   className={({ isActive }) =>
                     cn(
                       'rounded-lg p-2 transition-colors',
@@ -128,7 +133,7 @@ export function AppShell() {
                   onClick={signOut}
                   className="rounded-lg px-3 py-2 text-sm font-medium text-sand-600 hover:bg-sand-200/60"
                 >
-                  Sign out
+                  {t('account.signOut')}
                 </button>
               </div>
             ) : (
@@ -138,7 +143,7 @@ export function AppShell() {
                 className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-sand-700 hover:bg-sand-200/60"
               >
                 <User className="size-4" aria-hidden />
-                Sign in
+                {t('account.signIn')}
               </Link>
             )}
           </div>
@@ -169,7 +174,7 @@ export function AppShell() {
               }
             >
               <item.icon className="size-5" aria-hidden />
-              {item.label}
+              {t(item.key)}
             </NavLink>
           ))}
         </div>

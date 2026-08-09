@@ -24,6 +24,7 @@ import { useAppStore } from '@/app/store'
 import type { MemoryEntry, PrivacySettings } from '@/lib/types'
 import { Button, Card, EmptyState, SectionHeading } from '@/design-system/primitives'
 import { AccountSecurity } from './AccountSecurity'
+import { LanguageChoice } from './LanguageChoice'
 import { MyActivity } from '@/features/analytics/MyActivity'
 
 /**
@@ -214,7 +215,7 @@ export function SettingsPage() {
 
   if (!user) {
     return (
-      <div className="mx-auto max-w-3xl px-4 py-16">
+      <div className="mx-auto w-full max-w-3xl px-4 pb-24 pt-6 sm:px-6">
         <EmptyState
           icon={<Lock className="size-8" />}
           title="Sign in to manage your data"
@@ -225,6 +226,14 @@ export function SettingsPage() {
             </Link>
           }
         />
+
+        {/* Language is not private data and is not held behind the account.
+            Somebody reading the city in Amharic before they have signed up
+            needs to be able to say so - and asking them to create an account
+            first means asking them to read the sign-up form in a language they
+            did not choose. It is kept on the device until there is a profile to
+            keep it on. */}
+        <LanguageChoice />
       </div>
     )
   }
@@ -256,6 +265,8 @@ export function SettingsPage() {
           {(updatePrivacy.error as Error).message}
         </p>
       )}
+
+      <LanguageChoice />
 
       <MyActivity />
 

@@ -121,6 +121,20 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
         response.headers[REQUEST_ID_HEADER] = request_id
         response.headers[TRACE_ID_HEADER] = trace_id
+
+        # Only when a route actually resolved one. Claiming `Content-Language:
+        # en` on a response that contains no prose is a small lie that a cache
+        # will happily act on.
+        language = getattr(request.state, "language", None)
+        if language:
+            response.headers["Content-Language"] = language
+            # Tells a shared cache that this URL has more than one
+            # representation. Without it, the first Amharic response served
+            # through a proxy becomes everybody's.
+            existing_vary = response.headers.get("Vary")
+            response.headers["Vary"] = (
+                f"{existing_vary}, Accept-Language" if existing_vary else "Accept-Language"
+            )
         timing = tracing.server_timing_header()
         if timing:
             # Rendered by browsers in the network panel beside their own

@@ -96,6 +96,28 @@ class UpdateProfileRequest(CamelModel):
     home_city_slug: str | None = None
     avatar_url: str | None = None
 
+    @field_validator("language")
+    @classmethod
+    def supported_language(cls, value: str | None) -> str | None:
+        """Refuse a language nothing is translated into.
+
+        Stored unchecked, an unsupported tag is silent: the explorer picks it,
+        every screen stays in English, and there is nothing to tell them the
+        setting did not take. Better to say so at the point they set it.
+
+        Normalised too, so `am-ET` and `am` are one preference rather than two -
+        Mado has a single translation of Amharic and pretending otherwise is a
+        promise about regional variants it cannot keep.
+        """
+        if value is None:
+            return None
+        from app.core.language import LANGUAGE_NAMES, normalise
+
+        normalised = normalise(value)
+        if normalised is None:
+            raise ValueError(f"Supported languages are {', '.join(sorted(LANGUAGE_NAMES))}")
+        return normalised
+
 
 class PreferencesRequest(CamelModel):
     """Living Explorer Profile update (spec 10.01.02).

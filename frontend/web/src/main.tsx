@@ -5,6 +5,7 @@ import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 
 import './styles/tokens.css'
 import { AppShell } from '@/app/AppShell'
+import { LanguageProvider } from '@/app/language'
 import { DiscoverPage } from '@/features/discover/DiscoverPage'
 import { SearchPage } from '@/features/search/SearchPage'
 import { ExperienceDetailPage } from '@/features/experiences/ExperienceDetailPage'
@@ -73,7 +74,11 @@ const router = createBrowserRouter([
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      {/* Inside the query client, because changing language writes to the
+          profile; outside the router, so every route can read it. */}
+      <LanguageProvider>
+        <RouterProvider router={router} />
+      </LanguageProvider>
     </QueryClientProvider>
   </StrictMode>,
 )
