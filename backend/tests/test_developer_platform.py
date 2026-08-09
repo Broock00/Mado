@@ -699,6 +699,27 @@ class TestTheEventVocabulary:
         subjects = {t.split(".")[0] for t in EVENT_TYPES}
         assert subjects <= {"experience", "event", "reservation"}
 
+    def test_every_advertised_event_is_actually_emitted_somewhere(self):
+        """An event type you can subscribe to and never receive is worse than
+        one that does not exist: it looks like a working integration until the
+        day somebody notices the silence, and by then they have built on it.
+
+        The same argument as `test_every_scope_gates_a_route_that_exists`, which
+        is why this is checked the same way - by reading the source for the call
+        rather than by trusting that somebody remembered.
+        """
+        import pathlib
+
+        root = pathlib.Path(webhook_module.__file__).parents[2]
+        sources = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in root.rglob("*.py")
+            # The catalogue itself obviously names all of them.
+            if path.name != "webhooks.py"
+        )
+        missing = [name for name in EVENT_TYPES if f'"{name}"' not in sources]
+        assert not missing, f"advertised but never emitted: {missing}"
+
     def test_an_unknown_event_type_cannot_be_subscribed_to(self):
         """Otherwise a typo produces an endpoint that silently never fires."""
         with pytest.raises(ValidationError) as caught:

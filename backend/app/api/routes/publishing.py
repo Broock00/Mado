@@ -23,7 +23,7 @@ from app.api.deps import (
 )
 from app.core import rate_limit
 from app.core.envelope import CollectionEnvelope, Envelope
-from app.core.errors import RateLimitError, ValidationError
+from app.core.errors import PermissionDeniedError, RateLimitError, ValidationError
 from app.domains.catalog import repository as catalog_repo
 from app.domains.catalog.models import Experience
 from app.domains.catalog.schemas import CamelModel, EventInstanceOut
@@ -43,6 +43,7 @@ from app.domains.publisher.schemas import (
     VenueOut,
 )
 from app.domains.publisher.service import PublishingService
+from app.domains.trust.flags import flag_enabled
 from app.domains.trust.service import TrustService
 from app.integrations import media_storage
 from app.integrations.geocoding import get_geocoder
@@ -591,7 +592,10 @@ class AssistResponse(CamelModel):
         "suggestion comes back for you to accept or ignore.\n\n"
         "The assistant may not add facts. Suggestions are checked against your "
         "draft before being offered, and any that introduce a number or a price "
-        "you did not write are discarded rather than shown."
+        "you did not write are discarded rather than shown.\n\n"
+        "Behind the `publisher.assistant` feature flag (spec ADM-003), because "
+        "it is the most expensive thing a publisher can press and turning it "
+        "off should not need a deploy."
     ),
 )
 async def assist(
@@ -600,6 +604,16 @@ async def assist(
     session: SessionDep,
     request: Request,
 ) -> Envelope[AssistResponse]:
+    # Checked on the server as well as hidden in the composer. The client hides
+    # the control so nobody presses a button that will fail; this is what makes
+    # the flag actually mean something, because a client that has not reloaded
+    # since the flag changed will still try.
+    if not await flag_enabled(session, "publisher.assistant", user):
+        raise PermissionDeniedError(
+            "The writing assistant is switched off at the moment.",
+            code="FEATURE_UNAVAILABLE",
+        )
+
     # A model call per press, so it shares the concierge's budget rather than
     # the free draft limit.
     await rate_limit.check(

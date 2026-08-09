@@ -71,11 +71,24 @@ WEBHOOK_SWEEP_INTERVAL_SECONDS = 86400
 LOCK_MARGIN_SECONDS = 60
 
 
+# How often each process re-checks that it can still reach its dependencies.
+# Frequent, because it is four small round trips and it is what keeps
+# `mado_dependency_up` a live signal rather than a stale one; not so frequent
+# that a struggling database gets a probe every second on top of real traffic.
+HEALTH_INTERVAL_SECONDS = 30
+
+
 @dataclass(slots=True)
 class Job:
     name: str
     interval_seconds: int
     run: Callable[[], Awaitable[None]]
+    # Shared work is elected: one worker recomputes trend, one sends the
+    # webhooks, because doing it twice means duplicate writes and duplicate
+    # deliveries. A *local* job is the opposite - it observes this process, so
+    # every process has to run it, and electing a leader would leave every other
+    # instance reporting nothing about itself.
+    local: bool = False
 
 
 async def _claim(name: str, ttl: int) -> bool:
@@ -156,7 +169,22 @@ async def _sweep_deliveries() -> None:
             logger.info("scheduled_webhook_sweep", removed=removed)
 
 
+async def _refresh_health() -> None:
+    """Re-check every dependency so `mado_dependency_up` stays a live signal.
+
+    Without this the gauge is only written when something polls
+    `/health/ready`, which means a Prometheus scraper reading `/metrics` sees
+    the series appear, disappear, or never exist at all depending on whether
+    anybody happened to call a different endpoint. A dependency-down alert that
+    only fires when somebody is already looking is not an alert.
+    """
+    from app.core.health import readiness
+
+    await readiness()
+
+
 JOBS = [
+    Job("health", HEALTH_INTERVAL_SECONDS, _refresh_health, local=True),
     Job("engagement", ENGAGEMENT_INTERVAL_SECONDS, _recompute_engagement),
     Job("embeddings", EMBEDDING_INTERVAL_SECONDS, _backfill_embeddings),
     Job("reminders", REMINDER_INTERVAL_SECONDS, _reminders),
@@ -166,13 +194,23 @@ JOBS = [
 
 
 async def _loop(job: Job) -> None:
-    # Wait before the first run rather than after. Starting every job at boot
-    # would make a deploy - when several workers start at once - the busiest
-    # moment on the database.
+    # Shared jobs wait before their first run rather than after. Starting every
+    # one at boot would make a deploy - when several workers start at once - the
+    # busiest moment on the database.
+    #
+    # A local job runs immediately instead. Its whole purpose is to say
+    # something about this process, and an instance that reports nothing about
+    # itself for the first half minute after starting is silent during exactly
+    # the window a deploy goes wrong in.
+    first = job.local
     while True:
-        await asyncio.sleep(job.interval_seconds)
+        if not first:
+            await asyncio.sleep(job.interval_seconds)
+        first = False
         try:
-            if not await _claim(job.name, job.interval_seconds + LOCK_MARGIN_SECONDS):
+            if not job.local and not await _claim(
+                job.name, job.interval_seconds + LOCK_MARGIN_SECONDS
+            ):
                 # Counted, so "this worker never wins the lock" is visible.
                 # Without it, a job that stopped running and a job that lost
                 # every election look identical from outside.

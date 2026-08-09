@@ -1186,9 +1186,11 @@ async def seed(session: AsyncSession) -> dict[str, int]:
     await session.flush()
 
     interaction_count = await _seed_interactions(session, now=now)
+    flag_count = await _register_flags(session)
 
     counts = {
         "cities": 1,
+        "flags": flag_count,
         "neighborhoods": len(neighborhoods),
         "categories": len(categories),
         "tags": len(tags),
@@ -1200,6 +1202,49 @@ async def seed(session: AsyncSession) -> dict[str, int]:
     }
     logger.info("seed_complete", **counts)
     return counts
+
+
+async def _register_flags(session: AsyncSession) -> int:
+    """Create a row for every flag the code actually gates on (spec ADM-003).
+
+    Two reasons this is seeded rather than left to appear on demand:
+
+    A flag with no row resolves to off, so shipping a gate without registering
+    the flag would make a working feature vanish from every existing
+    installation - the opposite of what a flag is for.
+
+    And a lever nobody can see is a lever nobody pulls. An empty flags list in
+    the admin console reads as "this platform has no switches", when what it
+    means is that the switches exist in the code and nobody has named them yet.
+
+    Seeded *on*, unlike `FlagService.create`, which deliberately creates off. The
+    difference is real: creating a flag through the console is registering
+    something not yet ready, while these gate behaviour that already shipped, and
+    turning it off here would be a regression dressed up as a default.
+
+    Only ever inserts. An operator who switched one off gets to keep that
+    decision when the seed is re-run.
+    """
+    from app.domains.trust.flags import GATED, FeatureFlag
+
+    existing = {
+        row.key
+        for row in (
+            await session.execute(select(FeatureFlag).where(FeatureFlag.key.in_(GATED)))
+        ).scalars()
+    }
+
+    created = 0
+    for key, description in GATED.items():
+        if key in existing:
+            continue
+        session.add(
+            FeatureFlag(key=key, description=description, enabled=True, rollout_percentage=100)
+        )
+        created += 1
+
+    await session.flush()
+    return created
 
 
 # Rough shape of a real engagement funnel: most people look, some open, few save.

@@ -194,6 +194,56 @@ class TestRecordingBehaviour:
         assert len(entry.reason) == audit.MAX_REASON
 
 
+class TestEveryFlagGatesSomething:
+    """A flag nobody reads is a switch wired to nothing.
+
+    The same argument as the API key scopes: a lever in an admin console that
+    changes no behaviour is worse than an empty console, because somebody will
+    flip it during an incident and conclude the platform is broken when nothing
+    happens.
+    """
+
+    def test_each_gated_flag_is_actually_checked_in_the_code(self):
+        import pathlib
+
+        from app.domains.trust import flags as flags_module
+
+        root = pathlib.Path(flags_module.__file__).parents[2]
+        sources = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in root.rglob("*.py")
+            if path.name != "flags.py"  # the catalogue names all of them
+        )
+        unread = [key for key in flags_module.GATED if f'"{key}"' not in sources]
+        assert not unread, f"registered but never consulted: {unread}"
+
+    def test_a_gated_flag_is_seeded_so_the_feature_does_not_vanish(self):
+        """An absent flag resolves to off. Shipping a gate without registering
+        the flag would switch a working feature off everywhere, which is the
+        opposite of what a flag is for."""
+        import inspect
+
+        from app.seed import addis_ababa
+
+        assert "GATED" in inspect.getsource(addis_ababa._register_flags)
+
+    def test_the_seed_only_inserts(self):
+        """An operator who switched one off keeps that decision when the seed is
+        re-run. A seed that resets flags is a seed that undoes an incident
+        response."""
+        import inspect
+
+        source = inspect.getsource(addis_ababa_register())
+        assert "if key in existing" in source
+        assert "enabled=True" in source
+
+
+def addis_ababa_register():
+    from app.seed import addis_ababa
+
+    return addis_ababa._register_flags
+
+
 class TestFlagsAreNotSettings:
     def test_infrastructure_toggles_stay_in_configuration(self):
         """The moment infrastructure lives in a database, somebody switches off

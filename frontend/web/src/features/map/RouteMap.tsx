@@ -29,7 +29,7 @@ import {
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 import type { PlanRoute } from '@/lib/types'
-import { type Position, routePath, splitPathAt } from '@/lib/geo'
+import { type Position, projectOntoPath, routePath, splitPathAt } from '@/lib/geo'
 import type { LiveFix } from './useLiveLocation'
 
 const RASTER_STYLE: StyleSpecification = {
@@ -71,6 +71,32 @@ export interface RouteMapProps {
   /** Keep the camera on the explorer instead of the whole route. */
   follow?: boolean
   className?: string
+}
+
+/**
+ * How far off the route somebody can be and still be "on" it for the camera.
+ *
+ * Generous compared with the off-route threshold used for progress (60 m),
+ * because this decides a camera and that decides a claim. Following somebody
+ * who has wandered one street over is right; following somebody who is still
+ * at home is how the route ends up off-screen.
+ */
+const NEAR_ROUTE_METRES = 250
+
+/**
+ * The tightest zoom a fix of this accuracy justifies.
+ *
+ * Roughly: a zoom level covers about 156543 / 2^z metres per pixel at the
+ * equator, so a 100 m fix is a blob tens of pixels across at z16 and the whole
+ * screen at z19. Showing a dot at a zoom its accuracy cannot support is the
+ * map equivalent of quoting six decimal places from a guess.
+ */
+function zoomForAccuracy(accuracyMetres: number): number {
+  if (!Number.isFinite(accuracyMetres) || accuracyMetres <= 20) return 18
+  if (accuracyMetres <= 50) return 17
+  if (accuracyMetres <= 120) return 16
+  if (accuracyMetres <= 300) return 15
+  return 14
 }
 
 function accuracyCircle(fix: LiveFix): Position[] {
@@ -251,14 +277,44 @@ export function RouteMap({
       liveMarker.current.setLngLat([fix.longitude, fix.latitude])
     }
 
-    if (follow) {
+    if (!follow) return
+
+    // Centring on the fix alone is only right when the explorer is *on* the
+    // route. Somebody who opens their plan at home, or across town, or before
+    // setting off, gets the camera thrown to wherever their phone says they
+    // are - and the route, every stop and the blue line all leave the screen at
+    // once. What is left is an empty street grid with a dot on it, which reads
+    // as the map having broken rather than as the map having followed you.
+    //
+    // So: follow them when they are near the route, and frame both otherwise.
+    const path = routePath(route)
+    const here: Position = [fix.longitude, fix.latitude]
+    const projection = path.length > 1 ? projectOntoPath(path, here) : null
+    const nearby = projection != null && projection.offRouteMetres <= NEAR_ROUTE_METRES
+
+    if (nearby) {
       instance.easeTo({
-        center: [fix.longitude, fix.latitude],
-        zoom: Math.max(instance.getZoom(), 16),
+        center: here,
+        // Never tighter than the fix can support. The interface says in words
+        // that a 141 m fix is "not enough to place you on a street"; zooming to
+        // street level anyway draws a confident picture of a position nobody
+        // knows that precisely.
+        zoom: Math.min(Math.max(instance.getZoom(), 16), zoomForAccuracy(fix.accuracyMetres)),
         duration: 600,
       })
+      return
     }
-  }, [fix, follow, ready])
+
+    // Far away: show them and the start of the journey together, so the answer
+    // to "where am I in relation to this plan" is on the screen.
+    const bounds = new LngLatBounds()
+    bounds.extend(here)
+    for (const p of path) bounds.extend(p)
+    for (const point of route?.points ?? []) bounds.extend([point.longitude, point.latitude])
+    if (!bounds.isEmpty()) {
+      instance.fitBounds(bounds, { padding: 56, maxZoom: 15, duration: 600 })
+    }
+  }, [fix, follow, route, ready])
 
   // Two elements, deliberately.
   //
@@ -283,8 +339,27 @@ export function RouteMap({
  *  rather than the global `GeoJSON` namespace, which is not declared here. */
 type SourceData = Exclude<GeoJSONSourceSpecification['data'], string>
 
-/** Geometry signatures per source, so identical updates can be skipped. */
-const lastData = new Map<string, string>()
+/**
+ * Geometry signatures per source, so identical updates can be skipped.
+ *
+ * Keyed by the map instance as well as the source id, and held weakly so an
+ * unmounted map's entries go with it. A single module-level `Map<string,…>`
+ * keyed on the source id alone was wrong in two ways that only show up later:
+ * two RouteMaps on one page would suppress each other's updates, because both
+ * call their route source `route`; and a remounted map inherited the previous
+ * instance's signatures, so the first update after a remount could be skipped
+ * against a source that no longer existed.
+ */
+const lastData = new WeakMap<MapLibreMap, Map<string, string>>()
+
+function signaturesFor(instance: MapLibreMap): Map<string, string> {
+  let store = lastData.get(instance)
+  if (!store) {
+    store = new Map()
+    lastData.set(instance, store)
+  }
+  return store
+}
 
 function signatureOf(path: Position[]): string {
   const first = path[0]
@@ -318,14 +393,15 @@ function setLine(
       : { type: 'FeatureCollection', features: [] }
 
   const signature = path.length >= 2 ? signatureOf(path) : 'empty'
+  const signatures = signaturesFor(instance)
 
   const existing = instance.getSource(id)
   if (existing && 'setData' in existing) {
     // Skipped when the geometry has not actually changed. Re-setting identical
     // data still invalidates the source, and doing that on every GPS tick keeps
     // the style perpetually mid-update.
-    if (lastData.get(id) === signature) return
-    lastData.set(id, signature)
+    if (signatures.get(id) === signature) return
+    signatures.set(id, signature)
 
     // Updated in place rather than removed and re-added: the remove/add cycle
     // makes the line flicker.
@@ -336,7 +412,7 @@ function setLine(
   // Nothing to draw and nothing to clear.
   if (path.length < 2) return
 
-  lastData.set(id, signature)
+  signatures.set(id, signature)
   instance.addSource(id, { type: 'geojson', data })
   instance.addLayer({
     id,

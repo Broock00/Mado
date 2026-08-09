@@ -119,6 +119,35 @@ def is_enabled_for(flag: FlagState | None, identity: str | None) -> bool:
     return bucket_of(flag.key, identity) < flag.rollout_percentage
 
 
+# Flags that gate something in the codebase. Named here so `app.seed` can
+# register them and the admin console lists them from a fresh database - a lever
+# nobody can see is a lever nobody pulls, and a flag that only springs into
+# existence the first time somebody guesses its key is worse than no flag.
+GATED: dict[str, str] = {
+    "publisher.assistant": (
+        "The AI writing assistant in the composer. The most expensive thing a "
+        "publisher can press, so it has a switch."
+    ),
+}
+
+
+async def flag_enabled(
+    session: AsyncSession, key: str, user: User | None, anonymous_id: str | None = None
+) -> bool:
+    """One flag, resolved for one explorer.
+
+    A convenience for route code, which otherwise reaches into the service to
+    ask a yes-or-no question. Reads the whole (tiny) table for one answer, which
+    is the same query `evaluate` runs and is not worth optimising: there are a
+    handful of flags and this is not a hot path.
+    """
+    identity = str(user.id) if user else anonymous_id
+    for flag in await FlagService(session).all():
+        if flag.key == key:
+            return is_enabled_for(flag, identity)
+    return False
+
+
 class FlagService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session

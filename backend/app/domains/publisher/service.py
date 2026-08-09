@@ -334,6 +334,13 @@ class PublishingService:
             )
 
         await self.session.flush()
+
+        # Only for something already discoverable. Every keystroke in the
+        # composer is an edit, and a subscriber does not want three hundred
+        # deliveries about a draft nobody can see - the announcement a
+        # receiver's cache cares about is that live content changed.
+        if experience.status == STATUS_PUBLISHED:
+            await self._announce("experience.updated", user, experience)
         return experience
 
     async def publish(self, user: User, experience_id: uuid.UUID) -> Experience:
@@ -531,6 +538,25 @@ class PublishingService:
         event.status = "cancelled"
         event.cancellation_reason = reason
         await self.session.flush()
+
+        # The one event type a receiver most needs, because it is the one that
+        # invalidates something they already showed somebody.
+        from app.domains.developer.webhooks import emit
+
+        await emit(
+            self.session,
+            event_type="event.cancelled",
+            owner_user_id=user.id,
+            data={
+                "experienceId": str(experience.id),
+                "eventInstanceId": str(event.id),
+                "startsAt": event.start_time.isoformat(),
+                # Carried because a receiver relaying this to their own audience
+                # needs to say why, and "cancelled" with no reason reads as a
+                # glitch rather than a decision.
+                "reason": reason,
+            },
+        )
         return event
 
     async def delete_event(self, user: User, experience_id: uuid.UUID, event_id: uuid.UUID) -> None:

@@ -449,6 +449,73 @@ class TestLivenessAndReadinessAreDifferentQuestions:
         assert loop.time() - started < 0.6  # not 1.0
 
 
+class TestTheGaugeIsKeptAlive:
+    def test_health_is_refreshed_on_a_timer_not_only_when_polled(self):
+        """Otherwise `mado_dependency_up` only exists if something happens to
+        call `/health/ready`, and a scraper reading `/metrics` sees the series
+        appear, vanish or never exist. An alert that only fires when somebody is
+        already looking is not an alert."""
+        from app.core import scheduler
+
+        assert any(job.name == "health" for job in scheduler.JOBS)
+
+    def test_it_runs_in_every_process_rather_than_one(self):
+        """Shared work is elected so it is not done twice. This is the opposite:
+        it observes *this* process, so electing a leader would leave every other
+        instance reporting nothing about itself."""
+        from app.core import scheduler
+
+        health_job = next(job for job in scheduler.JOBS if job.name == "health")
+        assert health_job.local
+
+    def test_shared_jobs_are_still_elected(self):
+        """The lock is what stops two workers sending the same webhook twice."""
+        from app.core import scheduler
+
+        assert not any(job.local for job in scheduler.JOBS if job.name != "health")
+
+    async def test_a_local_job_runs_immediately_rather_than_after_a_delay(self):
+        """An instance that says nothing about itself for the first half minute
+        is silent during exactly the window a deploy goes wrong in."""
+        import asyncio
+
+        from app.core import scheduler
+
+        ran = asyncio.Event()
+
+        async def record():
+            ran.set()
+
+        task = asyncio.create_task(
+            scheduler._loop(scheduler.Job("probe", 3600, record, local=True))
+        )
+        try:
+            await asyncio.wait_for(ran.wait(), timeout=2)
+        finally:
+            task.cancel()
+
+    async def test_a_shared_job_waits_its_interval_first(self):
+        """Starting every job at boot makes a deploy the busiest moment on the
+        database."""
+        import asyncio
+
+        from app.core import scheduler
+
+        ran = asyncio.Event()
+
+        async def record():
+            ran.set()
+
+        task = asyncio.create_task(
+            scheduler._loop(scheduler.Job("probe", 3600, record, local=False))
+        )
+        try:
+            await asyncio.sleep(0.2)
+            assert not ran.is_set()
+        finally:
+            task.cancel()
+
+
 class TestWhatIsNotExposed:
     def test_telemetry_is_closed_by_default_in_production(self, monkeypatch):
         """Metrics and readiness together describe every dependency, its

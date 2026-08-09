@@ -11,9 +11,14 @@
  * better at noticing that nobody said what it costs than at guessing the price -
  * and the server will not let it guess.
  *
- * Renders nothing when no model is configured. An assistant that returns
- * politely empty results is worse than an absent one, because the publisher
- * keeps pressing it.
+ * Renders nothing when no model is configured, and nothing when the
+ * `publisher.assistant` flag is off for this publisher. An assistant that
+ * returns politely empty results is worse than an absent one, because the
+ * publisher keeps pressing it.
+ *
+ * Hiding it here is a courtesy, not the enforcement - the endpoint checks the
+ * same flag, because a browser tab open since before the flag changed will
+ * still have the button.
  */
 
 import { useState } from 'react'
@@ -21,6 +26,7 @@ import { useMutation } from '@tanstack/react-query'
 import { Check, HelpCircle, Sparkles } from 'lucide-react'
 
 import { api } from '@/lib/api'
+import { useFlag } from '@/app/hooks'
 import type { AssistSuggestions } from '@/lib/types'
 import { Button, Card } from '@/design-system/primitives'
 
@@ -72,6 +78,7 @@ export function WritingHelp({
 }) {
   const [used, setUsed] = useState<Record<string, boolean>>({})
   const [unavailable, setUnavailable] = useState(false)
+  const enabled = useFlag('publisher.assistant')
 
   const ask = useMutation({
     mutationFn: () => api.assistDraft({ title, description, summary: summary ?? undefined }),
@@ -82,8 +89,10 @@ export function WritingHelp({
   })
 
   // Hidden entirely once the server says there is no model behind this, rather
-  // than left as a button that returns nothing.
-  if (unavailable) return null
+  // than left as a button that returns nothing - and hidden the same way when
+  // the flag is off, so the two look identical to a publisher. They have no
+  // reason to care which of the two it is.
+  if (unavailable || !enabled) return null
 
   const data = ask.data
   const hasSuggestions =
