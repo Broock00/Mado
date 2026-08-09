@@ -25,6 +25,7 @@ import { useAppStore } from '@/app/store'
 import type { ExperienceMetrics } from '@/lib/types'
 import { Badge, Button, Card, EmptyState } from '@/design-system/primitives'
 import { Sparkline } from './Sparkline'
+import { Standing } from './Standing'
 
 const WINDOWS = [7, 30, 90] as const
 
@@ -265,6 +266,8 @@ export function PublisherDashboard() {
               </Card>
             )}
           </section>
+
+          <Standing />
 
           {/* Said plainly rather than left to be inferred. A publisher who does
               not find impressions will otherwise assume they were zero. */}

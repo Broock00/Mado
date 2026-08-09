@@ -32,6 +32,7 @@ from app.domains.publisher.analytics import (
     PublisherAnalyticsService,
 )
 from app.domains.publisher.models import Publisher
+from app.domains.trust.reputation import for_publisher
 
 router = APIRouter(tags=["analytics"])
 
@@ -199,5 +200,83 @@ async def explorer_summary(session: SessionDep, user: CurrentUser) -> Envelope[E
             ],
             member_since=summary.member_since,
             is_empty=summary.is_empty,
+        )
+    )
+
+
+class ReputationSignalOut(CamelModel):
+    key: str
+    label: str
+    """-1 to 1. Negative pulled the score down."""
+    direction: float
+    detail: str
+
+
+class ReputationOut(CamelModel):
+    score: float
+    """excellent | good | mixed | poor | provisional"""
+    band: str
+    is_provisional: bool
+    completed_dates: int
+    cancelled_dates: int
+    ratings: int
+    reports: int
+    withheld_listings: int
+    signals: list[ReputationSignalOut]
+    computed_at: datetime | None = None
+
+
+@router.get(
+    "/analytics/reputation",
+    response_model=Envelope[ReputationOut],
+    summary="Your standing on Mado",
+    description=(
+        "Yours and nobody else's. There is no endpoint that returns another "
+        "publisher's score, because a number explorers cannot interpret and "
+        "competitors can watch is worse than no number: it invites working out "
+        "what moves it rather than doing the thing it measures.\n\n"
+        "Computed rather than assigned. Verification says a moderator confirmed "
+        "who you are once; this says what you have done since (spec TRST-004). "
+        "It affects where your listings rank and nothing else - it cannot "
+        "withhold, suspend or reject anything, which stays with the moderation "
+        "queue and a person reading it.\n\n"
+        "Recent behaviour counts for more than old, so a bad patch fades. That "
+        "is deliberate: a record with no way back gives nobody a reason to "
+        "improve."
+    ),
+)
+async def my_reputation(session: SessionDep, user: CurrentUser) -> Envelope[ReputationOut]:
+    publisher = (
+        await session.execute(select(Publisher).where(Publisher.owner_user_id == user.id))
+    ).scalars().first()
+    if publisher is None:
+        raise NotFoundError(
+            "Publish something first - there is nothing to judge yet.",
+            code="NO_PUBLISHER",
+        )
+
+    # Computed live rather than read from the stored copy. A publisher looking
+    # at their own standing after fixing something should see the fix, not the
+    # figure from the last scheduled run up to an hour ago. Ranking reads the
+    # stored one, which is what the hourly job is for.
+    reputation = await for_publisher(session, publisher)
+
+    return Envelope(
+        data=ReputationOut(
+            score=round(reputation.score, 3),
+            band=reputation.band,
+            is_provisional=reputation.is_provisional,
+            completed_dates=reputation.completed_dates,
+            cancelled_dates=reputation.cancelled_dates,
+            ratings=reputation.ratings,
+            reports=reputation.reports,
+            withheld_listings=reputation.withheld_listings,
+            signals=[
+                ReputationSignalOut(
+                    key=s.key, label=s.label, direction=s.direction, detail=s.detail
+                )
+                for s in reputation.signals
+            ],
+            computed_at=publisher.reputation_computed_at,
         )
     )

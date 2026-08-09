@@ -251,14 +251,29 @@ def _quality_score(experience: Experience) -> float:
 
 
 def _trust_score(experience: Experience) -> float:
+    """How much the platform trusts whoever published this.
+
+    Two halves, because verification and reputation answer different questions.
+    The tier says a moderator confirmed who they are; the reputation says what
+    they have done since (spec TRST-004). Blended rather than multiplied: a
+    publisher who verified once and has been cancelling on people ever since
+    should not outrank one who has quietly delivered forty events, and a
+    publisher with a good record should not be held at the bottom because
+    nobody has got round to verifying them.
+
+    Weighted towards reputation, because it is the half backed by evidence.
+    """
     publisher = experience.publisher
     if publisher is None:
         return 0.3
+
     # Spec BUSINESS-07 trust tiers 0-3, normalised.
-    base = min(1.0, publisher.trust_level / 3)
+    tier = min(1.0, publisher.trust_level / 3)
     if publisher.verification_status != "verified":
-        base *= 0.6
-    return base
+        tier *= 0.6
+
+    reputation = float(getattr(publisher, "reputation_score", None) or 0.5)
+    return max(0.0, min(1.0, tier * 0.4 + reputation * 0.6))
 
 
 def _build_reason(

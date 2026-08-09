@@ -329,6 +329,34 @@ export interface AuditEntry {
   occurredAt: string
 }
 
+/* ------------------------------------------------------ publisher standing */
+
+export interface ReputationSignal {
+  key: string
+  label: string
+  /** -1 to 1. Negative pulled the score down. */
+  direction: number
+  detail: string
+}
+
+/**
+ * A publisher's own standing. There is no type for anybody else's, because
+ * there is no endpoint that returns one.
+ */
+export interface PublisherReputation {
+  score: number
+  /** excellent | good | mixed | poor | provisional */
+  band: string
+  isProvisional: boolean
+  completedDates: number
+  cancelledDates: number
+  ratings: number
+  reports: number
+  withheldListings: number
+  signals: ReputationSignal[]
+  computedAt?: string | null
+}
+
 /* -------------------------------------------------- the developer platform */
 
 export interface DeveloperScope {

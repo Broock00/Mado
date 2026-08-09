@@ -71,6 +71,12 @@ WEBHOOK_SWEEP_INTERVAL_SECONDS = 86400
 LOCK_MARGIN_SECONDS = 60
 
 
+# Publisher reputation (spec TRST-004). Hourly, because the evidence it reads -
+# a date that went ahead, a rating, a report - accumulates over days, and a
+# reputation that moved within the hour of a single cancellation would be
+# reacting to noise rather than describing a record.
+REPUTATION_INTERVAL_SECONDS = 3600
+
 # How often each process re-checks that it can still reach its dependencies.
 # Frequent, because it is four small round trips and it is what keeps
 # `mado_dependency_up` a live signal rather than a stale one; not so frequent
@@ -149,6 +155,15 @@ async def _reminders() -> None:
             )
 
 
+async def _reputation() -> None:
+    from app.domains.trust.reputation import refresh_all
+
+    async with SessionFactory() as session:
+        result = await refresh_all(session)
+        await session.commit()
+        logger.info("scheduled_reputation_refresh", **result)
+
+
 async def _webhooks() -> None:
     from app.domains.developer.delivery import deliver_due
 
@@ -187,6 +202,7 @@ JOBS = [
     Job("health", HEALTH_INTERVAL_SECONDS, _refresh_health, local=True),
     Job("engagement", ENGAGEMENT_INTERVAL_SECONDS, _recompute_engagement),
     Job("embeddings", EMBEDDING_INTERVAL_SECONDS, _backfill_embeddings),
+    Job("reputation", REPUTATION_INTERVAL_SECONDS, _reputation),
     Job("reminders", REMINDER_INTERVAL_SECONDS, _reminders),
     Job("webhooks", WEBHOOK_INTERVAL_SECONDS, _webhooks),
     Job("webhook_sweep", WEBHOOK_SWEEP_INTERVAL_SECONDS, _sweep_deliveries),

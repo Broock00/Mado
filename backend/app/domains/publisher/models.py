@@ -96,6 +96,24 @@ class Publisher(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     # satisfaction (spec BUSINESS-07). Influences ranking; never shown raw to users.
     quality_score: Mapped[float] = mapped_column(Numeric(4, 3), default=0.500, nullable=False)
 
+    # Earned reputation (spec TRST-004). Separate from `trust_level`, which a
+    # moderator sets once at verification and nothing changes afterwards: this
+    # is the half the spec calls "continuously recalculated using historical
+    # behavior". Recomputed on a timer, not per request.
+    #
+    # 0.5 is neutral rather than bad. A new publisher is unknown, and starting
+    # everybody at zero would make a first listing impossible to get seen.
+    reputation_score: Mapped[float] = mapped_column(
+        Numeric(4, 3), default=0.500, nullable=False
+    )
+    # The signals that produced the score, so the dashboard and the moderation
+    # console explain it from the same evidence rather than each deriving their
+    # own account and disagreeing.
+    reputation_signals: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    reputation_computed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+
     owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("identity.users.id", ondelete="SET NULL"),

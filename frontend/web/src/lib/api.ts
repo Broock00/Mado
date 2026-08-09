@@ -54,6 +54,7 @@ import type {
   PlanRoute,
   AssistSuggestions,
   PublisherAnalytics,
+  PublisherReputation,
   ExplorerSummary,
   CollectionCard,
   CollectionDetail,
@@ -694,6 +695,10 @@ export const api = {
     ).then((r) => r.data),
 
   // ---------------------------------------------------------- analytics
+  /** Yours only. There is no endpoint for another publisher's standing. */
+  myReputation: () =>
+    request<Envelope<PublisherReputation>>('/api/v1/analytics/reputation').then((r) => r.data),
+
   publisherAnalytics: (windowDays: number) =>
     request<Envelope<PublisherAnalytics>>(
       `/api/v1/analytics/publisher${query({ window: windowDays })}`,
