@@ -41,11 +41,13 @@ to nothing.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass, field
 from typing import Protocol
 
 import httpx
 
+from app.core import metrics, tracing
 from app.core.config import get_settings
 from app.core.logging import get_logger
 
@@ -402,7 +404,20 @@ async def route_plan(
             else suggest_mode(haversine_km(origin[0], origin[1], destination[0], destination[1]))
         )
 
-        leg = await router.leg(origin, destination, mode=mode)
+        # Timed, then counted on the returned value rather than on whether an
+        # exception escaped. `leg` reports failure by returning None - it never
+        # raises - so wrapping it in the usual dependency helper would count
+        # every outage as a success and draw a graph saying the routing vendor
+        # was perfectly healthy at the moment it stopped answering.
+        #
+        # The vendor call only: the straight-line fallback below is arithmetic,
+        # and counting it would hide the same thing a second way.
+        started = time.perf_counter()
+        with tracing.span("routing"):
+            leg = await router.leg(origin, destination, mode=mode)
+        metrics.dependency_calls.inc("routing", "ok" if leg is not None else "error")
+        metrics.dependency_duration.observe(time.perf_counter() - started, "routing")
+
         if leg is None:
             leg = await fallback.leg(origin, destination, mode=mode)
         if leg is None:

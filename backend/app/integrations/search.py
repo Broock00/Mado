@@ -19,6 +19,7 @@ from typing import Any
 from meilisearch_python_sdk import AsyncClient
 from meilisearch_python_sdk.models.settings import MinWordSizeForTypos, TypoTolerance
 
+from app.core import tracing
 from app.core.config import get_settings
 from app.core.logging import get_logger
 
@@ -159,13 +160,14 @@ class SearchClient:
         filter_expression = " AND ".join(filters) if filters else None
 
         try:
-            result = await index.search(
-                query,
-                limit=limit,
-                offset=offset,
-                filter=filter_expression,
-                show_ranking_score=True,
-            )
+            with tracing.dependency("search"):
+                result = await index.search(
+                    query,
+                    limit=limit,
+                    offset=offset,
+                    filter=filter_expression,
+                    show_ranking_score=True,
+                )
         except Exception as exc:  # noqa: BLE001
             logger.warning("search_query_failed", error=str(exc), query=query)
             raise SearchUnavailable(str(exc)) from exc

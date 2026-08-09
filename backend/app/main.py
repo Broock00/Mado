@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.router import api_router
+from app.api.routes import platform
 from app.core import scheduler
 from app.core.config import get_settings
 from app.core.context import get_request_id
@@ -157,15 +158,10 @@ async def unhandled_error_handler(_: Request, exc: Exception) -> JSONResponse:
     )
 
 
-@app.get("/health", tags=["platform"], summary="Liveness probe")
-async def health() -> dict:
-    return {
-        "status": "ok",
-        "environment": settings.environment,
-        "version": settings.api_version,
-        "timestamp": datetime.now(UTC).isoformat(),
-    }
-
+# Liveness, readiness and metrics. Outside /api/v1 and unversioned: an
+# orchestrator probe does not negotiate an API version, and moving /health in a
+# minor release would be a real outage.
+app.include_router(platform.router)
 
 app.include_router(api_router, prefix="/api/v1")
 

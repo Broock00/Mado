@@ -40,6 +40,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import metrics
 from app.core.logging import get_logger
 from app.domains.developer.webhooks import (
     DELIVERY_DELIVERED,
@@ -175,6 +176,15 @@ def _record(
     delivery.attempts += 1
     delivery.response_status = status_code
     delivery.duration_ms = duration_ms
+
+    # Counted separately from `dependency_calls`, because the far end belongs to
+    # a publisher rather than to us: a rise here is somebody else's outage, and
+    # filing it under our dependencies would send the wrong team looking.
+    metrics.webhook_deliveries.inc(
+        "delivered"
+        if status_code is not None and 200 <= status_code < 300
+        else "failed"
+    )
 
     if status_code is not None and 200 <= status_code < 300:
         delivery.status = DELIVERY_DELIVERED

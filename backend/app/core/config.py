@@ -110,6 +110,13 @@ class Settings(BaseSettings):
     # publishing accounts, which is the cheapest possible spam vector.
     require_verified_email_to_publish: bool = False
 
+    # Guards /metrics and /health/ready (spec OPERATIONS-42). Between them those
+    # describe every dependency, its latency, the shape of the traffic and where
+    # the errors are - reconnaissance, if reachable from the internet. With
+    # nothing set they answer only outside production, so local work and CI need
+    # no setup and a production deployment that forgot fails closed.
+    telemetry_token: str = ""
+
     # Webhook delivery (spec DEV-003). Endpoints are refused if they resolve to
     # a private, loopback or link-local address, which is the SSRF guard - and
     # which also makes a receiver on your own machine untestable. This lifts the

@@ -20,6 +20,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from app.core import metrics, tracing
 from app.core.config import get_settings
 from app.core.errors import ServiceUnavailableError
 from app.core.logging import get_logger, redact
@@ -257,6 +258,33 @@ def _compose_offline_reply(*, intent: str, results: list[dict], context: dict) -
     return "\n".join([opener, "", *lines, "", closing])
 
 
+class _Measured:
+    """Wraps a provider so every call is timed, counted and its tokens recorded.
+
+    Here rather than at the two call sites in the AI domain, and rather than
+    inside each provider: instrumentation that lives at call sites is
+    instrumentation somebody forgets when they add a third one, and the stub
+    provider would otherwise need a copy of it for no reason.
+
+    Tokens matter more than latency here. They are the one operational number
+    that is also an invoice (spec OPERATIONS-42 §9), and split by direction
+    because input and output are priced differently - a total would hide a
+    prompt that quietly doubled in size.
+    """
+
+    def __init__(self, inner: LLMProvider) -> None:
+        self._inner = inner
+        self.name = inner.name
+
+    async def generate(self, request: GenerationRequest, *, model: str) -> GenerationResult:
+        with tracing.dependency("ai"):
+            result = await self._inner.generate(request, model=model)
+
+        metrics.ai_tokens.inc(result.model, "input", amount=result.prompt_tokens)
+        metrics.ai_tokens.inc(result.model, "output", amount=result.completion_tokens)
+        return result
+
+
 @lru_cache
 def get_provider() -> LLMProvider:
     settings = get_settings()
@@ -265,6 +293,8 @@ def get_provider() -> LLMProvider:
             # Falling back is better than failing: the concierge stays usable and
             # the misconfiguration is logged loudly rather than crashing startup.
             logger.warning("gemini_selected_without_key_falling_back_to_stub")
-            return StubProvider()
-        return GeminiProvider(settings.gemini_api_key, timeout=settings.ai_request_timeout_seconds)
-    return StubProvider()
+            return _Measured(StubProvider())
+        return _Measured(
+            GeminiProvider(settings.gemini_api_key, timeout=settings.ai_request_timeout_seconds)
+        )
+    return _Measured(StubProvider())

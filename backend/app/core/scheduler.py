@@ -31,6 +31,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from app.core import metrics
 from app.core.config import get_settings
 from app.core.database import SessionFactory
 from app.core.logging import get_logger
@@ -172,17 +173,24 @@ async def _loop(job: Job) -> None:
         await asyncio.sleep(job.interval_seconds)
         try:
             if not await _claim(job.name, job.interval_seconds + LOCK_MARGIN_SECONDS):
+                # Counted, so "this worker never wins the lock" is visible.
+                # Without it, a job that stopped running and a job that lost
+                # every election look identical from outside.
+                metrics.job_runs.inc(job.name, "skipped")
                 continue
             started = datetime.now(UTC)
             await job.run()
-            logger.info(
-                "scheduled_job_complete",
-                job=job.name,
-                seconds=round((datetime.now(UTC) - started).total_seconds(), 2),
-            )
+            elapsed = (datetime.now(UTC) - started).total_seconds()
+            metrics.job_runs.inc(job.name, "ok")
+            metrics.job_duration.observe(elapsed, job.name)
+            logger.info("scheduled_job_complete", job=job.name, seconds=round(elapsed, 2))
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - a job must never stop the loop
+            # Background work is invisible in request metrics, which is exactly
+            # why a job that has started failing needs its own counter: nothing
+            # else would notice.
+            metrics.job_runs.inc(job.name, "error")
             logger.warning("scheduled_job_failed", job=job.name, error=str(exc))
 
 

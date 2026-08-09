@@ -35,6 +35,7 @@ from dataclasses import dataclass
 import redis.asyncio as aioredis
 from fastapi import Request
 
+from app.core import metrics
 from app.core.config import get_settings
 from app.core.errors import PlatformError
 from app.core.logging import get_logger
@@ -222,6 +223,9 @@ async def check(identity: str, limit: Limit) -> None:
         except Exception:  # noqa: BLE001
             retry_after = limit.seconds
 
+        # Counted as well as logged: a rising number here is either abuse or a
+        # limit set too tight, and only a graph over time tells them apart.
+        metrics.rate_limited.inc(limit.scope)
         logger.info(
             "rate_limited", scope=limit.scope, identity=identity[:16], retry_after=retry_after
         )

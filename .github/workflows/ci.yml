@@ -118,6 +118,19 @@ jobs:
           cat "${{ runner.temp }}/api.log"
           exit 1
 
+      - name: Check every dependency is reachable
+        # Liveness above only proves the process answers. This asks the API
+        # whether it can actually reach Postgres, Redis and Meilisearch - which
+        # catches a wiring mistake here rather than as a puzzling failure in one
+        # unrelated test twenty minutes later.
+        run: |
+          body=$(curl -fsS http://127.0.0.1:8000/health/ready)
+          echo "$body"
+          # `degraded` is a pass in principle - the platform serves without
+          # search - but in CI every dependency is a container we just started,
+          # so anything less than ok is a broken workflow.
+          echo "$body" | grep -q '"status":"ok"'
+
       - name: Test
         working-directory: backend
         # MADO_SKIP_API_TESTS is deliberately not set. The integration tests fail

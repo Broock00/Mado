@@ -36,6 +36,7 @@ from typing import Protocol
 
 import httpx
 
+from app.core import tracing
 from app.core.config import get_settings
 from app.core.logging import get_logger, redact
 
@@ -344,6 +345,29 @@ class LocalGeocoder:
         return None
 
 
+class _Measured:
+    """Times and counts whichever geocoder was selected.
+
+    At the factory rather than in each implementation: there are four of them
+    and the fifth would be the one somebody forgets to instrument. The metric
+    label is `geocoding` rather than the vendor name - which vendor is in the
+    logs, and one series per vendor would make a graph that changes shape when
+    the fallback engages, hiding exactly the moment worth seeing.
+    """
+
+    def __init__(self, inner: Geocoder) -> None:
+        self._inner = inner
+        self.name = inner.name
+
+    async def geocode(self, address: str, *, city: str, country: str) -> GeocodeResult | None:
+        with tracing.dependency("geocoding"):
+            return await self._inner.geocode(address, city=city, country=country)
+
+    async def reverse(self, latitude: float, longitude: float) -> str | None:
+        with tracing.dependency("geocoding"):
+            return await self._inner.reverse(latitude, longitude)
+
+
 @lru_cache
 def get_geocoder() -> Geocoder:
     """Select the geocoder.
@@ -361,8 +385,8 @@ def get_geocoder() -> Geocoder:
     if choice == "google":
         if not settings.google_maps_api_key:
             logger.warning("google_geocoder_selected_without_key_falling_back")
-            return NominatimGeocoder()
-        return GoogleGeocoder(settings.google_maps_api_key)
+            return _Measured(NominatimGeocoder())
+        return _Measured(GoogleGeocoder(settings.google_maps_api_key))
     if choice == "local":
-        return LocalGeocoder()
-    return NominatimGeocoder()
+        return _Measured(LocalGeocoder())
+    return _Measured(NominatimGeocoder())
