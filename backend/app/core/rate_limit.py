@@ -264,6 +264,14 @@ EMAIL_SEND_LIMIT = Limit(times=5, seconds=3600, scope="email_send")
 # clicks a link once and anyone trying many is guessing.
 TOKEN_CONFIRM_LIMIT = Limit(times=20, seconds=3600, scope="token_confirm")
 
+# Calls made with an API key. Higher than any human limit, because the point of
+# a key is to run a script - a nightly sync of a season's events is hundreds of
+# calls in a minute and is exactly the use case. Keyed on the key rather than
+# the account, so a runaway integration exhausts its own allowance instead of
+# locking its owner out of the website (spec 55.01 s25: partner limits are their
+# own tier).
+API_KEY_LIMIT = Limit(times=1000, seconds=3600, scope="apikey")
+
 # Reservations. Higher than publishing because changing your mind about a party
 # size is normal, and low enough that a script cannot exhaust a supper club's
 # seats by holding and releasing them in a loop.

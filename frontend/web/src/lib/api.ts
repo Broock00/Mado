@@ -37,6 +37,13 @@ import type {
   ModerationItem,
   FeatureFlag,
   AuditEntry,
+  ApiKey,
+  NewApiKey,
+  DeveloperScope,
+  WebhookEventType,
+  WebhookEndpoint,
+  NewWebhookEndpoint,
+  WebhookDelivery,
   Availability,
   Reservation,
   Attendee,
@@ -750,6 +757,75 @@ export const api = {
     request<CollectionEnvelope<AuditEntry>>(`/api/v1/admin/audit${query({ days })}`).then(
       (r) => r.data,
     ),
+
+  // ---------------------------------------------------- developer platform
+  developerScopes: () =>
+    request<CollectionEnvelope<DeveloperScope>>('/api/v1/developer/scopes').then((r) => r.data),
+
+  webhookEventTypes: () =>
+    request<CollectionEnvelope<WebhookEventType>>('/api/v1/developer/event-types').then(
+      (r) => r.data,
+    ),
+
+  apiKeys: () =>
+    request<CollectionEnvelope<ApiKey>>('/api/v1/developer/keys').then((r) => r.data),
+
+  /** The only call that ever returns the key itself. Show it, then lose it. */
+  createApiKey: (body: { name: string; scopes: string[]; expiresInDays?: number }) =>
+    request<Envelope<NewApiKey>>('/api/v1/developer/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((r) => r.data),
+
+  revokeApiKey: (keyId: string) =>
+    request<Envelope<ApiKey>>(`/api/v1/developer/keys/${keyId}`, { method: 'DELETE' }).then(
+      (r) => r.data,
+    ),
+
+  webhooks: () =>
+    request<CollectionEnvelope<WebhookEndpoint>>('/api/v1/webhooks').then((r) => r.data),
+
+  createWebhook: (url: string, events: string[]) =>
+    request<Envelope<NewWebhookEndpoint>>('/api/v1/webhooks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, events }),
+    }).then((r) => r.data),
+
+  updateWebhook: (
+    endpointId: string,
+    patch: { url?: string; events?: string[]; status?: string },
+  ) =>
+    request<Envelope<WebhookEndpoint>>(`/api/v1/webhooks/${endpointId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }).then((r) => r.data),
+
+  deleteWebhook: (endpointId: string) =>
+    request<void>(`/api/v1/webhooks/${endpointId}`, { method: 'DELETE' }),
+
+  rotateWebhookSecret: (endpointId: string) =>
+    request<Envelope<NewWebhookEndpoint>>(`/api/v1/webhooks/${endpointId}/rotate-secret`, {
+      method: 'POST',
+    }).then((r) => r.data),
+
+  webhookDeliveries: (endpointId: string) =>
+    request<CollectionEnvelope<WebhookDelivery>>(
+      `/api/v1/webhooks/${endpointId}/deliveries`,
+    ).then((r) => r.data),
+
+  retryWebhookDelivery: (endpointId: string, deliveryId: string) =>
+    request<Envelope<WebhookDelivery>>(
+      `/api/v1/webhooks/${endpointId}/deliveries/${deliveryId}/retry`,
+      { method: 'POST' },
+    ).then((r) => r.data),
+
+  testWebhook: (endpointId: string) =>
+    request<Envelope<WebhookDelivery>>(`/api/v1/webhooks/${endpointId}/test`, {
+      method: 'POST',
+    }).then((r) => r.data),
 
   // ------------------------------------------------------- administration
   // Search rather than browse: an administrator looking for a specific person

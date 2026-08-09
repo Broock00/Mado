@@ -54,6 +54,17 @@ REMINDER_INTERVAL_SECONDS = 600
 # so this is a quality repair rather than an outage.
 EMBEDDING_INTERVAL_SECONDS = 3600
 
+# Webhook delivery. The shortest interval here by a distance: a webhook that
+# arrives ten minutes after the thing it describes is not a notification, it is
+# a report. Half a minute is the difference between "your listing went live" and
+# "your listing went live a while ago", and each run is one indexed query that
+# usually returns nothing.
+WEBHOOK_INTERVAL_SECONDS = 30
+
+# Delivery history is trimmed daily rather than per delivery, which would put a
+# DELETE on the send path for no benefit.
+WEBHOOK_SWEEP_INTERVAL_SECONDS = 86400
+
 # A held lock expires slightly after the interval it guards, so a worker that
 # dies mid-job does not block the next run forever.
 LOCK_MARGIN_SECONDS = 60
@@ -124,10 +135,32 @@ async def _reminders() -> None:
             )
 
 
+async def _webhooks() -> None:
+    from app.domains.developer.delivery import deliver_due
+
+    async with SessionFactory() as session:
+        result = await deliver_due(session)
+        await session.commit()
+        if result["attempted"]:
+            logger.info("scheduled_webhook_delivery", **result)
+
+
+async def _sweep_deliveries() -> None:
+    from app.domains.developer.retention import forget_old_deliveries
+
+    async with SessionFactory() as session:
+        removed = await forget_old_deliveries(session)
+        await session.commit()
+        if removed:
+            logger.info("scheduled_webhook_sweep", removed=removed)
+
+
 JOBS = [
     Job("engagement", ENGAGEMENT_INTERVAL_SECONDS, _recompute_engagement),
     Job("embeddings", EMBEDDING_INTERVAL_SECONDS, _backfill_embeddings),
     Job("reminders", REMINDER_INTERVAL_SECONDS, _reminders),
+    Job("webhooks", WEBHOOK_INTERVAL_SECONDS, _webhooks),
+    Job("webhook_sweep", WEBHOOK_SWEEP_INTERVAL_SECONDS, _sweep_deliveries),
 ]
 
 

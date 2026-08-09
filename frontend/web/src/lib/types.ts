@@ -321,6 +321,73 @@ export interface AuditEntry {
   occurredAt: string
 }
 
+/* -------------------------------------------------- the developer platform */
+
+export interface DeveloperScope {
+  key: string
+  description: string
+}
+
+export interface WebhookEventType {
+  type: string
+  description: string
+}
+
+export interface ApiKey {
+  id: string
+  name: string
+  /** Prefix and last four. Never enough to use. */
+  preview: string
+  scopes: string[]
+  /** active | expired | revoked */
+  state: string
+  createdAt: string
+  lastUsedAt?: string | null
+  expiresAt?: string | null
+  revokedAt?: string | null
+}
+
+/** The one response that carries the key itself. */
+export interface NewApiKey {
+  key: ApiKey
+  secret: string
+}
+
+export interface WebhookEndpoint {
+  id: string
+  url: string
+  events: string[]
+  /** active | paused | suspended */
+  status: string
+  secretPreview: string
+  consecutiveFailures: number
+  createdAt: string
+  lastSuccessAt?: string | null
+  lastFailureAt?: string | null
+  lastError?: string | null
+}
+
+export interface NewWebhookEndpoint {
+  endpoint: WebhookEndpoint
+  secret: string
+}
+
+export interface WebhookDelivery {
+  id: string
+  eventId: string
+  eventType: string
+  /** pending | retrying | delivered | failed */
+  status: string
+  attempts: number
+  isTest: boolean
+  createdAt: string
+  nextAttemptAt: string
+  deliveredAt?: string | null
+  responseStatus?: number | null
+  error?: string | null
+  durationMs?: number | null
+}
+
 /* ------------------------------------------------------------- reservations */
 
 export interface Availability {

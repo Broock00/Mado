@@ -16,7 +16,7 @@ from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import CurrentUser, OptionalUser, SessionDep
+from app.api.deps import CurrentUser, OptionalUser, ReservationReader, SessionDep
 from app.core import rate_limit
 from app.core.envelope import CollectionEnvelope, Envelope
 from app.core.errors import NotFoundError, PermissionDeniedError
@@ -182,10 +182,14 @@ async def cancel(
     "/posts/events/{occurrence_id}/attendees",
     response_model=CollectionEnvelope[AttendeeOut],
     summary="Who is coming",
-    description="The publisher of the listing only.",
+    description=(
+        "The publisher of the listing only. Also reachable with an API key "
+        "carrying `reservations:read`, so a door list can be printed from a "
+        "script without anybody signing in."
+    ),
 )
 async def attendees(
-    occurrence_id: uuid.UUID, session: SessionDep, user: CurrentUser
+    occurrence_id: uuid.UUID, session: SessionDep, user: ReservationReader
 ) -> CollectionEnvelope[AttendeeOut]:
     occurrence = await session.get(
         EventInstance, occurrence_id, options=[selectinload(EventInstance.experience)]

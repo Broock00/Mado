@@ -19,6 +19,8 @@ from app.domains.catalog.models import (
     Venue,
     experience_tags,
 )
+from app.domains.developer.keys import ApiKey
+from app.domains.developer.webhooks import WebhookDelivery, WebhookEndpoint
 from app.domains.explorer.models import (
     Collection,
     CollectionItem,
@@ -38,8 +40,11 @@ from app.domains.trust.audit import AuditEntry
 from app.domains.trust.flags import FeatureFlag
 
 __all__ = [
+    "ApiKey",
     "AuditEntry",
     "FeatureFlag",
+    "WebhookDelivery",
+    "WebhookEndpoint",
     "Reservation",
     "Collection",
     "CollectionItem",

@@ -60,6 +60,7 @@ from app.core.mixins import Timestamps, UUIDPrimaryKey
 from app.domains.catalog.models import EventInstance, Experience
 from app.domains.explorer.models import SCHEMA
 from app.domains.identity.models import User
+from app.domains.publisher.models import Publisher
 
 logger = get_logger("mado.reservations")
 
@@ -251,6 +252,7 @@ class ReservationService:
             self.session.add(reservation)
 
         await self.session.flush()
+        await self._announce("reservation.created", reservation)
         logger.info(
             "reservation_made",
             reservation_id=str(reservation.id),
@@ -301,12 +303,47 @@ class ReservationService:
 
         reservation.status = STATUS_CANCELLED
         reservation.cancelled_at = datetime.now(UTC)
+        await self._announce("reservation.cancelled", reservation)
         logger.info(
             "reservation_cancelled",
             reservation_id=str(reservation.id),
             late=datetime.now(UTC) > reservation.starts_at - CANCELLATION_CUTOFF,
         )
         return reservation
+
+    async def _announce(self, event_type: str, reservation: Reservation) -> None:
+        """Tell the publisher's systems, if they asked to be told (spec DEV-003).
+
+        Addressed to the owner of the listing rather than to the explorer who
+        reserved: a webhook goes to the party running the event, and the person
+        turning up has notifications instead.
+
+        No name and no note. Both are things the explorer told this publisher
+        directly, and a webhook is a copy sent to whatever server they pointed
+        us at - which is a different audience from the door list. A receiver
+        that wants names calls the attendees endpoint with a scoped key.
+        """
+        from app.domains.developer.webhooks import emit
+
+        experience = await self.session.get(Experience, reservation.experience_id)
+        if experience is None:
+            return
+        publisher = await self.session.get(Publisher, experience.publisher_id)
+        if publisher is None or publisher.owner_user_id is None:
+            return
+
+        await emit(
+            self.session,
+            event_type=event_type,
+            owner_user_id=publisher.owner_user_id,
+            data={
+                "reservationId": str(reservation.id),
+                "experienceId": str(reservation.experience_id),
+                "eventInstanceId": str(reservation.event_instance_id),
+                "startsAt": reservation.starts_at.isoformat(),
+                "partySize": reservation.party_size,
+            },
+        )
 
     async def mine(self, user: User, *, upcoming_only: bool = True) -> list[Reservation]:
         stmt = select(Reservation).where(Reservation.user_id == user.id)

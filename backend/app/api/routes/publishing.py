@@ -14,7 +14,13 @@ import uuid
 from fastapi import APIRouter, File, Form, Query, Request, UploadFile, status
 from pydantic import Field
 
-from app.api.deps import CurrentUser, SessionDep, VerifiedPublisher
+from app.api.deps import (
+    CurrentUser,
+    ExperienceReader,
+    ExperienceWriter,
+    SessionDep,
+    VerifiedExperienceWriter,
+)
 from app.core import rate_limit
 from app.core.envelope import CollectionEnvelope, Envelope
 from app.core.errors import RateLimitError, ValidationError
@@ -87,7 +93,7 @@ async def my_publisher(user: CurrentUser, session: SessionDep) -> Envelope[Publi
     summary="List your posts",
 )
 async def list_my_posts(
-    user: CurrentUser,
+    user: ExperienceReader,
     session: SessionDep,
     post_status: str | None = Query(default=None, alias="status"),
 ) -> CollectionEnvelope[OwnExperienceOut]:
@@ -104,7 +110,7 @@ async def list_my_posts(
 )
 async def create_post(
     payload: CreateExperienceRequest,
-    user: CurrentUser,
+    user: ExperienceWriter,
     session: SessionDep,
     request: Request,
 ) -> Envelope[OwnExperienceOut]:
@@ -155,7 +161,7 @@ async def create_post(
     summary="Get one of your posts",
 )
 async def get_my_post(
-    experience_id: uuid.UUID, user: CurrentUser, session: SessionDep
+    experience_id: uuid.UUID, user: ExperienceReader, session: SessionDep
 ) -> Envelope[OwnExperienceOut]:
     experience = await PublishingService(session).get_own_experience(user, experience_id)
     return Envelope(data=_own_view(experience))
@@ -169,7 +175,7 @@ async def get_my_post(
 async def update_post(
     experience_id: uuid.UUID,
     payload: UpdateExperienceRequest,
-    user: CurrentUser,
+    user: ExperienceWriter,
     session: SessionDep,
 ) -> Envelope[OwnExperienceOut]:
     service = PublishingService(session)
@@ -200,7 +206,7 @@ async def publish_post(
     # Confirming an address is required here and nowhere else in this file:
     # drafting, editing and unpublishing all stay open to an unverified account,
     # because none of them put anything in front of an explorer.
-    user: VerifiedPublisher,
+    user: VerifiedExperienceWriter,
     session: SessionDep,
     request: Request,
 ) -> Envelope[OwnExperienceOut]:
@@ -229,7 +235,7 @@ async def publish_post(
     summary="Take a post back to draft",
 )
 async def unpublish_post(
-    experience_id: uuid.UUID, user: CurrentUser, session: SessionDep
+    experience_id: uuid.UUID, user: ExperienceWriter, session: SessionDep
 ) -> Envelope[OwnExperienceOut]:
     experience = await PublishingService(session).unpublish(user, experience_id)
     await remove_experience(str(experience.id))
@@ -244,7 +250,7 @@ async def unpublish_post(
     summary="Archive a post",
 )
 async def archive_post(
-    experience_id: uuid.UUID, user: CurrentUser, session: SessionDep
+    experience_id: uuid.UUID, user: ExperienceWriter, session: SessionDep
 ) -> Envelope[OwnExperienceOut]:
     experience = await PublishingService(session).archive(user, experience_id)
     await remove_experience(str(experience.id))
@@ -259,7 +265,7 @@ async def archive_post(
     summary="Restore an archived post to draft",
 )
 async def restore_post(
-    experience_id: uuid.UUID, user: CurrentUser, session: SessionDep
+    experience_id: uuid.UUID, user: ExperienceWriter, session: SessionDep
 ) -> Envelope[OwnExperienceOut]:
     experience = await PublishingService(session).restore(user, experience_id)
     view = _own_view(experience)
@@ -361,7 +367,7 @@ async def remove_media(
 async def add_event(
     experience_id: uuid.UUID,
     payload: AddEventRequest,
-    user: CurrentUser,
+    user: ExperienceWriter,
     session: SessionDep,
 ) -> Envelope[EventInstanceOut]:
     event = await PublishingService(session).add_event(
@@ -389,7 +395,7 @@ async def cancel_event(
     experience_id: uuid.UUID,
     event_id: uuid.UUID,
     payload: CancelEventRequest,
-    user: CurrentUser,
+    user: ExperienceWriter,
     session: SessionDep,
 ) -> Envelope[EventInstanceOut]:
     event = await PublishingService(session).cancel_event(

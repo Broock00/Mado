@@ -13,6 +13,7 @@ from app.api.routes import (
     catalog,
     collections,
     concierge,
+    developer,
     discovery,
     me,
     notifications,
@@ -32,6 +33,7 @@ api_router.include_router(discovery.router)
 api_router.include_router(catalog.router)
 api_router.include_router(collections.router)
 api_router.include_router(concierge.router)
+api_router.include_router(developer.router)
 api_router.include_router(notifications.router)
 api_router.include_router(planning.router)
 api_router.include_router(publishing.router)

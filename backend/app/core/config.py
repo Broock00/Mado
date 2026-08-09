@@ -110,6 +110,13 @@ class Settings(BaseSettings):
     # publishing accounts, which is the cheapest possible spam vector.
     require_verified_email_to_publish: bool = False
 
+    # Webhook delivery (spec DEV-003). Endpoints are refused if they resolve to
+    # a private, loopback or link-local address, which is the SSRF guard - and
+    # which also makes a receiver on your own machine untestable. This lifts the
+    # check. Development only: switching it on in production turns every webhook
+    # subscription into a way to make the API call our own internal services.
+    webhook_allow_private_endpoints: bool = False
+
     # Where uploaded images are written. Local disk in development; spec 82.01
     # names S3-compatible object storage for production, which changes this
     # setting and app/integrations/media_storage.py and nothing else.

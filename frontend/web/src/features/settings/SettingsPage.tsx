@@ -261,6 +261,22 @@ export function SettingsPage() {
 
       <AccountSecurity />
 
+      {/* Here rather than in the header. Keys and webhooks matter enormously to
+          the few publishers who automate and not at all to anybody else, and a
+          permanent nav icon for a page most people open once is clutter charged
+          to everyone. */}
+      <section className="mt-10">
+        <SectionHeading
+          title="Developers"
+          subtitle="API keys and webhooks, for getting your listings in and out without a browser."
+        />
+        <Card className="mt-3 p-5">
+          <Link to="/developers" className="text-brand-700 underline">
+            Keys and webhooks
+          </Link>
+        </Card>
+      </section>
+
       <section className="mt-10">
         <SectionHeading
           title="What you are told about"

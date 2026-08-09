@@ -22,6 +22,7 @@ import { SettingsPage } from '@/features/settings/SettingsPage'
 import { CollectionsPage } from '@/features/collections/CollectionsPage'
 import { CollectionDetailPage } from '@/features/collections/CollectionDetailPage'
 import { ModerationPage } from '@/features/moderation/ModerationPage'
+import { DeveloperPage } from '@/features/developer/DeveloperPage'
 import { NotFoundPage } from '@/features/NotFoundPage'
 
 const queryClient = new QueryClient({
@@ -62,6 +63,7 @@ const router = createBrowserRouter([
       { path: 'plans/:itineraryId', element: <ItineraryPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: 'moderation', element: <ModerationPage /> },
+      { path: 'developers', element: <DeveloperPage /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

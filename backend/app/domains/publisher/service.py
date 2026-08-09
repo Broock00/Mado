@@ -358,6 +358,7 @@ class PublishingService:
         if experience.published_at is None:
             experience.published_at = datetime.now(UTC)
         await self.session.flush()
+        await self._announce("experience.published", user, experience)
         logger.info("experience_published", experience_id=str(experience.id))
         return experience
 
@@ -365,7 +366,34 @@ class PublishingService:
         experience = await self._load_owned(user, experience_id)
         experience.status = STATUS_DRAFT
         await self.session.flush()
+        await self._announce("experience.unpublished", user, experience)
         return experience
+
+    async def _announce(self, event_type: str, user: User, experience: Experience) -> None:
+        """Queue a webhook for anyone subscribed (spec DEV-003).
+
+        In this transaction rather than after it, so an announcement cannot
+        survive a rollback of the thing it announces. Nothing is sent from here;
+        the scheduler drains the queue.
+
+        The payload is identifiers and the title - enough for a receiver to know
+        what changed and fetch the rest. Sending the whole record would put a
+        copy of the catalogue in somebody's logs and go stale the moment it
+        left.
+        """
+        from app.domains.developer.webhooks import emit
+
+        await emit(
+            self.session,
+            event_type=event_type,
+            owner_user_id=user.id,
+            data={
+                "experienceId": str(experience.id),
+                "slug": experience.slug,
+                "title": experience.title,
+                "status": experience.status,
+            },
+        )
 
     async def archive(self, user: User, experience_id: uuid.UUID) -> Experience:
         experience = await self._load_owned(user, experience_id)
