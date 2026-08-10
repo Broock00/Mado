@@ -56,6 +56,7 @@ import type {
   PublisherAnalytics,
   PublisherReputation,
   ProactiveSuggestion,
+  VisualSearchResult,
   ExplorerSummary,
   CollectionCard,
   CollectionDetail,
@@ -279,6 +280,21 @@ export const api = {
     const categories = (category ?? []).map((c) => `&category=${encodeURIComponent(c)}`).join('')
     return request<Envelope<SearchResponse>>(
       `/api/v1/search${query({ q, ...rest })}${categories}`,
+    ).then((r) => r.data)
+  },
+
+  /**
+   * Search by photograph. The image is sent once and not stored anywhere.
+   *
+   * No Content-Type header: the browser sets the multipart boundary itself, and
+   * setting it by hand produces a body the server cannot parse.
+   */
+  visualSearch: (image: File, city?: string) => {
+    const form = new FormData()
+    form.append('image', image)
+    return request<Envelope<VisualSearchResult>>(
+      `/api/v1/search/visual${query({ city })}`,
+      { method: 'POST', body: form },
     ).then((r) => r.data)
   },
 

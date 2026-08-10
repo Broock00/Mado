@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 from pydantic import Field
 
-from app.api.deps import AnonymousId, OptionalUser, SessionDep
+from app.api.deps import AnonymousId, CurrentUser, OptionalUser, SessionDep
+from app.core import rate_limit
 from app.core.config import get_settings
 from app.core.envelope import CollectionEnvelope, Envelope, clamp_limit
+from app.core.errors import PermissionDeniedError
 from app.domains.catalog.schemas import CamelModel, ExperienceSummary
 from app.domains.discovery.service import DiscoveryService, build_context
 from app.domains.explorer.learning import infer_preferences
@@ -309,3 +311,99 @@ async def recommendation_feedback(
     )
     await session.commit()
     return Envelope(data={"recorded": True, "action": action})
+
+
+class LookOut(CamelModel):
+    """What the model made of the photograph, shown to the explorer verbatim."""
+
+    description: str
+    terms: list[str]
+    confidence: float
+    """True when the subject could not be made out; results will be empty."""
+    unclear: bool
+
+
+class VisualSearchOut(CamelModel):
+    look: LookOut
+    results: list[ExperienceSummary]
+    meta: SearchMeta
+
+
+@router.post(
+    "/search/visual",
+    response_model=Envelope[VisualSearchOut],
+    summary="Search by photograph",
+    description=(
+        "Answers what a photograph is *like*, not what it is. The model says "
+        "what kind of place or thing it shows and the catalogue decides what "
+        "exists - it is never allowed to name a venue, and any name it produces "
+        "anyway is stripped before the search runs. A model that misidentifies "
+        "a building sends somebody across the city to the wrong place.\n\n"
+        "The photograph is not stored. It is decoded to check it is an image, "
+        "re-encoded to drop its metadata, sent to the model and dropped.\n\n"
+        "An unreadable photograph comes back with `unclear` set and no results, "
+        "rather than a page of things chosen by a guess."
+    ),
+)
+async def visual_search(
+    session: SessionDep,
+    user: CurrentUser,
+    params: QueryDep,
+    request: Request,
+    image: UploadFile = File(description="A photograph. Not stored."),
+) -> Envelope[VisualSearchOut]:
+    from app.domains.discovery.visual import look_at
+    from app.domains.trust.flags import flag_enabled
+
+    if not await flag_enabled(session, "search.visual", user):
+        raise PermissionDeniedError(
+            "Searching by photograph is not switched on for you yet.",
+            code="FEATURE_UNAVAILABLE",
+        )
+
+    # A model call per photograph, and a bigger one than a text turn, so it
+    # shares the concierge's budget rather than the free search path.
+    await rate_limit.check(
+        rate_limit.identify(request, str(user.id)), rate_limit.CONCIERGE_LIMIT
+    )
+
+    look = await look_at(await image.read())
+    if look.unclear:
+        return Envelope(
+            data=VisualSearchOut(
+                look=LookOut(
+                    description=look.description,
+                    terms=look.terms,
+                    confidence=look.confidence,
+                    unclear=True,
+                ),
+                results=[],
+                meta=SearchMeta(query=look.query, total=0, degraded=False, semantic=False),
+            )
+        )
+
+    # The ordinary search path. A photograph is an input method, not a second
+    # retrieval stack: whatever ranking and personalisation the text search
+    # gained yesterday, this gets today.
+    ctx = await _context(session, user, params)
+    outcome = await DiscoveryService(session).search_experiences(
+        look.query, ctx, city_slug=params.city, limit=clamp_limit(params.limit)
+    )
+
+    return Envelope(
+        data=VisualSearchOut(
+            look=LookOut(
+                description=look.description,
+                terms=look.terms,
+                confidence=look.confidence,
+                unclear=False,
+            ),
+            results=outcome.items,
+            meta=SearchMeta(
+                query=look.query,
+                total=outcome.total,
+                degraded=outcome.degraded,
+                semantic=outcome.semantic,
+            ),
+        )
+    )

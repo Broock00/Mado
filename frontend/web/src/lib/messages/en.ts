@@ -83,6 +83,21 @@ export const en = {
   'settings.language.subtitle': 'What Mado uses for its own words. Listings stay as their author wrote them.',
   'settings.language.saved': 'Saved',
 
+  // Voice and photo search (spec SRCH-004, SRCH-005)
+  'search.voice.start': 'Search by speaking',
+  'search.voice.stop': 'Stop listening',
+  'search.voice.listening': 'Listening… speak now.',
+  'search.voice.denied': 'Mado cannot hear the microphone. Allow it in your browser settings.',
+  'search.voice.unsupportedLanguage':
+    'Speaking a search is not available in Amharic yet - browsers cannot transcribe it.',
+  'search.visual.button': 'Search with a photo',
+  'search.visual.tooBig': 'That photo is too large. Try one under 12 MB.',
+  'search.visual.looksLike': 'Looks like: {description}',
+  'search.visual.notIdentification':
+    'This finds places like the photo, not the exact place in it.',
+  'search.visual.unclear': 'Could not make out that photo.',
+  'search.visual.unclear.detail': 'Try a clearer, closer shot of the place itself.',
+
   // Offline (spec EXP-005)
   'offline.banner': 'Cannot reach Mado. Plans you kept are still here.',
   'offline.savedCopy': 'Showing your saved copy. Times and cancellations may have changed since.',

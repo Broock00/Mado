@@ -373,6 +373,28 @@ export interface PublisherReputation {
   computedAt?: string | null
 }
 
+/* ---------------------------------------------- searching by photograph */
+
+/**
+ * What the model made of a photograph (spec SRCH-005).
+ *
+ * It says what *kind* of thing the picture shows and never names a venue, so
+ * this is grounds for a search rather than an identification.
+ */
+export interface VisualLook {
+  description: string
+  terms: string[]
+  confidence: number
+  /** The subject could not be made out. `results` will be empty. */
+  unclear: boolean
+}
+
+export interface VisualSearchResult {
+  look: VisualLook
+  results: ExperienceSummary[]
+  meta: SearchResponse['meta']
+}
+
 /* -------------------------------------------------- the developer platform */
 
 export interface DeveloperScope {

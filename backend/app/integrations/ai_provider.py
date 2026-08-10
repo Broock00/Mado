@@ -13,6 +13,7 @@ interface, and frontends never reach one directly. Two implementations ship here
 
 from __future__ import annotations
 
+import base64
 import json
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -40,6 +41,10 @@ class GenerationRequest:
     context: dict[str, Any] = field(default_factory=dict)
     history: list[dict[str, str]] = field(default_factory=list)
     response_schema: dict[str, Any] | None = None
+    # An image to look at, as (bytes, mime type). Only the vision-capable
+    # models accept one; the stub ignores it and says so rather than pretending
+    # to have seen anything.
+    image: tuple[bytes, str] | None = None
     temperature: float = 0.4
     max_output_tokens: int = 1024
     # Gemini 2.5 models reason before answering, and those thinking tokens are
@@ -87,7 +92,18 @@ class GeminiProvider:
             }
             for turn in request.history
         ]
-        contents.append({"role": "user", "parts": [{"text": request.user_message}]})
+        parts: list[dict[str, Any]] = []
+        if request.image is not None:
+            data, mime = request.image
+            # The image goes before the instruction. Gemini's own guidance is
+            # that a prompt referring to "this image" reads better with the
+            # image already in context, and it measurably reduces answers that
+            # describe an imagined picture instead of the supplied one.
+            parts.append(
+                {"inlineData": {"mimeType": mime, "data": base64.b64encode(data).decode()}}
+            )
+        parts.append({"text": request.user_message})
+        contents.append({"role": "user", "parts": parts})
 
         payload: dict[str, Any] = {
             "contents": contents,
@@ -181,6 +197,19 @@ class StubProvider:
     name = "stub"
 
     async def generate(self, request: GenerationRequest, *, model: str) -> GenerationResult:
+        if request.image is not None:
+            # There is no local vision model, and the honest answer is that
+            # nothing looked at the photograph. Reporting zero confidence sends
+            # visual search down its "could not make this out" path, which is
+            # the behaviour an explorer should get - rather than a plausible
+            # description of a picture nobody saw, which is the one failure
+            # mode a stub must never have.
+            return GenerationResult(
+                text="",
+                model=f"{model}-stub",
+                structured={"description": "", "terms": [], "confidence": 0.0},
+            )
+
         context = request.context or {}
         results = context.get("results") or []
         intent = context.get("intent", "GENERAL_ASSISTANCE")

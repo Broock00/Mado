@@ -21,6 +21,9 @@ import { useAppStore } from '@/app/store'
 import { ExperienceCard, ExperienceCardSkeleton } from '@/features/experiences/ExperienceCard'
 import { Badge, Button, EmptyState, Input } from '@/design-system/primitives'
 import { cn } from '@/lib/utils'
+import { useLanguage } from '@/app/language-context'
+import { VisualSearchButton, VoiceSearchButton } from './SearchInputs'
+import type { VisualLook } from '@/lib/types'
 
 const SUGGESTED_QUERIES = [
   'live music tonight',
@@ -42,6 +45,11 @@ export function SearchPage() {
   const [submitted, setSubmitted] = useState(initialQuery)
   const [freeOnly, setFreeOnly] = useState(searchParams.get('free') === 'true')
   const [view, setView] = useState<'list' | 'map'>('list')
+  // What a photograph was read as, when the search came from one. Cleared by
+  // any subsequent typed search, so the explanation never outlives the results
+  // it explains.
+  const [look, setLook] = useState<VisualLook | null>(null)
+  const { t } = useLanguage()
   const location = useAppStore((s) => s.location)
 
   const params = useDiscoveryParams(24)
@@ -101,7 +109,54 @@ export function SearchPage() {
             Search
           </Button>
         </div>
+
+        {/* Beside the box rather than inside it: both are alternatives to
+            typing, not decorations on the field, and a row of icons crammed
+            into the input leaves nowhere to explain what they did. */}
+        <div className="mt-2 flex flex-wrap items-start gap-2">
+          <VoiceSearchButton
+            onHeard={(heard) => {
+              // Filled in, not submitted. Recognition mishears, and a query
+              // that runs before anybody has read it turns a misheard word
+              // into results with no clue what went wrong.
+              setInput(heard)
+              setLook(null)
+            }}
+          />
+          <VisualSearchButton
+            onResult={(result) => {
+              setLook(result.look)
+              setInput(result.look.terms.join(' '))
+              setSubmitted(result.look.unclear ? '' : result.look.terms.join(' '))
+            }}
+          />
+        </div>
       </form>
+
+      {look && (
+        <div className="mb-4 rounded-xl border border-sand-200 bg-white px-4 py-3">
+          {look.unclear ? (
+            <>
+              <p className="text-sm font-medium text-sand-900">{t('search.visual.unclear')}</p>
+              <p className="mt-0.5 text-sm text-sand-600">
+                {t('search.visual.unclear.detail')}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-sand-900">
+                {t('search.visual.looksLike', { description: look.description })}
+              </p>
+              {/* The whole honesty of the feature in one line. People point a
+                  camera at a specific building expecting to be told which one
+                  it is, and similarity is not identification. */}
+              <p className="mt-0.5 text-xs text-sand-500">
+                {t('search.visual.notIdentification')}
+              </p>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="mb-6 flex flex-wrap items-center gap-2">
         <button

@@ -204,17 +204,35 @@ class TestEveryFlagGatesSomething:
     """
 
     def test_each_gated_flag_is_actually_checked_in_the_code(self):
+        """Both sides of the wire.
+
+        A flag can legitimately be read only by the client: voice search is
+        gated in the browser because the recogniser belongs to the browser.
+        Scanning Python alone reports that as an unwired flag, and a false
+        alarm is how a useful test gets deleted.
+        """
         import pathlib
 
         from app.domains.trust import flags as flags_module
 
-        root = pathlib.Path(flags_module.__file__).parents[2]
-        sources = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in root.rglob("*.py")
-            if path.name != "flags.py"  # the catalogue names all of them
-        )
-        unread = [key for key in flags_module.GATED if f'"{key}"' not in sources]
+        # flags.py lives at <repo>/backend/app/domains/trust/flags.py
+        app_root = pathlib.Path(flags_module.__file__).parents[2]
+        frontend = app_root.parents[1] / "frontend" / "web" / "src"
+        # Asserted, because `rglob` on a directory that does not exist yields
+        # nothing without complaint - which would quietly turn this back into a
+        # backend-only scan and pass for the wrong reason.
+        assert frontend.is_dir(), frontend
+
+        files = [p for p in app_root.rglob("*.py") if p.name != "flags.py"]
+        files += list(frontend.rglob("*.ts")) + list(frontend.rglob("*.tsx"))
+        sources = "\n".join(path.read_text(encoding="utf-8") for path in files)
+
+        # Either quote style: Python writes one, TypeScript the other.
+        unread = [
+            key
+            for key in flags_module.GATED
+            if f'"{key}"' not in sources and f"'{key}'" not in sources
+        ]
         assert not unread, f"registered but never consulted: {unread}"
 
     def test_a_gated_flag_is_seeded_so_the_feature_does_not_vanish(self):

@@ -128,6 +128,15 @@ GATED: dict[str, str] = {
         "The AI writing assistant in the composer. The most expensive thing a "
         "publisher can press, so it has a switch."
     ),
+    "search.visual": (
+        "Searching by photograph. A vision call per search, and the newest "
+        "thing here, so it can be rolled out to a fraction and pulled back "
+        "without a deploy."
+    ),
+    "search.voice": (
+        "Speaking a search instead of typing it. Uses the browser's own "
+        "recogniser, which does not support every language Mado does."
+    ),
 }
 
 

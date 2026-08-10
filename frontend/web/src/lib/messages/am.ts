@@ -96,6 +96,21 @@ export const am = {
     'ማዶ ለራሱ ቃላት የሚጠቀመው። ዝርዝሮች ጸሐፊያቸው እንደጻፋቸው ይቆያሉ።',
   'settings.language.saved': 'ተቀምጧል',
 
+  // Voice and photo search (spec SRCH-004, SRCH-005)
+  'search.voice.start': 'በመናገር ይፈልጉ',
+  'search.voice.stop': 'ማዳመጥ አቁም',
+  'search.voice.listening': 'በማዳመጥ ላይ… አሁን ይናገሩ።',
+  'search.voice.denied': 'ማዶ ማይክራፎኑን መስማት አልቻለም። በአሳሽዎ ቅንብሮች ውስጥ ይፍቀዱ።',
+  'search.voice.unsupportedLanguage':
+    'በአማርኛ በመናገር መፈለግ እስካሁን የለም - አሳሾች አማርኛን ወደ ጽሑፍ መቀየር አይችሉም።',
+  'search.visual.button': 'በፎቶ ይፈልጉ',
+  'search.visual.tooBig': 'ያ ፎቶ በጣም ትልቅ ነው። ከ12 ሜባ በታች ይሞክሩ።',
+  'search.visual.looksLike': 'የሚመስለው፦ {description}',
+  'search.visual.notIdentification':
+    'ይህ በፎቶው ውስጥ ያለውን ትክክለኛ ቦታ ሳይሆን እንደ ፎቶው ያሉ ቦታዎችን ያገኛል።',
+  'search.visual.unclear': 'ያንን ፎቶ መለየት አልተቻለም።',
+  'search.visual.unclear.detail': 'የቦታውን ግልጽ እና ቅርብ ፎቶ ይሞክሩ።',
+
   // Offline (spec EXP-005)
   'offline.banner': 'ማዶ ላይ መድረስ አልተቻለም። ያስቀመጧቸው እቅዶች አሁንም እዚህ አሉ።',
   'offline.savedCopy': 'ያስቀመጡት ቅጂ እየታየ ነው። ሰዓቶች እና ስረዛዎች ከዚያ በኋላ ተለውጠው ሊሆን ይችላል።',
