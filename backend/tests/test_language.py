@@ -153,8 +153,14 @@ class TestWhatIsNotTranslatedOnTheServer:
     def test_only_notifications_are_in_the_catalogue(self):
         """Everything else the API says travels as a stable `code` that the
         client renders, so there is one source of Amharic rather than two that
-        drift."""
-        assert all(key.startswith("reminder.") for key in CATALOGUE["en"])
+        drift.
+
+        Reminders and suggestions are here because they are *written down* - a
+        background job composes them and nobody is around to translate them
+        when they are read hours later.
+        """
+        written_down = ("reminder.", "suggestion.")
+        assert all(key.startswith(written_down) for key in CATALOGUE["en"])
 
     def test_api_errors_carry_a_code_for_the_client_to_translate(self):
         from app.core.errors import PlatformError

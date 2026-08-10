@@ -32,6 +32,12 @@ CATALOGUE: dict[str, dict[str, str]] = {
         "reminder.event.body_at_venue": "Starts at {time} at {venue}",
         "reminder.plan.title": "{title} starts soon",
         "reminder.plan.body": "Your first stop is {stop} at {time}",
+        # Phrased as an offer rather than an instruction. This is the one
+        # message nobody asked for, so it should read like a suggestion from
+        # somebody who knows the city, not like an alert.
+        "suggestion.nearby.title": "{title} is on soon",
+        "suggestion.nearby.body": "In {city}, and it looks like your sort of thing.",
+        "suggestion.nearby.body_at_venue": "At {venue}, and it looks like your sort of thing.",
     },
     "am": {
         # "ዛሬ ማታ ነው" - "is tonight". The subject comes first and the verb last,
@@ -41,6 +47,9 @@ CATALOGUE: dict[str, dict[str, str]] = {
         "reminder.event.body_at_venue": "በ{time} በ{venue} ይጀምራል",
         "reminder.plan.title": "{title} በቅርቡ ይጀምራል",
         "reminder.plan.body": "የመጀመሪያ መዳረሻዎ በ{time} {stop} ነው",
+        "suggestion.nearby.title": "{title} በቅርቡ ይካሄዳል",
+        "suggestion.nearby.body": "በ{city} ውስጥ ነው፣ እና የእርስዎ ዓይነት ይመስላል።",
+        "suggestion.nearby.body_at_venue": "በ{venue} ነው፣ እና የእርስዎ ዓይነት ይመስላል።",
     },
 }
 

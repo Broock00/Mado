@@ -15,7 +15,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { MapPin, Send, Sparkles, X } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
@@ -44,6 +44,55 @@ const OPENERS: SuggestedAction[] = [
   { label: 'Somewhere for coffee', message: 'Where can I get good traditional coffee?' },
   { label: 'I am free tonight', message: 'I am free this evening, what should I do with it?' },
 ]
+
+/**
+ * Something to say before being asked (spec AI-005).
+ *
+ * A real listing chosen by a query, not a sentence a model produced - the
+ * concierge offers something it can point at. Renders nothing when there is
+ * nothing worth saying, which is the common case and the right one: padding the
+ * opener with whatever is most popular in town turns a suggestion into an
+ * advert, and an explorer learns within a week to ignore it.
+ */
+function ProactiveSuggestionCard() {
+  const { data } = useQuery({
+    queryKey: ['proactive-suggestion'],
+    queryFn: () => api.proactiveSuggestion(),
+    // Nothing here changes minute to minute, and refetching every time the
+    // panel opens would spend a query to show the same card.
+    staleTime: 30 * 60_000,
+    retry: false,
+  })
+
+  if (!data) return null
+
+  return (
+    <Link
+      to={`/experiences/${data.experienceId}`}
+      className="block rounded-xl border border-brand-200 bg-brand-50 px-3.5 py-3 transition-colors hover:border-brand-400"
+    >
+      <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-brand-700">
+        <Sparkles className="size-3" aria-hidden />
+        You might like
+      </p>
+      <p className="mt-1 text-sm font-medium text-sand-900">{data.title}</p>
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-sand-500">
+        {data.venueName && (
+          <span className="flex items-center gap-1">
+            <MapPin className="size-3" aria-hidden />
+            {data.venueName}
+          </span>
+        )}
+        {data.when && <span>· {new Date(data.when).toLocaleString([], {
+          weekday: 'short', hour: '2-digit', minute: '2-digit',
+        })}</span>}
+      </div>
+      {/* The reason is assembled from the same fields that chose it, so it can
+          never claim something the query did not check. */}
+      <p className="mt-1 text-xs text-brand-800">{data.reason}</p>
+    </Link>
+  )
+}
 
 export function ConciergePanel() {
   const open = useAppStore((s) => s.conciergeOpen)
@@ -159,6 +208,8 @@ export function ConciergePanel() {
               <p className="text-sm text-sand-600">
                 Ask me what is happening, and I will look through what is actually on.
               </p>
+
+              <ProactiveSuggestionCard />
               <div className="flex flex-wrap gap-2">
                 {OPENERS.map((opener) => (
                   <button

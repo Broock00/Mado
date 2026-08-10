@@ -43,6 +43,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
     select,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -338,6 +339,28 @@ class NotificationService:
             )
         )
         return len(list(result.scalars().all()))
+
+    async def sent_since(self, user_id: uuid.UUID, kind: str, *, since: datetime) -> bool:
+        """Whether this explorer has had one of these lately.
+
+        The frequency cap for anything the platform sends unprompted (spec
+        NOT-002). Asked of what was actually created rather than of a counter
+        somewhere, so a job that runs twice cannot double up.
+
+        Counts scheduled notifications as well as delivered ones: one already
+        queued for tonight means the cap is spent, and waiting for it to be
+        delivered before noticing would let a job send a second.
+        """
+        found = await self.session.scalar(
+            select(func.count())
+            .select_from(Notification)
+            .where(
+                Notification.user_id == user_id,
+                Notification.kind == kind,
+                Notification.created_at >= since,
+            )
+        )
+        return bool(found)
 
     async def mark_read(self, user_id: uuid.UUID, notification_id: uuid.UUID) -> bool:
         notification = await self.session.get(Notification, notification_id)

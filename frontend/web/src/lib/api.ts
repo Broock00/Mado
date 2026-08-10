@@ -55,6 +55,7 @@ import type {
   AssistSuggestions,
   PublisherAnalytics,
   PublisherReputation,
+  ProactiveSuggestion,
   ExplorerSummary,
   CollectionCard,
   CollectionDetail,
@@ -620,6 +621,12 @@ export const api = {
     }).then((r) => r.data),
 
   // --------------------------------------------------------------- memory
+  /** One grounded suggestion, or null when there is nothing worth saying. */
+  proactiveSuggestion: () =>
+    request<Envelope<ProactiveSuggestion | null>>('/api/v1/assistant/suggestion').then(
+      (r) => r.data,
+    ),
+
   memories: () =>
     request<CollectionEnvelope<MemoryEntry>>('/api/v1/assistant/memory').then((r) => r.data),
 

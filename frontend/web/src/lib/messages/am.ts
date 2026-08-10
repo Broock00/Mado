@@ -96,6 +96,12 @@ export const am = {
     'ማዶ ለራሱ ቃላት የሚጠቀመው። ዝርዝሮች ጸሐፊያቸው እንደጻፋቸው ይቆያሉ።',
   'settings.language.saved': 'ተቀምጧል',
 
+  // Offline (spec EXP-005)
+  'offline.banner': 'ማዶ ላይ መድረስ አልተቻለም። ያስቀመጧቸው እቅዶች አሁንም እዚህ አሉ።',
+  'offline.savedCopy': 'ያስቀመጡት ቅጂ እየታየ ነው። ሰዓቶች እና ስረዛዎች ከዚያ በኋላ ተለውጠው ሊሆን ይችላል።',
+  'offline.notStored': 'ይህ እቅድ በዚህ መሣሪያ ላይ አልተቀመጠም።',
+  'offline.notStored.detail': 'ከመስመር ላይ ሆነው አንድ ጊዜ ይክፈቱት፣ በሚቀጥለው ጊዜ እዚህ ይሆናል።',
+
   // Errors
   'error.generic': 'የሆነ ችግር ተፈጥሯል።',
   'error.offline': 'ከመስመር ውጭ ያሉ ይመስላል።',

@@ -71,6 +71,12 @@ WEBHOOK_SWEEP_INTERVAL_SECONDS = 86400
 LOCK_MARGIN_SECONDS = 60
 
 
+# Unprompted suggestions (spec NOT-002). Six-hourly, which is far more often
+# than anybody receives one - the per-explorer cap is a week, and this interval
+# only decides how promptly somebody who becomes eligible hears about something
+# on tonight rather than tomorrow.
+SUGGESTION_INTERVAL_SECONDS = 21600
+
 # Publisher reputation (spec TRST-004). Hourly, because the evidence it reads -
 # a date that went ahead, a rating, a report - accumulates over days, and a
 # reputation that moved within the hour of a single cancellation would be
@@ -155,6 +161,16 @@ async def _reminders() -> None:
             )
 
 
+async def _nearby_suggestions() -> None:
+    from app.domains.explorer.suggestions import suggest_nearby
+
+    async with SessionFactory() as session:
+        result = await suggest_nearby(session)
+        await session.commit()
+        if result["sent"]:
+            logger.info("scheduled_nearby_suggestions", **result)
+
+
 async def _reputation() -> None:
     from app.domains.trust.reputation import refresh_all
 
@@ -203,6 +219,7 @@ JOBS = [
     Job("engagement", ENGAGEMENT_INTERVAL_SECONDS, _recompute_engagement),
     Job("embeddings", EMBEDDING_INTERVAL_SECONDS, _backfill_embeddings),
     Job("reputation", REPUTATION_INTERVAL_SECONDS, _reputation),
+    Job("suggestions", SUGGESTION_INTERVAL_SECONDS, _nearby_suggestions),
     Job("reminders", REMINDER_INTERVAL_SECONDS, _reminders),
     Job("webhooks", WEBHOOK_INTERVAL_SECONDS, _webhooks),
     Job("webhook_sweep", WEBHOOK_SWEEP_INTERVAL_SECONDS, _sweep_deliveries),

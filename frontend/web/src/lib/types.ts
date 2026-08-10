@@ -329,6 +329,22 @@ export interface AuditEntry {
   occurredAt: string
 }
 
+/**
+ * One thing the concierge offers before being asked (spec AI-005).
+ *
+ * Null is a normal answer, not an error: no stated city, no affinity yet, or
+ * nothing on that clears the quality floor.
+ */
+export interface ProactiveSuggestion {
+  experienceId: string
+  title: string
+  summary?: string | null
+  category?: string | null
+  venueName?: string | null
+  when?: string | null
+  reason: string
+}
+
 /* ------------------------------------------------------ publisher standing */
 
 export interface ReputationSignal {

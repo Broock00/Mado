@@ -466,3 +466,69 @@ def _default_title(offered: dict) -> str:
         return "A plan"
     when = datetime.fromisoformat(stops[0]["arriveAt"].replace("Z", "+00:00"))
     return f"{when:%A} {when.day} {when:%B}"
+
+
+class ProactiveSuggestionOut(CamelModel):
+    """One thing the concierge offers before being asked (spec AI-005)."""
+
+    experience_id: uuid.UUID
+    title: str
+    summary: str | None = None
+    category: str | None = None
+    venue_name: str | None = None
+    when: datetime | None = None
+    """Why this and not something else, in the explorer's terms."""
+    reason: str
+
+
+@router.get(
+    "/suggestion",
+    response_model=Envelope[ProactiveSuggestionOut | None],
+    summary="Something you might like, before you ask",
+    description=(
+        "Returns one thing on soon that matches what this explorer actually "
+        "opens and saves, or nothing at all.\n\n"
+        "Chosen by the same code that decides whether to send a nearby "
+        "notification, so the concierge and the notification cannot tell "
+        "somebody two different things about their own taste. What differs is "
+        "permission: a notification interrupts and is capped to one a week, "
+        "while this is shown in a panel the explorer just opened and so needs "
+        "no cooldown.\n\n"
+        "Nothing is generated. The suggestion is a real listing picked by a "
+        "query, and the sentence explaining it is assembled from the same "
+        "fields - a model is not asked to justify a choice it did not make "
+        "(spec 56.01 s3.1)."
+    ),
+)
+async def proactive_suggestion(
+    session: SessionDep, user: CurrentUser
+) -> Envelope[ProactiveSuggestionOut | None]:
+    from app.domains.explorer.suggestions import for_explorer
+    from app.domains.identity.service import IdentityService
+
+    profile = await IdentityService(session).get_profile(user)
+    picked = await for_explorer(session, user, profile)
+    if picked is None:
+        # Nothing worth saying is a valid answer, and a normal one: no stated
+        # city, no affinity yet, or nothing on that clears the quality floor.
+        # Padding it with the most popular thing in town would turn a
+        # suggestion into an advert.
+        return Envelope(data=None)
+
+    experience, occurrence = picked
+    category = experience.category.name if experience.category else None
+    return Envelope(
+        data=ProactiveSuggestionOut(
+            experience_id=experience.id,
+            title=experience.title,
+            summary=experience.summary,
+            category=category,
+            venue_name=experience.venue.name if experience.venue else None,
+            when=occurrence.start_time if occurrence else None,
+            reason=(
+                f"You have been opening {category.lower()} lately"
+                if category
+                else "Based on what you have been opening"
+            ),
+        )
+    )

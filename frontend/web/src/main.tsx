@@ -6,6 +6,7 @@ import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import './styles/tokens.css'
 import { AppShell } from '@/app/AppShell'
 import { LanguageProvider } from '@/app/language'
+import { registerServiceWorker } from '@/app/offline'
 import { DiscoverPage } from '@/features/discover/DiscoverPage'
 import { SearchPage } from '@/features/search/SearchPage'
 import { ExperienceDetailPage } from '@/features/experiences/ExperienceDetailPage'
@@ -70,6 +71,11 @@ const router = createBrowserRouter([
   },
   { path: '/signin', element: <SignInPage /> },
 ])
+
+// Caches the app shell and any itinerary the explorer kept, so a plan is
+// readable on a street with no data (spec EXP-005). Production only - see the
+// note in `app/offline.ts`.
+registerServiceWorker()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

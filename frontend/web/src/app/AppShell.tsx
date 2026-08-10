@@ -23,6 +23,7 @@ import { useAppStore } from '@/app/store'
 import { ConciergeLauncher, ConciergePanel } from '@/features/concierge/ConciergePanel'
 import { NotificationBell } from '@/features/notifications/NotificationBell'
 import { useLanguage } from '@/app/language-context'
+import { useIsOnline } from '@/app/offline'
 import { cn } from '@/lib/utils'
 
 // Labels are message keys rather than words. The nav is rendered on every
@@ -48,6 +49,7 @@ export function AppShell() {
   const signOut = useAppStore((s) => s.signOut)
   const location = useLocation()
   const { t } = useLanguage()
+  const online = useIsOnline()
 
   return (
     <div className="min-h-dvh bg-sand-50">
@@ -59,6 +61,18 @@ export function AppShell() {
       >
         Skip to content
       </a>
+
+      {/* Said as "cannot reach Mado" rather than "you are offline": the
+          browser reports whether there is a network interface, not whether
+          anything is reachable, and a captive portal reports a happy one. */}
+      {!online && (
+        <div
+          role="status"
+          className="bg-amber-100 px-4 py-2 text-center text-sm text-amber-900"
+        >
+          {t('offline.banner')}
+        </div>
+      )}
 
       <header className="sticky top-0 z-30 border-b border-sand-200 bg-sand-50/85 backdrop-blur">
         <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">

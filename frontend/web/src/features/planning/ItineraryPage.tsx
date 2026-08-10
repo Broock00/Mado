@@ -9,9 +9,11 @@
 
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, CalendarX } from 'lucide-react'
+import { ArrowLeft, CalendarX, CloudOff, WifiOff } from 'lucide-react'
 
 import { api } from '@/lib/api'
+import { useIsOnline } from '@/app/offline'
+import { useLanguage } from '@/app/language-context'
 import { Button, Card, EmptyState, Skeleton } from '@/design-system/primitives'
 import { PlanSummary, PlanTimeline } from './PlanTimeline'
 import { RouteGuidance } from './RouteGuidance'
@@ -19,6 +21,8 @@ import { clockTime } from './timeline-format'
 
 export function ItineraryPage() {
   const { itineraryId } = useParams<{ itineraryId: string }>()
+  const online = useIsOnline()
+  const { t } = useLanguage()
 
   const { data: itinerary, isLoading, isError } = useQuery({
     queryKey: ['itinerary', itineraryId],
@@ -36,12 +40,21 @@ export function ItineraryPage() {
   }
 
   if (isError || !itinerary) {
+    // Two very different causes, and telling somebody standing on a street with
+    // no signal that their plan "may have been deleted" is both wrong and
+    // alarming. Offline, the honest answer is that this one was never stored
+    // here - and what to do about it next time.
+    const unreachable = !online
     return (
       <div className="mx-auto max-w-3xl px-4 py-16">
         <EmptyState
-          icon={<CalendarX className="size-8" />}
-          title="Itinerary not found"
-          description="It may have been deleted, or it belongs to another account."
+          icon={unreachable ? <WifiOff className="size-8" /> : <CalendarX className="size-8" />}
+          title={unreachable ? t('offline.notStored') : 'Itinerary not found'}
+          description={
+            unreachable
+              ? t('offline.notStored.detail')
+              : 'It may have been deleted, or it belongs to another account.'
+          }
           action={
             <Link to="/plans">
               <Button>Back to planning</Button>
@@ -76,6 +89,20 @@ export function ItineraryPage() {
           {day}, {clockTime(itinerary.startsAt)} – {clockTime(itinerary.endsAt)}
         </p>
       </header>
+
+      {/* Offline, this is by definition the stored copy - the request either
+          came from the cache or failed. Said plainly, because a plan that looks
+          live is how somebody turns up to a date that was called off this
+          morning. */}
+      {!online && (
+        <p
+          role="status"
+          className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900"
+        >
+          <CloudOff className="mr-1.5 inline size-4 align-text-bottom" aria-hidden />
+          {t('offline.savedCopy')}
+        </p>
+      )}
 
       <Card className="mt-6 p-5">
         <PlanSummary

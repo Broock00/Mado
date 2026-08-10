@@ -83,6 +83,12 @@ export const en = {
   'settings.language.subtitle': 'What Mado uses for its own words. Listings stay as their author wrote them.',
   'settings.language.saved': 'Saved',
 
+  // Offline (spec EXP-005)
+  'offline.banner': 'Cannot reach Mado. Plans you kept are still here.',
+  'offline.savedCopy': 'Showing your saved copy. Times and cancellations may have changed since.',
+  'offline.notStored': 'This plan is not stored on this device.',
+  'offline.notStored.detail': 'Open it once while connected and it will be here next time.',
+
   // Errors
   'error.generic': 'Something went wrong.',
   'error.offline': 'You appear to be offline.',
