@@ -219,20 +219,45 @@ class NotificationService:
         link: str | None = None,
         preferences: Preferences | None = None,
         deadline: datetime | None = None,
+        immediate: bool = False,
     ) -> Notification | None:
         """Queue a notification, or return None if it should not be sent.
 
         Returns None rather than raising for the ordinary reasons a notification
         is skipped - the explorer switched that kind off, or one already exists.
         Callers schedule in loops and a skip is not an error.
+
+        ``immediate`` says this notification is not *about* a later moment, so
+        the next delivery sweep is the right time for it. Suggestions are the
+        case: an offer has nothing it must precede. Without it, a caller wanting
+        "send this now" has to smuggle a past-looking time past the guard below
+        with an arbitrary offset, which is a race dressed as a constant - it
+        works only while the offset happens to exceed the delay between
+        computing it and the guard reading the clock.
         """
         if preferences is not None and not preferences.wants(kind):
             return None
 
-        # Never schedule into the past: a worker would deliver it immediately,
-        # which turns "remind me before" into "tell me now".
-        if deliver_at <= datetime.now(UTC):
-            return None
+        now = datetime.now(UTC)
+        if deliver_at <= now:
+            if not immediate:
+                # A reminder dated in the past would be delivered on the next
+                # sweep, turning "remind me three hours before" into "tell me
+                # now". Refused - but logged, because unlike the skips above
+                # this is a caller mistake rather than a normal outcome, and
+                # returning None silently makes a bug indistinguishable from an
+                # explorer who switched the kind off. That ambiguity hid a
+                # feature that was scheduling nothing at all.
+                logger.warning(
+                    "notification_scheduled_in_the_past",
+                    kind=kind,
+                    user_id=str(user_id),
+                    deliver_at=deliver_at.isoformat(),
+                )
+                return None
+            # Asked for as soon as possible. Clamped rather than nudged forward,
+            # so quiet hours below still decide the actual moment.
+            deliver_at = now
 
         if preferences is not None:
             deliver_at = respect_quiet_hours(

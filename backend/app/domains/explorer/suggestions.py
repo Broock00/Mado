@@ -77,16 +77,6 @@ MIN_RATINGS = 8
 # badge.
 MIN_AFFINITY = 0.35
 
-# A suggestion is queued a minute out rather than for "now".
-#
-# `NotificationService.schedule` refuses anything dated now or earlier, and it
-# is right to: that guard stops a reminder being delivered the instant it is
-# created, which would turn "remind me three hours before" into "tell me now".
-# A suggestion has no event it must precede - it is an offer, and the right
-# moment is the next delivery sweep. Asking for one minute ahead expresses that
-# without weakening a guard the reminders depend on.
-LEAD = timedelta(minutes=1)
-
 
 @dataclass(slots=True)
 class Suggestion:
@@ -300,9 +290,11 @@ async def suggest_nearby(session: AsyncSession, *, now: datetime | None = None) 
                 city=city_slug.replace("-", " ").title(),
             ),
             # On the next sweep rather than timed to the event: this is "you
-            # might like this", not a reminder. Quiet hours are still applied
-            # inside `schedule`, so an overnight run waits until morning.
-            deliver_at=now + LEAD,
+            # might like this", not a reminder, so there is nothing it has to
+            # precede. Quiet hours still apply inside `schedule`, so an
+            # overnight run waits until morning.
+            deliver_at=now,
+            immediate=True,
             subject_id=experience.id,
             subject_type="experience",
             link=f"/experiences/{experience.id}",

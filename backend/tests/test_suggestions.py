@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import app.models  # noqa: F401  (Notification rows are built here)
 from app.domains.explorer import suggestions
 from app.domains.explorer.notifications import DEFAULT_ON, KIND_NEARBY
 
@@ -44,6 +45,105 @@ class TestWhoIsNeverInterrupted:
 
         assert timedelta(days=7) <= suggestions.COOLDOWN
         assert "_already_suggested" in inspect.getsource(suggestions.suggest_nearby)
+
+
+class TestSayingSendThisNow:
+    """`schedule` refuses anything dated now or earlier.
+
+    Right for a reminder - it stops "remind me three hours before" becoming
+    "tell me now" - and wrong for a suggestion, which has no event it must
+    precede. Getting past it with an arbitrary offset was a race dressed as a
+    constant: it worked only while the offset happened to exceed the delay
+    between computing it and the guard reading the clock.
+    """
+
+    def service(self):
+        from app.domains.explorer.notifications import NotificationService
+
+        added: list = []
+        session = SimpleNamespace(add=added.append, added=added)
+
+        service = NotificationService(session)
+
+        async def no_duplicate(*_args, **_kwargs):
+            return None
+
+        service._find = no_duplicate  # type: ignore[method-assign]
+        return service, added
+
+    async def test_a_past_reminder_is_still_refused(self):
+        service, added = self.service()
+        result = await service.schedule(
+            uuid.uuid4(),
+            kind="event_reminder",
+            title="Yesterday",
+            deliver_at=NOW - timedelta(days=1),
+        )
+        assert result is None
+        assert added == []
+
+    async def test_and_it_is_logged_rather_than_swallowed(self, monkeypatch):
+        """The other reasons `schedule` returns None are ordinary. A past
+        timestamp is a caller mistake, and returning None silently makes a bug
+        look exactly like an explorer who switched the kind off - which is what
+        hid a feature that was scheduling nothing at all.
+
+        Captured off the module logger rather than through `caplog`: logging
+        here goes through structlog, which does not route to the stdlib handler
+        `caplog` installs.
+        """
+        from app.domains.explorer import notifications as module
+
+        warnings: list[str] = []
+        monkeypatch.setattr(
+            module,
+            "logger",
+            SimpleNamespace(warning=lambda event, **_kw: warnings.append(event)),
+        )
+
+        service, _ = self.service()
+        await service.schedule(
+            uuid.uuid4(),
+            kind="event_reminder",
+            title="Yesterday",
+            deliver_at=NOW - timedelta(days=1),
+        )
+        assert "notification_scheduled_in_the_past" in warnings
+
+    async def test_immediate_is_accepted_and_needs_no_offset(self):
+        service, added = self.service()
+        result = await service.schedule(
+            uuid.uuid4(),
+            kind=KIND_NEARBY,
+            title="You might like this",
+            # Exactly now, with no fudge. The whole point.
+            deliver_at=datetime.now(UTC),
+            immediate=True,
+        )
+        assert result is not None
+        assert len(added) == 1
+
+    async def test_immediate_survives_a_timestamp_that_went_stale(self):
+        """The race the offset only papered over: a job that computed `now`,
+        did some work, and reached `schedule` a moment later."""
+        service, added = self.service()
+        result = await service.schedule(
+            uuid.uuid4(),
+            kind=KIND_NEARBY,
+            title="You might like this",
+            deliver_at=datetime.now(UTC) - timedelta(seconds=90),
+            immediate=True,
+        )
+        assert result is not None
+
+    def test_the_suggestion_job_says_what_it_means(self):
+        """Rather than encoding the intent in a magic offset that the next
+        caller has to rediscover."""
+        import inspect
+
+        source = inspect.getsource(suggestions.suggest_nearby)
+        assert "immediate=True" in source
+        assert not hasattr(suggestions, "LEAD")
 
 
 class TestWhatIsNeverClaimed:
