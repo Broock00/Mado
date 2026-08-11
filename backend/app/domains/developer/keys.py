@@ -58,6 +58,13 @@ SCOPE_EXPERIENCES_READ = "experiences:read"
 SCOPE_EXPERIENCES_WRITE = "experiences:write"
 SCOPE_RESERVATIONS_READ = "reservations:read"
 
+# Not a scope anybody can be granted, and deliberately absent from SCOPES below
+# so it can never be ticked or requested. It marks the handful of endpoints any
+# valid key may call - checking who the key belongs to, and little else - and
+# exists so that "which endpoints can a key reach" has one answer rather than
+# one for scoped routes and another for these.
+ANY_SCOPE = "*"
+
 # What each scope actually permits, in the words shown next to its checkbox.
 #
 # Every one of these gates a route that exists. A scope nobody enforces is worse

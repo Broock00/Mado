@@ -9,26 +9,10 @@
 import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, ReactNode } from 'react'
 import { forwardRef } from 'react'
 import { cn } from '@/lib/utils'
+import { buttonSizes, buttonVariants } from './button-styles'
+import type { ButtonSize, ButtonVariant } from './button-styles'
 
 /* -------------------------------------------------------------------- Button */
-
-type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
-type ButtonSize = 'sm' | 'md' | 'lg'
-
-const buttonVariants: Record<ButtonVariant, string> = {
-  primary: 'bg-brand-700 text-white hover:bg-brand-800 active:bg-brand-900 shadow-sm',
-  secondary:
-    'bg-white text-sand-800 border border-sand-300 hover:bg-sand-100 active:bg-sand-200',
-  ghost: 'bg-transparent text-sand-700 hover:bg-sand-200/70 active:bg-sand-300/70',
-  danger: 'bg-danger text-white hover:opacity-90',
-}
-
-const buttonSizes: Record<ButtonSize, string> = {
-  // Minimum 40px tall: spec 11.03 requires large touch targets.
-  sm: 'h-9 px-3 text-sm gap-1.5',
-  md: 'h-10 px-4 text-sm gap-2',
-  lg: 'h-12 px-6 text-base gap-2',
-}
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant

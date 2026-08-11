@@ -402,6 +402,16 @@ export interface DeveloperScope {
   description: string
 }
 
+/** A client library the developer page offers for download. */
+export interface Sdk {
+  language: string
+  label: string
+  /** API version plus a digest of the endpoint surface. */
+  version: string
+  filename: string
+  files: string[]
+}
+
 export interface WebhookEventType {
   type: string
   description: string

@@ -20,6 +20,7 @@ from app.core.database import get_session
 from app.core.errors import AuthenticationError, PermissionDeniedError
 from app.core.logging import get_logger
 from app.core.security import decode_access_token
+from app.domains.developer.keys import ANY_SCOPE
 from app.domains.identity.models import User, UserProfile
 
 logger = get_logger("mado.deps")
@@ -189,6 +190,13 @@ async def api_key_caller(
     return owner
 
 
+# Callable by any valid key, whatever it is scoped for. Tagged like the scoped
+# dependencies below so the developer surface can see it: `whoami` is the first
+# thing a partner calls to check their key works, and an SDK that omitted it
+# would leave them debugging their setup against an endpoint they had to find
+# in the documentation.
+api_key_caller.mado_scope = ANY_SCOPE  # type: ignore[attr-defined]
+
 ApiKeyUser = Annotated[User, Depends(api_key_caller)]
 
 
@@ -227,6 +235,12 @@ def caller_with_scope(scope: str):
         session_user = await optional_current_user(session, request, authorization)
         return await current_user(request, session_user)
 
+    # Left on the function so the scoped surface can be read back off the app
+    # rather than written down a second time. The SDK generator and the OpenAPI
+    # document both need "which endpoints can a key call, and with what scope",
+    # and a hand-maintained list of that answers correctly right up until
+    # somebody adds a route.
+    resolve.mado_scope = scope  # type: ignore[attr-defined]
     return Annotated[User, Depends(resolve)]
 
 

@@ -173,3 +173,22 @@ app.include_router(api_router, prefix="/api/v1")
 _media_root = Path(settings.media_root)
 _media_root.mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=_media_root), name="media")
+
+
+_generated_openapi = app.openapi
+
+
+def openapi_with_scopes() -> dict:
+    """The published description, saying which scope each endpoint wants.
+
+    Otherwise the only way a partner learns that publishing needs
+    `experiences:write` is by being refused, and the refusal arrives after they
+    have written the integration. FastAPI caches its own result, so this stamps
+    the cached document in place rather than rebuilding it.
+    """
+    from app.domains.developer.surface import stamp_scopes
+
+    return stamp_scopes(_generated_openapi(), app)
+
+
+app.openapi = openapi_with_scopes  # type: ignore[method-assign]

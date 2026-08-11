@@ -66,6 +66,7 @@ import type {
   Plan,
   PlanRequestInput,
   PrivacySettings,
+  Sdk,
 } from './types'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -829,6 +830,18 @@ export const api = {
   // ---------------------------------------------------- developer platform
   developerScopes: () =>
     request<CollectionEnvelope<DeveloperScope>>('/api/v1/developer/scopes').then((r) => r.data),
+
+  sdks: () => request<CollectionEnvelope<Sdk>>('/api/v1/developer/sdks').then((r) => r.data),
+
+  /**
+   * The SDK download URL.
+   *
+   * Returned rather than fetched, so the browser downloads it the way it
+   * downloads anything else - with its own progress, its own cancel, and the
+   * filename the server chose. Pulling a zip through `fetch` into a blob means
+   * reimplementing all three, badly.
+   */
+  sdkUrl: (language: string) => `/api/v1/developer/sdks/${language}`,
 
   webhookEventTypes: () =>
     request<CollectionEnvelope<WebhookEventType>>('/api/v1/developer/event-types').then(

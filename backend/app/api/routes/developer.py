@@ -15,13 +15,15 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Request, Response, status
 from pydantic import Field
 
 from app.api.deps import ApiKeyUser, CurrentUser, SessionDep
 from app.core.envelope import CollectionEnvelope, Envelope
+from app.core.errors import NotFoundError
 from app.domains.catalog.schemas import CamelModel
 from app.domains.developer import keys as key_module
+from app.domains.developer import sdk as sdk_module
 from app.domains.developer import webhooks as webhook_module
 from app.domains.developer.keys import ApiKeyService
 from app.domains.developer.webhooks import WebhookService
@@ -30,6 +32,14 @@ router = APIRouter(tags=["developer"])
 
 
 # ------------------------------------------------------------------- shapes
+
+
+class SdkOut(CamelModel):
+    language: str
+    label: str
+    version: str
+    filename: str
+    files: list[str]
 
 
 class ScopeOut(CamelModel):
@@ -361,6 +371,69 @@ async def send_test(
     view = DeliveryOut.model_validate(delivery)
     await session.commit()
     return Envelope(data=view)
+
+
+# ---------------------------------------------------------------- sdks
+
+
+@router.get(
+    "/developer/sdks",
+    response_model=CollectionEnvelope[SdkOut],
+    summary="Client libraries available to download",
+    description=(
+        "Generated from this API's own description, so what they can do and "
+        "what the API can do cannot drift apart. The version is the API "
+        "version plus a digest of the endpoint surface: if it changes, "
+        "something a caller can see changed.\n\n"
+        "Public, like the scope list and the OpenAPI document it is built "
+        "from. A generated client contains nothing that is not already in a "
+        "published description, and somebody deciding whether to integrate "
+        "should be able to read one before they have an account."
+    ),
+)
+async def sdks(request: Request) -> CollectionEnvelope[SdkOut]:
+    return CollectionEnvelope(
+        data=[SdkOut(**entry) for entry in sdk_module.catalogue(request.app)]
+    )
+
+
+@router.get(
+    "/developer/sdks/{language}",
+    summary="Download a client library",
+    response_class=Response,
+    responses={
+        200: {
+            "content": {"application/zip": {}},
+            "description": "A zip holding the client, a README and a worked example.",
+        }
+    },
+)
+async def download_sdk(language: str, request: Request) -> Response:
+    """Build the SDK now rather than serving a stored copy.
+
+    A file built at release time is a file that is stale the first time a route
+    changes, and nothing about the download says so. Generating on request costs
+    a few milliseconds and cannot be out of date.
+    """
+    try:
+        bundle = sdk_module.build(request.app, language.lower())
+    except KeyError:
+        raise NotFoundError(
+            f"No SDK for '{language}'. Available: "
+            f"{', '.join(sorted(sdk_module.LANGUAGES))}.",
+            code="SDK_LANGUAGE_UNKNOWN",
+        ) from None
+
+    return Response(
+        content=bundle.archive(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{bundle.filename}"',
+            # The generated client is only as current as the API it was built
+            # from, so it must not sit in a proxy after a deployment.
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 # ------------------------------------------------------------------ mapping

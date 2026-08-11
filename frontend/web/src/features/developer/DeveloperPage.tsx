@@ -15,11 +15,11 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Copy, KeyRound, Radio, Send, Trash2 } from 'lucide-react'
+import { Check, Copy, Download, KeyRound, Radio, Send, Trash2 } from 'lucide-react'
 
 import { api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
-import type { ApiKey, WebhookDelivery, WebhookEndpoint } from '@/lib/types'
+import type { ApiKey, Sdk, WebhookDelivery, WebhookEndpoint } from '@/lib/types'
 import {
   Badge,
   Button,
@@ -28,6 +28,7 @@ import {
   Input,
   SectionHeading,
 } from '@/design-system/primitives'
+import { buttonClasses } from '@/design-system/button-styles'
 import { cn } from '@/lib/utils'
 
 function when(iso?: string | null): string {
@@ -293,6 +294,77 @@ function Keys() {
           />
         </Card>
       )}
+    </section>
+  )
+}
+
+/* ------------------------------------------------------------------- sdks */
+
+/**
+ * Client libraries (spec DEV-002).
+ *
+ * Generated from the API's own description every time one is downloaded, which
+ * is why there is no "last updated" here and no list of past releases: there is
+ * only ever one version, and it is the one the API is serving right now. A
+ * download page offering three historical builds invites somebody to pick the
+ * wrong one.
+ *
+ * The version shown is the API version plus a digest of the endpoint surface,
+ * so a partner can tell at a glance whether the copy in their repository is
+ * still current without diffing it.
+ */
+function Sdks() {
+  const { data: sdks } = useQuery({ queryKey: ['sdks'], queryFn: () => api.sdks() })
+
+  return (
+    <section className="mt-12">
+      <SectionHeading
+        title="Client libraries"
+        subtitle="Generated from this API, so they cannot describe endpoints it does not have."
+      />
+
+      {sdks && sdks.length > 0 ? (
+        <Card className="mt-3 divide-y divide-sand-200 px-5">
+          {sdks.map((sdk: Sdk) => (
+            <div
+              key={sdk.language}
+              className="flex flex-wrap items-center justify-between gap-3 py-4"
+            >
+              <div className="min-w-0">
+                <p className="font-medium text-sand-900">{sdk.label}</p>
+                <p className="mt-0.5 text-sm text-sand-600">
+                  {sdk.files.join(', ')}
+                </p>
+                <p className="mt-1 font-mono text-xs text-sand-500">{sdk.version}</p>
+              </div>
+              {/*
+                A plain link, not a fetch-and-blob. The browser already knows
+                how to download a file - progress, cancel, and the filename the
+                server chose in Content-Disposition. `download` is deliberately
+                absent so that server-chosen name wins.
+              */}
+              <a className={buttonClasses('secondary')} href={api.sdkUrl(sdk.language)}>
+                <Download className="size-4" />
+                Download
+              </a>
+            </div>
+          ))}
+        </Card>
+      ) : (
+        <Card className="mt-3 p-5">
+          <EmptyState
+            icon={<Download className="size-8" />}
+            title="No libraries yet"
+            description="Use the API directly in the meantime - it is the same surface."
+          />
+        </Card>
+      )}
+
+      <p className="mt-3 text-sm text-sand-600">
+        Each one covers exactly what an API key can reach. Anything the website
+        does that is missing is missing on purpose: it needs a signed-in person
+        rather than a key.
+      </p>
     </section>
   )
 }
@@ -712,6 +784,7 @@ export function DeveloperPage() {
 
       <div className="mt-8">
         <Keys />
+        <Sdks />
         <Webhooks />
       </div>
     </div>
