@@ -28,7 +28,7 @@ import { AddToCollection } from '@/features/collections/AddToCollection'
 import { Badge, Button, Card, EmptyState, SectionHeading, Skeleton } from '@/design-system/primitives'
 import { ExperienceCard } from './ExperienceCard'
 import { Reviews } from '@/features/reviews/Reviews'
-import { ReserveButton } from '@/features/reservations/ReserveButton'
+import { TicketPanel } from '@/features/commerce/TicketPanel'
 import { ReportDialog } from '@/features/trust/ReportDialog'
 import { formatDistance, formatPrice, formatWhen } from '@/lib/utils'
 
@@ -178,8 +178,11 @@ export function ExperienceDetailPage() {
                     </div>
 
                     {/* Per date, not per listing. A place at next Tuesday's
-                        supper club is not a place at the one after. */}
-                    <ReserveButton occurrence={event} />
+                        supper club is not a place at the one after. The panel
+                        decides between buying, registering, reserving and
+                        leaving for the organiser's own site - the server says
+                        which, because it is the one that can see the stock. */}
+                    <TicketPanel experienceId={data.id} occurrence={event} />
                   </li>
                 ))}
               </ul>

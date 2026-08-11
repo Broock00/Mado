@@ -402,6 +402,80 @@ export interface DeveloperScope {
   description: string
 }
 
+/* ------------------------------------------------------- commerce */
+
+/** One tier on one date: "General admission", "VIP" (spec COM-002). */
+export interface TicketTypeSummary {
+  id: string
+  name: string
+  description?: string | null
+  /** Santim, not birr. Formatted at the edge, never stored as a float. */
+  priceMinor: number
+  currency: string
+  quantity?: number | null
+  remaining?: number | null
+  onSale: boolean
+  /** `withdrawn` | `not_open_yet` | `closed` | `sold_out` */
+  unavailableReason?: string | null
+  position: number
+}
+
+/**
+ * What the details page should say and offer.
+ *
+ * Codes, not sentences: the server decides the *state* and this client decides
+ * the words, so there is one place Amharic lives rather than two that drift.
+ */
+export interface Ticketing {
+  availability: string
+  cta: string
+  priceType: string
+  currency: string
+  minPriceMinor?: number | null
+  maxPriceMinor?: number | null
+  externalUrl?: string | null
+  seatsRemaining?: number | null
+  ticketTypes: TicketTypeSummary[]
+}
+
+export interface OrderLine {
+  ticketTypeId: string
+  ticketTypeName: string
+  quantity: number
+  unitPriceMinor: number
+  totalMinor: number
+}
+
+export interface IssuedTicket {
+  id: string
+  code: string
+  ticketTypeName: string
+  status: string
+  checkedInAt?: string | null
+}
+
+export interface Order {
+  id: string
+  reference: string
+  /** pending | paid | failed | expired | cancelled */
+  status: string
+  experienceId: string
+  experienceTitle: string
+  eventInstanceId: string
+  startsAt: string
+  amountMinor: number
+  currency: string
+  quantity: number
+  /** Absent for a free order, which has nothing to pay. */
+  checkoutUrl?: string | null
+  expiresAt?: string | null
+  paidAt?: string | null
+  outcomeReason?: string | null
+  lines: OrderLine[]
+  /** Only ever populated once the money arrived. */
+  tickets: IssuedTicket[]
+}
+
 /** A client library the developer page offers for download. */
 export interface Sdk {
   language: string

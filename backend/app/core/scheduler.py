@@ -77,6 +77,12 @@ LOCK_MARGIN_SECONDS = 60
 # on tonight rather than tomorrow.
 SUGGESTION_INTERVAL_SECONDS = 21600
 
+# Expiring unpaid ticket holds (spec COM-003). A minute, because this is the
+# only thing that gives a seat back after somebody abandons a payment page, and
+# every minute it waits is a minute a nearly-full event looks fuller than it is.
+# Cheap: the query is a partial index lookup that returns nothing almost always.
+ORDER_HOLD_INTERVAL_SECONDS = 60
+
 # Publisher reputation (spec TRST-004). Hourly, because the evidence it reads -
 # a date that went ahead, a rating, a report - accumulates over days, and a
 # reputation that moved within the hour of a single cancellation would be
@@ -171,6 +177,16 @@ async def _nearby_suggestions() -> None:
             logger.info("scheduled_nearby_suggestions", **result)
 
 
+async def _expire_order_holds() -> None:
+    from app.domains.commerce.checkout import CheckoutService
+
+    async with SessionFactory() as session:
+        released = await CheckoutService(session).expire_holds()
+        await session.commit()
+        if released:
+            logger.info("scheduled_order_holds_expired", released=released)
+
+
 async def _reputation() -> None:
     from app.domains.trust.reputation import refresh_all
 
@@ -221,6 +237,7 @@ JOBS = [
     Job("reputation", REPUTATION_INTERVAL_SECONDS, _reputation),
     Job("suggestions", SUGGESTION_INTERVAL_SECONDS, _nearby_suggestions),
     Job("reminders", REMINDER_INTERVAL_SECONDS, _reminders),
+    Job("order_holds", ORDER_HOLD_INTERVAL_SECONDS, _expire_order_holds),
     Job("webhooks", WEBHOOK_INTERVAL_SECONDS, _webhooks),
     Job("webhook_sweep", WEBHOOK_SWEEP_INTERVAL_SECONDS, _sweep_deliveries),
 ]

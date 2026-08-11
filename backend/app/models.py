@@ -19,6 +19,13 @@ from app.domains.catalog.models import (
     Venue,
     experience_tags,
 )
+from app.domains.commerce.models import (
+    Order,
+    OrderLine,
+    PaymentEvent,
+    Ticket,
+    TicketType,
+)
 from app.domains.developer.keys import ApiKey
 from app.domains.developer.webhooks import WebhookDelivery, WebhookEndpoint
 from app.domains.explorer.models import (
@@ -46,6 +53,11 @@ __all__ = [
     "WebhookDelivery",
     "WebhookEndpoint",
     "Reservation",
+    "Order",
+    "OrderLine",
+    "PaymentEvent",
+    "Ticket",
+    "TicketType",
     "Collection",
     "CollectionItem",
     "AccountToken",

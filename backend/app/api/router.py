@@ -12,6 +12,7 @@ from app.api.routes import (
     auth,
     catalog,
     collections,
+    commerce,
     concierge,
     developer,
     discovery,
@@ -32,6 +33,7 @@ api_router.include_router(me.router)
 api_router.include_router(discovery.router)
 api_router.include_router(catalog.router)
 api_router.include_router(collections.router)
+api_router.include_router(commerce.router)
 api_router.include_router(concierge.router)
 api_router.include_router(developer.router)
 api_router.include_router(notifications.router)

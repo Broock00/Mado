@@ -101,6 +101,24 @@ class Settings(BaseSettings):
     # sit behind a proxy on a different host from the app the explorer is using.
     web_base_url: str = "http://localhost:5173"
 
+    # Payments (spec COM-003, vendor 82.01: Chapa for Ethiopia).
+    #
+    # "stub" starts real orders and real holds but never settles one by itself,
+    # so a development machine can walk the whole flow without a merchant
+    # account and without a stub quietly reporting money that did not arrive.
+    payment_provider: Literal["stub", "chapa"] = "stub"
+    chapa_secret_key: str = ""
+    chapa_base_url: str = "https://api.chapa.co/v1"
+    # Used to authenticate the provider's callback. Empty means every callback
+    # is refused - see `signature_is_valid`. That is the safe direction: an
+    # unsigned callback issues tickets, so a missing setting must not become a
+    # way into events for free.
+    payment_webhook_secret: str = ""
+    # How long an unpaid order holds its places before they go back. Long enough
+    # to finish a bank redirect on a slow connection, short enough that a
+    # near-full event is not held empty by abandoned carts.
+    payment_hold_minutes: int = 20
+
     # Whether publishing requires a confirmed email address.
     #
     # Off by default because it is only meaningful once mail actually sends: with

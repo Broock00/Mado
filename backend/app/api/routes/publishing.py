@@ -149,6 +149,7 @@ async def create_post(
         duration_minutes=payload.duration_minutes,
         is_indoor=payload.is_indoor,
         accessibility=payload.accessibility,
+        external_ticket_url=payload.external_ticket_url,
         publisher_id=publisher.id,
     )
     view = _own_view(experience)

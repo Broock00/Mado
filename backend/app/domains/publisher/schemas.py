@@ -29,6 +29,10 @@ class CreateExperienceRequest(CamelModel):
     duration_minutes: int | None = Field(default=None, ge=1, le=60 * 24 * 14)
     is_indoor: bool | None = None
     accessibility: dict | None = None
+    # Where the publisher sells, if they sell somewhere else. Its presence
+    # turns the details page's button outward instead of into a checkout, and
+    # Mado then claims nothing about whether the transaction happened.
+    external_ticket_url: str | None = Field(default=None, max_length=2000)
     publisher_id: uuid.UUID | None = None
 
     @field_validator("type")
@@ -64,6 +68,7 @@ class UpdateExperienceRequest(CamelModel):
     duration_minutes: int | None = Field(default=None, ge=1, le=60 * 24 * 14)
     is_indoor: bool | None = None
     accessibility: dict | None = None
+    external_ticket_url: str | None = Field(default=None, max_length=2000)
 
 
 class AddMediaRequest(CamelModel):

@@ -67,6 +67,9 @@ import type {
   PlanRequestInput,
   PrivacySettings,
   Sdk,
+  Ticketing,
+  TicketTypeSummary,
+  Order,
 } from './types'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -826,6 +829,73 @@ export const api = {
     request<CollectionEnvelope<AuditEntry>>(`/api/v1/admin/audit${query({ days })}`).then(
       (r) => r.data,
     ),
+
+  // -------------------------------------------------------------- commerce
+  ticketing: (experienceId: string, occurrenceId: string) =>
+    request<Envelope<Ticketing>>(
+      `/api/v1/experiences/${experienceId}/events/${occurrenceId}/ticketing`,
+    ).then((r) => r.data),
+
+  startOrder: (
+    experienceId: string,
+    occurrenceId: string,
+    lines: { ticketTypeId: string; quantity: number }[],
+  ) =>
+    request<Envelope<Order>>(
+      `/api/v1/experiences/${experienceId}/events/${occurrenceId}/orders`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lines }),
+      },
+    ).then((r) => r.data),
+
+  myOrders: () => request<CollectionEnvelope<Order>>('/api/v1/orders').then((r) => r.data),
+
+  /**
+   * Reads one order, and asks the provider about it if it is still pending.
+   * The server does the asking - a client reporting its own payment as
+   * successful would be the client marking its own homework.
+   */
+  order: (orderId: string) =>
+    request<Envelope<Order>>(`/api/v1/orders/${orderId}`).then((r) => r.data),
+
+  cancelOrder: (orderId: string) =>
+    request<Envelope<Order>>(`/api/v1/orders/${orderId}/cancel`, { method: 'POST' }).then(
+      (r) => r.data,
+    ),
+
+  /** Development only: the stub provider refuses to invent a payment. */
+  simulatePayment: (reference: string, paid: boolean) =>
+    request<Envelope<Order>>(
+      `/api/v1/payments/simulate/${reference}?paid=${paid ? 'true' : 'false'}`,
+      { method: 'POST' },
+    ).then((r) => r.data),
+
+  ticketTypes: (experienceId: string, occurrenceId: string) =>
+    request<CollectionEnvelope<TicketTypeSummary>>(
+      `/api/v1/posts/${experienceId}/events/${occurrenceId}/ticket-types`,
+    ).then((r) => r.data),
+
+  createTicketType: (
+    experienceId: string,
+    occurrenceId: string,
+    body: { name: string; priceMinor: number; quantity?: number | null; description?: string },
+  ) =>
+    request<Envelope<TicketTypeSummary>>(
+      `/api/v1/posts/${experienceId}/events/${occurrenceId}/ticket-types`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    ).then((r) => r.data),
+
+  withdrawTicketType: (experienceId: string, occurrenceId: string, ticketTypeId: string) =>
+    request<Envelope<TicketTypeSummary>>(
+      `/api/v1/posts/${experienceId}/events/${occurrenceId}/ticket-types/${ticketTypeId}`,
+      { method: 'DELETE' },
+    ).then((r) => r.data),
 
   // ---------------------------------------------------- developer platform
   developerScopes: () =>

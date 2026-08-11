@@ -229,6 +229,7 @@ class PublishingService:
         duration_minutes: int | None = None,
         is_indoor: bool | None = None,
         accessibility: dict | None = None,
+        external_ticket_url: str | None = None,
         publisher_id: uuid.UUID | None = None,
     ) -> Experience:
         """Create a draft. Nothing is visible until the author publishes it."""
@@ -270,6 +271,7 @@ class PublishingService:
             duration_minutes=duration_minutes,
             is_indoor=is_indoor,
             accessibility=accessibility or {},
+            external_ticket_url=(external_ticket_url or None),
             attributes={},
             tags=await self._resolve_tags(tags),
             media=[],
@@ -306,6 +308,7 @@ class PublishingService:
             "duration_minutes",
             "is_indoor",
             "accessibility",
+            "external_ticket_url",
         }
         for field, value in changes.items():
             if field in simple_fields and value is not None:

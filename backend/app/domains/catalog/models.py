@@ -285,6 +285,11 @@ class Experience(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     price_amount: Mapped[float | None] = mapped_column(Numeric(12, 2), default=None)
     price_max: Mapped[float | None] = mapped_column(Numeric(12, 2), default=None)
     currency: Mapped[str] = mapped_column(String(3), default="ETB", nullable=False)
+    # Where a publisher sells tickets, when they sell them somewhere else.
+    # Its presence is what makes the details page send the explorer away rather
+    # than offer a checkout, and spec 55.05 §64 is explicit that Mado must not
+    # then represent the external transaction as completed - we cannot see it.
+    external_ticket_url: Mapped[str | None] = mapped_column(Text, default=None)
 
     duration_minutes: Mapped[int | None] = mapped_column(Integer, default=None)
     is_indoor: Mapped[bool | None] = mapped_column(Boolean, default=None)
