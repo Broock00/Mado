@@ -18,17 +18,12 @@ from app.core.envelope import Envelope
 from app.core.errors import NotFoundError
 from app.domains.catalog.schemas import CamelModel
 from app.domains.explorer.notifications import (
+    ALL_KINDS,
     DEFAULT_ON,
-    KIND_EVENT_REMINDER,
-    KIND_MODERATION,
-    KIND_NEARBY,
-    KIND_PLAN_REMINDER,
     NotificationService,
 )
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
-
-ALL_KINDS = (KIND_EVENT_REMINDER, KIND_PLAN_REMINDER, KIND_MODERATION, KIND_NEARBY)
 
 
 class NotificationOut(CamelModel):

@@ -66,11 +66,31 @@ KIND_EVENT_REMINDER = "event_reminder"
 KIND_PLAN_REMINDER = "plan_reminder"
 KIND_MODERATION = "moderation_outcome"
 KIND_NEARBY = "nearby_suggestion"
+KIND_TRAVEL_ALERT = "travel_alert"
+
+# Every kind, in the order they are offered in settings. One list, because it
+# was previously written out in both `resolve_preferences` and the settings
+# route: a kind missing from either is one an explorer can neither see nor
+# switch off, and it fails silently in whichever direction that copy defaults.
+ALL_KINDS = (
+    KIND_EVENT_REMINDER,
+    KIND_PLAN_REMINDER,
+    KIND_TRAVEL_ALERT,
+    KIND_MODERATION,
+    KIND_NEARBY,
+)
 
 # Which kinds an explorer receives unless they say otherwise. Reminders about
 # things they saved or planned are opt-out: saving an event *is* the request.
 # Everything else is opt-in and stays off until asked for.
-DEFAULT_ON = frozenset({KIND_EVENT_REMINDER, KIND_PLAN_REMINDER, KIND_MODERATION})
+#
+# A travel alert is on by default for the same reason and more strongly: it is
+# not a suggestion but news about something the explorer already committed to,
+# and the cost of missing it is a wasted journey across Addis. Still opt-out,
+# because it remains their phone.
+DEFAULT_ON = frozenset(
+    {KIND_EVENT_REMINDER, KIND_PLAN_REMINDER, KIND_TRAVEL_ALERT, KIND_MODERATION}
+)
 
 STATUS_PENDING = "pending"
 STATUS_DELIVERED = "delivered"
@@ -158,11 +178,7 @@ def resolve_preferences(profile) -> Preferences:
         return Preferences(enabled=frozenset())
 
     stored = (profile.preferences or {}).get("notifications") or {}
-    enabled = {
-        kind
-        for kind in (KIND_EVENT_REMINDER, KIND_PLAN_REMINDER, KIND_MODERATION, KIND_NEARBY)
-        if stored.get(kind, kind in DEFAULT_ON)
-    }
+    enabled = {kind for kind in ALL_KINDS if stored.get(kind, kind in DEFAULT_ON)}
     return Preferences(
         enabled=frozenset(enabled),
         timezone=getattr(profile, "timezone", None) or "Africa/Addis_Ababa",

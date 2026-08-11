@@ -557,6 +557,22 @@ class PublishingService:
                 "reason": reason,
             },
         )
+
+        # And the people who were going. A webhook reaches the publisher's own
+        # systems; it reaches nobody who bought into this date. Until this was
+        # wired up, cancelling was silent to every explorer involved - and worse
+        # than silent, because the "starts tonight" reminder stayed queued and
+        # would still have gone out.
+        from app.domains.explorer.alerts import announce_cancellation
+
+        await announce_cancellation(
+            self.session,
+            experience_id=experience.id,
+            occurrence_id=event.id,
+            title=experience.title,
+            starts_at=event.start_time,
+            reason=reason,
+        )
         return event
 
     async def delete_event(self, user: User, experience_id: uuid.UUID, event_id: uuid.UUID) -> None:
@@ -569,6 +585,15 @@ class PublishingService:
                 "Cancel this date instead - it is live and people may be relying on it.",
                 code="CANCEL_INSTEAD_OF_DELETE",
             )
+
+        # Only a draft's dates reach here, but a draft can have been published
+        # once, and the reminder job does not check publication state - so a
+        # reminder about this date may already be queued. Deleting the row it
+        # points at would leave it to fire about nothing.
+        from app.domains.explorer.notifications import NotificationService
+
+        await NotificationService(self.session).cancel_for_subject(event.id)
+
         await self.session.delete(event)
         await self.session.flush()
 

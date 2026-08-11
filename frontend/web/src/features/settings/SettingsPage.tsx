@@ -45,6 +45,12 @@ const NOTIFICATION_KINDS = [
     description: 'Before a plan you kept is due to begin.',
   },
   {
+    key: 'travel_alert',
+    label: 'Changes to what you booked',
+    description:
+      'When a date you reserved, planned or saved is cancelled. Sent straight away, since the point is to reach you before you set off.',
+  },
+  {
     key: 'moderation_outcome',
     label: 'Decisions about your posts',
     description: 'When a moderator rules on something you published or reported.',

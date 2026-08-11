@@ -38,6 +38,20 @@ CATALOGUE: dict[str, dict[str, str]] = {
         "suggestion.nearby.title": "{title} is on soon",
         "suggestion.nearby.body": "In {city}, and it looks like your sort of thing.",
         "suggestion.nearby.body_at_venue": "At {venue}, and it looks like your sort of thing.",
+        # Cancellations. Plain and immediate: the explorer needs to know they
+        # are not going, before anything else. One body per kind of claim on
+        # the date, because "your places have been released" is only true for
+        # somebody who held places, and saying it to everybody would tell most
+        # of them they had a booking they never made.
+        "alert.cancelled.title": "{title} is cancelled",
+        "alert.cancelled.reserved": "Your places for {when} have been released.",
+        "alert.cancelled.planned": "It was in your plan for {when}.",
+        "alert.cancelled.saved": "The {when} date is off.",
+        # A separate sentence, not a clause spliced into the ones above. The
+        # reason is free text written by the publisher in whichever language
+        # they chose, so it can only sit beside a translated sentence, never
+        # inside one.
+        "alert.cancelled.because": "The organiser said: {reason}",
     },
     "am": {
         # "ዛሬ ማታ ነው" - "is tonight". The subject comes first and the verb last,
@@ -50,6 +64,12 @@ CATALOGUE: dict[str, dict[str, str]] = {
         "suggestion.nearby.title": "{title} በቅርቡ ይካሄዳል",
         "suggestion.nearby.body": "በ{city} ውስጥ ነው፣ እና የእርስዎ ዓይነት ይመስላል።",
         "suggestion.nearby.body_at_venue": "በ{venue} ነው፣ እና የእርስዎ ዓይነት ይመስላል።",
+        # "ተሰርዟል" - has been cancelled. Verb last, as everywhere else here.
+        "alert.cancelled.title": "{title} ተሰርዟል",
+        "alert.cancelled.reserved": "የ{when} ቦታዎችዎ ተለቀዋል።",
+        "alert.cancelled.planned": "በ{when} በእቅድዎ ውስጥ ነበር።",
+        "alert.cancelled.saved": "የ{when} ቀጠሮ ተሰርዟል።",
+        "alert.cancelled.because": "አዘጋጁ እንዲህ ብሏል፦ {reason}",
     },
 }
 

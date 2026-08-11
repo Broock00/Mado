@@ -373,6 +373,46 @@ class ReservationService:
         )
         return list(result.scalars().all())
 
+    async def release_for_occurrence(self, occurrence_id: uuid.UUID) -> list[Reservation]:
+        """Cancel every reservation on a date the publisher has called off.
+
+        Not the explorer changing their mind, so no cancellation cutoff and no
+        lateness to record - they did nothing. Returns the reservations as they
+        were, because the caller has to tell those people (see
+        :mod:`app.domains.explorer.alerts`) and after this runs there is nothing
+        left in the table to say who they were.
+
+        Without this the reservation stays ``confirmed`` against a cancelled
+        date, so the explorer's own trips list goes on promising them a place at
+        something that is not happening - and it would say that on the same
+        screen as the alert saying it is cancelled.
+
+        No ``reservation.cancelled`` webhook per person: the publisher's systems
+        are already being sent ``event.cancelled``, and following it with forty
+        individual cancellations describes one decision forty-one times.
+        """
+        reservations = await self.for_occurrence(occurrence_id)
+        if not reservations:
+            return []
+
+        # Seats are handed back even though the date is off. `remaining` is
+        # meant to be capacity minus places held, and a number that is only
+        # correct while nothing unusual happens is one nobody can later trust
+        # for a report or a refund.
+        occurrence = await self._occurrence(occurrence_id)
+        for reservation in reservations:
+            await self._return_seats(occurrence, reservation.party_size)
+            reservation.status = STATUS_CANCELLED
+            reservation.cancelled_at = datetime.now(UTC)
+
+        logger.info(
+            "reservations_released",
+            occurrence_id=str(occurrence_id),
+            reservations=len(reservations),
+            places=sum(r.party_size for r in reservations),
+        )
+        return reservations
+
     # ----------------------------------------------------------- internals
 
     async def _take_seats(self, occurrence: EventInstance, count: int) -> None:

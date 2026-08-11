@@ -155,11 +155,14 @@ class TestWhatIsNotTranslatedOnTheServer:
         client renders, so there is one source of Amharic rather than two that
         drift.
 
-        Reminders and suggestions are here because they are *written down* - a
-        background job composes them and nobody is around to translate them
-        when they are read hours later.
+        Reminders, suggestions and cancellation alerts are here because they
+        are *written down* - composed once and read back later, with nobody
+        around to translate them in between. For the first two that is a
+        background job; for an alert it is a publisher cancelling a date, whose
+        language has nothing to do with the language of the explorer who reads
+        the result. Same reason, so the same exception.
         """
-        written_down = ("reminder.", "suggestion.")
+        written_down = ("reminder.", "suggestion.", "alert.")
         assert all(key.startswith(written_down) for key in CATALOGUE["en"])
 
     def test_api_errors_carry_a_code_for_the_client_to_translate(self):

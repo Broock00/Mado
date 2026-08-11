@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bell, CalendarClock, Route, ShieldCheck, Sparkles } from 'lucide-react'
+import { Bell, CalendarClock, CalendarX2, Route, ShieldCheck, Sparkles } from 'lucide-react'
 
 import { api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
@@ -27,6 +27,7 @@ const ICONS: Record<string, typeof Bell> = {
   plan_reminder: Route,
   moderation_outcome: ShieldCheck,
   nearby_suggestion: Sparkles,
+  travel_alert: CalendarX2,
 }
 
 function timeAgo(iso: string | null | undefined): string {
