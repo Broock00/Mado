@@ -5,6 +5,10 @@ python -m app.seed --no-index   seed only
 python -m app.seed --reindex    rebuild the search index only
 python -m app.seed --recompute  rebuild popularity and trend from interaction events
 python -m app.seed --ingest URL  import an iCalendar feed from a trusted source
+python -m app.seed --demo-cities    add invented listings in New York, London and
+                                    Nairobi so the platform can be exercised
+                                    outside its pilot city
+python -m app.seed --remove-demo    delete every one of them again
 """
 
 from __future__ import annotations
@@ -85,6 +89,36 @@ async def _ingest(url: str, source_slug: str) -> None:
             print(f"    - {problem}")
 
 
+async def _demo_cities(*, remove: bool) -> None:
+    """Invented listings in real places.
+
+    Separate from the main seed, and never part of it: this data is not real,
+    and the one thing that must not happen is it becoming indistinguishable from
+    the catalogue. It refuses to run in production, marks everything it writes,
+    and can delete exactly what it made.
+    """
+    from app.seed.demo_cities import remove_demo_cities, seed_demo_cities
+
+    async with SessionFactory() as session:
+        if remove:
+            counts = await remove_demo_cities(session)
+            await session.commit()
+            print("Removed the demo cities:")
+        else:
+            counts = await seed_demo_cities(session)
+            await session.commit()
+            print("Seeded demo cities (invented data - never run this in production):")
+        for name, value in counts.items():
+            print(f"  {name:<14} {value}")
+
+        if not remove:
+            indexed = await reindex_all(session)
+            written = await backfill_embeddings(session, only_missing=True)
+            await session.commit()
+            print(f"  {'indexed':<14} {indexed}")
+            print(f"  {'embedded':<14} {written}")
+
+
 async def _recompute() -> None:
     """Rebuild engagement aggregates from the interaction stream.
 
@@ -151,6 +185,14 @@ def main() -> None:
         action="store_true",
         help="Rebuild popularity and trend scores from interaction events.",
     )
+    parser.add_argument(
+        "--demo-cities",
+        action="store_true",
+        help="Add invented listings in New York, London and Nairobi (never in production).",
+    )
+    parser.add_argument(
+        "--remove-demo", action="store_true", help="Delete the demo cities again."
+    )
     parser.add_argument("--no-embed", action="store_true", help="Skip embedding generation.")
     parser.add_argument(
         "--embed",
@@ -171,6 +213,9 @@ def main() -> None:
         return
     if args.ingest:
         run_async(_ingest(args.ingest, args.source))
+        return
+    if args.demo_cities or args.remove_demo:
+        run_async(_demo_cities(remove=args.remove_demo))
         return
     if args.recompute:
         run_async(_recompute())
