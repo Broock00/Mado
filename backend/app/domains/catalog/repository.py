@@ -82,6 +82,124 @@ async def list_cities(session: AsyncSession, *, live_only: bool = False) -> list
     return list(result.scalars().all())
 
 
+# How far from a city somebody can be and still be considered "in" it. Generous
+# on purpose: an explorer in a suburb, on a ring road or at the airport is still
+# looking for that city's evening. Beyond it they are somewhere Mado does not
+# cover yet, and saying so is better than quietly showing them a city they are
+# nowhere near.
+NEAREST_CITY_MAX_KM = 120.0
+
+EARTH_RADIUS_KM = 6371.0088
+
+
+def distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance. Haversine, because these are city centres and a
+    flat-earth approximation is wrong by tens of kilometres at high latitudes."""
+    from math import asin, cos, radians, sin, sqrt
+
+    dlat = radians(lat2 - lat1)
+    dlon = radians(lon2 - lon1)
+    a = (
+        sin(dlat / 2) ** 2
+        + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+    )
+    return 2 * EARTH_RADIUS_KM * asin(sqrt(a))
+
+
+def bounding_box(latitude: float, max_km: float) -> tuple[float, float]:
+    """Degree spans that certainly contain everything within `max_km`.
+
+    One degree of latitude is ~111 km everywhere. Longitude narrows towards the
+    poles - about 48 km per degree in Reykjavik - so the longitude span is
+    widened by 1/cos(lat). Without that correction a search up there misses
+    cities well inside the radius, which is a bug that only ever shows up far
+    from where it was written.
+
+    Deliberately generous: the box only has to avoid false negatives, because
+    the exact haversine afterwards removes anything it lets through.
+    """
+    from math import cos, radians
+
+    lat_span = max_km / 111.0
+    # Clamped so the poles do not divide by zero and produce an infinite span.
+    shrink = max(cos(radians(latitude)), 0.01)
+    return lat_span, lat_span / shrink
+
+
+async def nearest_live_city(
+    session: AsyncSession,
+    latitude: float,
+    longitude: float,
+    *,
+    max_km: float = NEAREST_CITY_MAX_KM,
+) -> tuple[City, float] | None:
+    """The live city somebody is actually in, or None if Mado does not cover it.
+
+    Returning None matters more than the happy path. The alternative - falling
+    back to a default city - is what made every explorer on the platform look
+    like they were in Addis Ababa regardless of where they opened the app, and
+    a wrong answer delivered confidently is worse than an honest empty one.
+
+    A bounding box in SQL first, then an exact distance in Python over what
+    survives. The box is cheap and indexable and throws away almost everything;
+    doing haversine in SQL over every city on earth would not be.
+    """
+    lat_span, lon_span = bounding_box(latitude, max_km)
+
+    stmt = select(City).where(
+        City.is_live.is_(True),
+        City.latitude.between(latitude - lat_span, latitude + lat_span),
+        City.longitude.between(longitude - lon_span, longitude + lon_span),
+    )
+    candidates = list((await session.execute(stmt)).scalars().all())
+    if not candidates:
+        return None
+
+    ranked = sorted(
+        (
+            (city, distance_km(latitude, longitude, city.latitude, city.longitude))
+            for city in candidates
+        ),
+        key=lambda pair: pair[1],
+    )
+    city, distance = ranked[0]
+    return (city, distance) if distance <= max_km else None
+
+
+# How a request's city was arrived at, reported back so an interface can say
+# "near you" or "showing Paris" honestly - and so "we do not know where you are"
+# is a state it can respond to instead of a default it cannot see.
+RESOLVED_BY_CHOSEN = "chosen"
+RESOLVED_BY_LOCATION = "location"
+RESOLVED_BY_UNKNOWN = "unknown"
+
+
+async def resolve_city_slug(
+    session: AsyncSession,
+    *,
+    city: str | None,
+    latitude: float | None,
+    longitude: float | None,
+) -> tuple[str | None, str]:
+    """Which city a request is about, and how that was decided.
+
+    One implementation for discovery, the concierge and the planner, because
+    three copies of "which city is this" is three chances to leave one of them
+    defaulting to somewhere the explorer has never been.
+
+    An explicit choice always wins: planning a trip to a city you are not in yet
+    is an ordinary thing to do. Otherwise coordinates decide. When there is
+    neither, the answer is None and the caller asks rather than guesses.
+    """
+    if city:
+        return city, RESOLVED_BY_CHOSEN
+    if latitude is not None and longitude is not None:
+        found = await nearest_live_city(session, latitude, longitude)
+        if found is not None:
+            return found[0].slug, RESOLVED_BY_LOCATION
+    return None, RESOLVED_BY_UNKNOWN
+
+
 async def list_categories(session: AsyncSession) -> list[Category]:
     result = await session.execute(select(Category).order_by(Category.sort_order, Category.name))
     return list(result.scalars().all())

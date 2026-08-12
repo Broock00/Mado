@@ -43,15 +43,6 @@ const LocationPicker = lazy(() =>
   import('@/features/map/LocationPicker').then((m) => ({ default: m.LocationPicker })),
 )
 
-/**
- * Where the picker opens when the publisher has not shared their location.
- * Falls back to the pilot city rather than the middle of the ocean, which is
- * where an unset centre lands.
- */
-const CITY_CENTRES: Record<string, { latitude: number; longitude: number }> = {
-  'addis-ababa': { latitude: 9.0192, longitude: 38.7525 },
-}
-
 export function ComposePage() {
   const { experienceId } = useParams()
   const isEditing = Boolean(experienceId)
@@ -62,13 +53,18 @@ export function ComposePage() {
   const citySlug = useAppStore((s) => s.citySlug)
   const explorerLocation = useAppStore((s) => s.location)
 
+  // A listing belongs to a city, and the app no longer assumes one. The centre
+  // the map picker opens on comes from whichever city is chosen rather than
+  // from a hardcoded table that only ever held one entry.
+  const { data: cities } = useQuery({ queryKey: ['cities'], queryFn: () => api.cities() })
+
   const [draftId, setDraftId] = useState<string | null>(experienceId ?? null)
   const [error, setError] = useState<string | null>(null)
 
   const [form, setForm] = useState<CreatePostInput>({
     title: '',
     description: '',
-    citySlug,
+    citySlug: citySlug ?? '',
     type: 'place',
     summary: '',
     categorySlug: null,
@@ -102,7 +98,7 @@ export function ComposePage() {
     setForm({
       title: existing.title,
       description: existing.description,
-      citySlug: existing.citySlug ?? citySlug,
+      citySlug: existing.citySlug ?? citySlug ?? '',
       type: existing.type,
       summary: existing.summary ?? '',
       categorySlug: existing.category?.slug ?? null,
@@ -195,7 +191,15 @@ export function ComposePage() {
     },
   })
 
-  const canSave = form.title.trim().length >= 4 && form.description.trim().length > 0
+  const chosenCity = cities?.find((c) => c.slug === form.citySlug) ?? null
+
+  // A listing has to be somewhere. This used to be silently inherited from the
+  // app's single hardcoded city, which meant every listing was filed in Addis
+  // Ababa whoever posted it and wherever they were.
+  const canSave =
+    form.title.trim().length >= 4 &&
+    form.description.trim().length > 0 &&
+    Boolean(form.citySlug)
   const upcoming = useMemo(
     () => (post?.upcomingEvents ?? []).filter((e) => e.status !== 'cancelled'),
     [post],
@@ -318,6 +322,25 @@ export function ComposePage() {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
+              <label htmlFor="city" className="mb-1.5 block text-sm font-medium text-sand-700">
+                City
+              </label>
+              <select
+                id="city"
+                value={form.citySlug}
+                onChange={(e) => setForm({ ...form, citySlug: e.target.value })}
+                className="h-11 w-full rounded-lg border border-sand-300 bg-white px-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
+              >
+                <option value="">Choose one…</option>
+                {cities?.map((c) => (
+                  <option key={c.id} value={c.slug}>
+                    {c.name}, {c.country}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
               <label htmlFor="category" className="mb-1.5 block text-sm font-medium text-sand-700">
                 Category
               </label>
@@ -398,6 +421,11 @@ export function ComposePage() {
                   geocoder wants - and gave no feedback until after they had
                   committed. Placing a pin is the same act as knowing where you
                   are. */}
+              {!explorerLocation.latitude && !chosenCity ? (
+                <p className="rounded-lg bg-sand-100 px-3 py-2 text-sm text-sand-600">
+                  Choose a city above, or share your location, and the map will open there.
+                </p>
+              ) : (
               <Suspense
                 fallback={<div className="h-72 w-full animate-pulse rounded-xl bg-sand-200" />}
               >
@@ -408,13 +436,14 @@ export function ComposePage() {
                           latitude: explorerLocation.latitude,
                           longitude: explorerLocation.longitude,
                         }
-                      : CITY_CENTRES[citySlug] ?? CITY_CENTRES['addis-ababa']
+                      : { latitude: chosenCity!.latitude, longitude: chosenCity!.longitude }
                   }
                   value={picked}
                   onChange={setPicked}
-                  citySlug={citySlug}
+                  citySlug={form.citySlug}
                 />
               </Suspense>
+              )}
 
               <Button
                 variant="secondary"

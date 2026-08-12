@@ -6,12 +6,19 @@ import { api, tokenStore, type DiscoveryParams } from '@/lib/api'
 import { useAppStore } from '@/app/store'
 import type { ExperienceSummary } from '@/lib/types'
 
-/** Discovery parameters assembled from current city and location consent. */
+/**
+ * Discovery parameters assembled from location consent and any chosen city.
+ *
+ * `city` is sent only when the explorer picked one. Left out, the server
+ * resolves it from the coordinates - which is the behaviour that should need no
+ * interaction, and the reason this no longer carries a default. A default here
+ * meant everybody was told about the same city wherever they opened the app.
+ */
 export function useDiscoveryParams(limit = 12): DiscoveryParams {
   const citySlug = useAppStore((s) => s.citySlug)
   const location = useAppStore((s) => s.location)
   return {
-    city: citySlug,
+    city: citySlug ?? undefined,
     lat: location.granted ? location.latitude : undefined,
     lng: location.granted ? location.longitude : undefined,
     limit,

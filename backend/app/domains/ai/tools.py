@@ -94,13 +94,25 @@ def describe_tools() -> list[dict[str, Any]]:
     ]
 
 
+# Tools that are about a place, and cannot honestly answer without one. Looking
+# something up by id is not one of them.
+#
+# Without this guard an explorer in Paris asking "what is on tonight?" was handed
+# eight listings five thousand kilometres away - the catalogue searched unscoped
+# because no city resolved. Quieter than the old bug, which at least named the
+# city it was wrong about, and worse for it.
+NEEDS_A_CITY = frozenset(
+    {"search_experiences", "find_events", "find_nearby", "plan_outing"}
+)
+
+
 async def execute_tool(
     name: str,
     arguments: dict[str, Any],
     *,
     session: AsyncSession,
     ctx: RankingContext,
-    city_slug: str,
+    city_slug: str | None,
     confirmed: bool = False,
 ) -> ToolResult:
     """Run a registered tool, enforcing the confirmation policy.
@@ -111,6 +123,16 @@ async def execute_tool(
     tool = get_tool(name)
     if tool is None:
         return ToolResult(tool=name, ok=False, error=f"Unknown tool '{name}'.")
+
+    if city_slug is None and name in NEEDS_A_CITY:
+        return ToolResult(
+            tool=name,
+            ok=False,
+            error=(
+                "I do not know which city you are in yet. Share your location or "
+                "pick a city, and I will look."
+            ),
+        )
 
     if tool.requires_confirmation and not confirmed:
         raise PermissionDeniedError(

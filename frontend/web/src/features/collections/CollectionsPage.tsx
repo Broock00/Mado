@@ -84,11 +84,15 @@ export function CollectionCardTile({ collection }: { collection: CollectionCard 
 
 function NewCollection() {
   const queryClient = useQueryClient()
+  const citySlug = useAppStore((s) => s.citySlug)
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
 
   const create = useMutation({
-    mutationFn: () => api.createCollection({ title: title.trim(), citySlug: 'addis-ababa' }),
+    // Whichever city is being browsed, or none. It used to be hardcoded, so a
+    // list started in Nairobi was filed under Addis Ababa.
+    mutationFn: () =>
+      api.createCollection({ title: title.trim(), citySlug: citySlug ?? undefined }),
     onSuccess: () => {
       setTitle('')
       setOpen(false)
@@ -145,9 +149,12 @@ export function CollectionsPage() {
     enabled: Boolean(user),
   })
 
+  const publicCity = useAppStore((s) => s.citySlug)
   const { data: publicOnes, isLoading } = useQuery({
-    queryKey: ['public-collections'],
-    queryFn: () => api.publicCollections('addis-ababa'),
+    // The city is part of the key: without it, switching city would keep
+    // showing the previous city's lists from cache.
+    queryKey: ['public-collections', publicCity],
+    queryFn: () => api.publicCollections(publicCity ?? undefined),
   })
 
   return (

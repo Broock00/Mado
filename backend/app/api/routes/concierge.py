@@ -38,7 +38,7 @@ settings = get_settings()
 class MessageRequest(CamelModel):
     message: str = Field(min_length=1, max_length=2000)
     conversation_id: uuid.UUID | None = None
-    city: str = settings.default_city_slug
+    city: str | None = None
     latitude: float | None = None
     longitude: float | None = None
 
@@ -136,7 +136,12 @@ async def _reply(*, session, user, anonymous_id: str | None, payload: MessageReq
     if not payload.message.strip():
         raise BadRequestError("Message cannot be empty.", code="EMPTY_MESSAGE")
 
-    city_slug, city_name, timezone = await resolve_city(session, payload.city)
+    city_slug, city_name, timezone = await resolve_city(
+        session,
+        payload.city,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+    )
 
     explorer = ExplorerService(session)
     saved_ids = await explorer.saved_experience_ids(user.id if user else None)

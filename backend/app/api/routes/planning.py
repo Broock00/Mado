@@ -20,6 +20,7 @@ from app.core import rate_limit
 from app.core.config import get_settings
 from app.core.envelope import CollectionEnvelope, Envelope
 from app.core.errors import BadRequestError
+from app.domains.catalog import repository as catalog_repo
 from app.domains.catalog.models import Experience
 from app.domains.catalog.schemas import CamelModel
 from app.domains.discovery.service import build_context
@@ -40,7 +41,7 @@ MAX_WINDOW_HOURS = 24
 class PlanRequestIn(CamelModel):
     starts_at: datetime | None = None
     ends_at: datetime | None = None
-    city: str = settings.default_city_slug
+    city: str | None = None
     latitude: float | None = None
     longitude: float | None = None
     budget: float | None = Field(default=None, ge=0)
@@ -77,6 +78,10 @@ class StopOut(CamelModel):
 
 
 class PlanOut(CamelModel):
+    # Where the plan ended up. Sent back because the request need not have said:
+    # an explorer who shared their location and chose no city still deserves a
+    # plan that knows what to call itself.
+    city_slug: str | None = None
     stops: list[StopOut]
     total_cost: float
     currency: str = "ETB"
@@ -144,10 +149,25 @@ async def _plan_inputs(
         now=start,
         inferred=inferred,
     )
+    city_slug, _ = await catalog_repo.resolve_city_slug(
+        session,
+        city=payload.city,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+    )
+    if city_slug is None:
+        # Unlike a feed, a plan cannot degrade to nothing: it is a sequence of
+        # places with travel between them, and without a city there is nowhere
+        # to draw them from. Asking is the only honest option.
+        raise BadRequestError(
+            "Choose a city, or share your location, and I will plan from there.",
+            code="CITY_REQUIRED",
+        )
+
     request = PlanRequest(
         start=start,
         end=end,
-        city_slug=payload.city,
+        city_slug=city_slug,
         latitude=payload.latitude,
         longitude=payload.longitude,
         budget=payload.budget,
@@ -195,6 +215,7 @@ async def create_plan(
     plan = await PlanningService(session).plan(request, ctx)
     return Envelope(
         data=PlanOut(
+            city_slug=request.city_slug,
             stops=[_to_stop_out(stop) for stop in plan.stops],
             total_cost=plan.total_cost,
             total_travel_minutes=plan.total_travel_minutes,

@@ -111,7 +111,7 @@ export function ConciergePanel() {
       api.concierge({
         message,
         conversationId,
-        city: citySlug,
+        city: citySlug ?? undefined,
         latitude: location.granted ? location.latitude : null,
         longitude: location.granted ? location.longitude : null,
       }),

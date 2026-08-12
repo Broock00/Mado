@@ -20,12 +20,13 @@ interface LocationState {
 
 interface AppState {
   user: Me | null
-  citySlug: string
+  /** Null means "wherever I am" - the server resolves it from coordinates. */
+  citySlug: string | null
   location: LocationState
   conciergeOpen: boolean
 
   setUser: (user: Me | null) => void
-  setCity: (slug: string) => void
+  setCity: (slug: string | null) => void
   setLocation: (latitude: number, longitude: number) => void
   denyLocation: () => void
   clearLocation: () => void
@@ -33,13 +34,11 @@ interface AppState {
   signOut: () => void
 }
 
-const DEFAULT_CITY = 'addis-ababa'
-
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
       user: null,
-      citySlug: DEFAULT_CITY,
+      citySlug: null,
       location: { latitude: null, longitude: null, granted: false, denied: false },
       conciergeOpen: false,
 
@@ -64,6 +63,19 @@ export const useAppStore = create<AppState>()(
       // re-requested per session, so neither is persisted. Persisting a stale
       // location would silently mis-rank the first page view.
       partialize: (state) => ({ citySlug: state.citySlug }),
+
+      // Version 0 had no city picker and started every browser on a hardcoded
+      // 'addis-ababa', which then persisted forever - so an explorer anywhere
+      // on earth kept being shown one Ethiopian city, and changing the default
+      // alone would not have moved a single existing browser. Dropping it is
+      // safe precisely because v0 offered no way to choose: every stored value
+      // was the default rather than somebody's decision.
+      version: 1,
+      migrate: (persisted, version) => {
+        const state = (persisted ?? {}) as { citySlug?: string | null }
+        if (version < 1) return { ...state, citySlug: null }
+        return state
+      },
     },
   ),
 )

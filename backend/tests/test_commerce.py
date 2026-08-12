@@ -26,7 +26,6 @@ import pytest
 import app.models  # noqa: F401  (orders are built here, so mappers must resolve)
 from app.domains.commerce import tickets as ticketing
 from app.domains.commerce.models import (
-    ORDER_PAID,
     ORDER_PENDING,
     Order,
     TicketType,

@@ -252,7 +252,8 @@ function query(params: Record<string, string | number | boolean | undefined | nu
 }
 
 export interface DiscoveryParams {
-  city: string
+  /** Omitted unless the explorer chose one; the server resolves from lat/lng. */
+  city?: string
   lat?: number | null
   lng?: number | null
   raining?: boolean
@@ -308,7 +309,10 @@ export const api = {
     ).then((r) => r.data),
 
   // --------------------------------------------------------------- catalog
-  cities: () => request<CollectionEnvelope<City>>('/api/v1/cities').then((r) => r.data),
+  cities: (liveOnly = false) =>
+    request<CollectionEnvelope<City>>(`/api/v1/cities${liveOnly ? '?liveOnly=true' : ''}`).then(
+      (r) => r.data,
+    ),
 
   categories: () =>
     request<CollectionEnvelope<Category>>('/api/v1/categories').then((r) => r.data),
@@ -547,7 +551,8 @@ export const api = {
   concierge: (payload: {
     message: string
     conversationId?: string | null
-    city: string
+    /** Omitted unless chosen; the server resolves it from the coordinates. */
+    city?: string
     latitude?: number | null
     longitude?: number | null
   }) =>

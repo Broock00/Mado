@@ -163,7 +163,10 @@ export interface FeedModule {
 }
 
 export interface DiscoveryCanvas {
-  city: string
+  /** Null when Mado does not cover where the explorer is. */
+  city: string | null
+  /** `chosen` | `location` | `unknown` - why this city, so the page can say. */
+  resolvedBy: string
   modules: FeedModule[]
 }
 
@@ -795,6 +798,8 @@ export interface PlanStop {
 }
 
 export interface Plan {
+  /** Where the plan ended up - the server may have resolved it from location. */
+  citySlug?: string | null
   stops: PlanStop[]
   totalCost: number
   currency: string
@@ -820,7 +825,12 @@ export interface Itinerary {
 export interface PlanRequestInput {
   startsAt?: string | null
   endsAt?: string | null
-  city: string
+  /**
+   * Omitted unless the explorer chose one. Unlike a feed, a plan cannot
+   * degrade to nothing - the server refuses with CITY_REQUIRED when it can
+   * resolve neither a choice nor a location.
+   */
+  city?: string
   latitude?: number | null
   longitude?: number | null
   budget?: number | null

@@ -95,7 +95,7 @@ export function PlanPage() {
 
   const currentInput = (): PlanRequestInput => ({
     ...resolveWindow(windowKey),
-    city,
+    city: city ?? undefined,
     latitude: location?.latitude ?? null,
     longitude: location?.longitude ?? null,
     budget: freeOnly || budget === '' ? null : Number(budget),
@@ -108,11 +108,13 @@ export function PlanPage() {
     onSuccess: (result) => {
       setPlan(result)
       setSaved(null)
-      setTitle(
-        result.stops.length > 0
-          ? `${WINDOWS.find((w) => w.key === windowKey)?.label} in ${city.replace(/-/g, ' ')}`
-          : '',
-      )
+      // The plan knows where it ended up even when the request did not say -
+      // the server resolved a city from the coordinates, and its stops carry
+      // the answer. Naming it from the request would leave the title blank for
+      // exactly the explorers who never chose a city.
+      const label = WINDOWS.find((w) => w.key === windowKey)?.label
+      const where = (result.citySlug ?? city)?.replace(/-/g, ' ')
+      setTitle(result.stops.length > 0 ? [label, where && `in ${where}`].filter(Boolean).join(' ') : '')
     },
   })
 

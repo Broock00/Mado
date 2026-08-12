@@ -784,11 +784,31 @@ def _suggested_actions(
     return actions
 
 
-async def resolve_city(session: AsyncSession, slug: str) -> tuple[str, str, str]:
-    """Return ``(slug, name, timezone)``, falling back to the configured pilot city."""
-    city = await catalog_repo.get_city_by_slug(session, slug)
+async def resolve_city(
+    session: AsyncSession,
+    slug: str | None,
+    *,
+    latitude: float | None = None,
+    longitude: float | None = None,
+) -> tuple[str | None, str, str]:
+    """Return ``(slug, name, timezone)`` for wherever this conversation is about.
+
+    It used to fall back to a configured pilot city and, failing that, to a
+    hardcoded Ethiopian timezone - so an explorer anywhere on earth was answered
+    as though they were standing in Addis Ababa, and told so in the reply. Now
+    an unresolved city is None: the tools then search unscoped rather than
+    somewhere the explorer is not, and the assistant can ask.
+
+    UTC when nothing resolves. Wrong for almost everybody, but wrong in a way
+    that shifts a time rather than relocating a person.
+    """
+    resolved, _ = await catalog_repo.resolve_city_slug(
+        session, city=slug, latitude=latitude, longitude=longitude
+    )
+    if resolved is None:
+        return None, "your area", "UTC"
+
+    city = await catalog_repo.get_city_by_slug(session, resolved)
     if city is None:
-        city = await catalog_repo.get_city_by_slug(session, settings.default_city_slug)
-    if city is None:
-        return settings.default_city_slug, "the city", "Africa/Addis_Ababa"
+        return None, "your area", "UTC"
     return city.slug, city.name, city.timezone

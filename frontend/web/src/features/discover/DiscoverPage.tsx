@@ -8,7 +8,11 @@
 
 import { Link } from 'react-router-dom'
 import { Compass, MapPin, Sparkles } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+
+import { api } from '@/lib/api'
 import { useCanvas, useRequestLocation, useToggleSave } from '@/app/hooks'
+import { CityFilter } from './CityFilter'
 import { useAppStore } from '@/app/store'
 import { ExperienceCard, ExperienceCardSkeleton } from '@/features/experiences/ExperienceCard'
 import { Button, EmptyState, SectionHeading } from '@/design-system/primitives'
@@ -16,19 +20,32 @@ import type { FeedModule } from '@/lib/types'
 
 export function DiscoverPage() {
   const { data, isLoading, isError, refetch } = useCanvas()
+  const { data: cities } = useQuery({
+    queryKey: ['cities', 'live'],
+    queryFn: () => api.cities(true),
+    staleTime: 30 * 60_000,
+  })
+  const cityName = cities?.find((c) => c.slug === data?.city)?.name
   const location = useAppStore((s) => s.location)
   const requestLocation = useRequestLocation()
   const { toggle, requiresAuth } = useToggleSave()
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 pb-24 pt-6 sm:px-6 lg:px-8">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-sand-900 sm:text-3xl">
-          What should you do next?
-        </h1>
-        <p className="mt-1.5 text-sand-500">
-          Discover what is happening in Addis Ababa right now.
-        </p>
+      <header className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-sand-900 sm:text-3xl">
+            What should you do next?
+          </h1>
+          {/* Named from what the server resolved, never from a constant. This
+              line used to say "Addis Ababa" to every explorer on earth. */}
+          <p className="mt-1.5 text-sand-500">
+            {data?.city
+              ? `Discover what is happening in ${cityName ?? data.city.replace(/-/g, ' ')} right now.`
+              : 'Discover what is happening around you right now.'}
+          </p>
+        </div>
+        <CityFilter resolvedCity={data?.city} />
       </header>
 
       {/* Location is requested in context, at the point where it visibly improves
@@ -61,7 +78,27 @@ export function DiscoverPage() {
         />
       )}
 
-      {data && data.modules.length === 0 && (
+      {/*
+        Two different empty states, because they have different remedies. Mado
+        not covering where you are is answered by choosing a city or sharing a
+        location; a covered city with nothing on is answered by coming back.
+        Collapsing them into one message was what made "nothing here" read as a
+        broken page.
+      */}
+      {data && data.resolvedBy === 'unknown' && (
+        <EmptyState
+          icon={<Compass className="size-8" />}
+          title="We do not know where you are yet"
+          description="Share your location and Mado will show what is on around you, or choose a city above."
+          action={
+            !location.granted ? (
+              <Button onClick={requestLocation}>Use my location</Button>
+            ) : undefined
+          }
+        />
+      )}
+
+      {data && data.resolvedBy !== 'unknown' && data.modules.length === 0 && (
         <EmptyState
           icon={<Compass className="size-8" />}
           title="Nothing published here yet"

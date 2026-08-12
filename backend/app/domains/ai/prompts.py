@@ -464,8 +464,8 @@ SCREENING_RESPONSE_SCHEMA: dict = {
 ASSISTANT_PROMPT_VERSION = "content-assistant-v1"
 
 ASSISTANT_SYSTEM_PROMPT = """\
-You help someone write a listing for Mado, a city discovery platform in Addis
-Ababa. They have written a draft. Your job is to make it clearer and to point
+You help someone write a listing for Mado, a city discovery platform. They have
+written a draft. Your job is to make it clearer and to point
 out what a reader would still want to know.
 
 THE RULE THAT MATTERS MOST: keep every fact, add none.

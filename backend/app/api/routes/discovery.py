@@ -12,6 +12,8 @@ from app.core import rate_limit
 from app.core.config import get_settings
 from app.core.envelope import CollectionEnvelope, Envelope, clamp_limit
 from app.core.errors import PermissionDeniedError
+from app.domains.catalog import repository as catalog_repo
+from app.domains.catalog.repository import RESOLVED_BY_UNKNOWN
 from app.domains.catalog.schemas import CamelModel, ExperienceSummary
 from app.domains.discovery.service import DiscoveryService, build_context
 from app.domains.explorer.learning import infer_preferences
@@ -26,9 +28,16 @@ class DiscoveryQuery(CamelModel):
 
     Location is optional throughout: spec DISC-002 requires a good cold start, so
     nothing here may become a precondition for useful results.
+
+    `city` is resolved rather than defaulted. It used to fall back to a single
+    configured city, which meant an explorer opening the app anywhere on earth
+    was told about that city as though they were standing in it. Now an explicit
+    choice wins, coordinates decide when there is no choice, and when neither is
+    available the answer is None - the interface asks instead of guessing.
     """
 
-    city: str = settings.default_city_slug
+    city: str | None = None
+    resolved_by: str = RESOLVED_BY_UNKNOWN
     latitude: float | None = None
     longitude: float | None = None
     raining: bool = False
@@ -36,14 +45,30 @@ class DiscoveryQuery(CamelModel):
 
 
 async def discovery_query(
-    city: str = Query(default=settings.default_city_slug),
+    session: SessionDep,
+    city: str | None = Query(default=None),
     latitude: float | None = Query(default=None, alias="lat"),
     longitude: float | None = Query(default=None, alias="lng"),
     raining: bool = Query(default=False, description="Current weather signal from the client."),
     limit: int = Query(default=12, ge=1, le=50),
 ) -> DiscoveryQuery:
+    """Decide which city this request is about.
+
+    An explicit `city` is a filter the explorer chose and always wins - somebody
+    planning a trip to a city they are not in yet is an ordinary thing to do.
+    Otherwise their coordinates decide, which is the common case and the one
+    that should need no interaction at all.
+    """
+    city, resolved_by = await catalog_repo.resolve_city_slug(
+        session, city=city, latitude=latitude, longitude=longitude
+    )
     return DiscoveryQuery(
-        city=city, latitude=latitude, longitude=longitude, raining=raining, limit=limit
+        city=city,
+        resolved_by=resolved_by,
+        latitude=latitude,
+        longitude=longitude,
+        raining=raining,
+        limit=limit,
     )
 
 
@@ -82,7 +107,16 @@ class FeedModuleOut(CamelModel):
 
 
 class CanvasOut(CamelModel):
-    city: str
+    """`city` is null when Mado does not cover where the explorer is.
+
+    An empty canvas with `resolvedBy: "unknown"` is a different thing from a
+    city with nothing on tonight, and the interface has to be able to tell them
+    apart: one asks for a location or a city, the other says it is a quiet
+    night.
+    """
+
+    city: str | None = None
+    resolved_by: str = RESOLVED_BY_UNKNOWN
     modules: list[FeedModuleOut]
 
 
@@ -100,12 +134,17 @@ async def discovery_canvas(
     session: SessionDep, user: OptionalUser, params: QueryDep
 ) -> Envelope[CanvasOut]:
     ctx = await _context(session, user, params)
-    modules = await DiscoveryService(session).build_canvas(
-        ctx, city_slug=params.city, module_limit=params.limit
+    modules = (
+        await DiscoveryService(session).build_canvas(
+            ctx, city_slug=params.city, module_limit=params.limit
+        )
+        if params.city
+        else []
     )
     return Envelope(
         data=CanvasOut(
             city=params.city,
+            resolved_by=params.resolved_by,
             modules=[
                 FeedModuleOut(
                     key=m.key, title=m.title, subtitle=m.subtitle, layout=m.layout, items=m.items
@@ -124,6 +163,9 @@ async def discovery_canvas(
 async def discover_now(
     session: SessionDep, user: OptionalUser, params: QueryDep
 ) -> CollectionEnvelope[ExperienceSummary]:
+    if not params.city:
+        # Nowhere resolved: an empty list rather than another city's evening.
+        return CollectionEnvelope(data=[])
     ctx = await _context(session, user, params)
     items = await DiscoveryService(session).happening_now(
         ctx, city_slug=params.city, limit=params.limit
@@ -139,6 +181,9 @@ async def discover_now(
 async def discover_tonight(
     session: SessionDep, user: OptionalUser, params: QueryDep
 ) -> CollectionEnvelope[ExperienceSummary]:
+    if not params.city:
+        # Nowhere resolved: an empty list rather than another city's evening.
+        return CollectionEnvelope(data=[])
     ctx = await _context(session, user, params)
     items = await DiscoveryService(session).tonight(ctx, city_slug=params.city, limit=params.limit)
     return CollectionEnvelope(data=items)
@@ -152,6 +197,9 @@ async def discover_tonight(
 async def discover_weekend(
     session: SessionDep, user: OptionalUser, params: QueryDep
 ) -> CollectionEnvelope[ExperienceSummary]:
+    if not params.city:
+        # Nowhere resolved: an empty list rather than another city's evening.
+        return CollectionEnvelope(data=[])
     ctx = await _context(session, user, params)
     items = await DiscoveryService(session).weekend(ctx, city_slug=params.city, limit=params.limit)
     return CollectionEnvelope(data=items)
@@ -165,6 +213,9 @@ async def discover_weekend(
 async def discover_trending(
     session: SessionDep, user: OptionalUser, params: QueryDep
 ) -> CollectionEnvelope[ExperienceSummary]:
+    if not params.city:
+        # Nowhere resolved: an empty list rather than another city's evening.
+        return CollectionEnvelope(data=[])
     ctx = await _context(session, user, params)
     items = await DiscoveryService(session).trending(ctx, city_slug=params.city, limit=params.limit)
     return CollectionEnvelope(data=items)
@@ -273,6 +324,10 @@ async def suggestions(
 async def for_you(
     session: SessionDep, user: OptionalUser, params: QueryDep
 ) -> CollectionEnvelope[ExperienceSummary]:
+    if not params.city:
+        # Recommendations are about a place. Without one they would be a list of
+        # things somewhere the explorer is not.
+        return CollectionEnvelope(data=[])
     ctx = await _context(session, user, params)
     items = await DiscoveryService(session).for_you(ctx, city_slug=params.city, limit=params.limit)
     return CollectionEnvelope(data=items)
