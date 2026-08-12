@@ -163,9 +163,11 @@ export interface FeedModule {
 }
 
 export interface DiscoveryCanvas {
-  /** Null when Mado does not cover where the explorer is. */
+  /** A city row, when one happens to match. Not the scoping key any more. */
   city: string | null
-  /** `chosen` | `location` | `unknown` - why this city, so the page can say. */
+  /** What to call where this is showing, when a place was searched by name. */
+  areaLabel?: string | null
+  /** `chosen` | `location` | `unknown` - why here, so the page can say. */
   resolvedBy: string
   modules: FeedModule[]
 }
@@ -403,6 +405,51 @@ export interface VisualSearchResult {
 export interface DeveloperScope {
   key: string
   description: string
+}
+
+/* --------------------------------------------------------- places */
+
+/**
+ * Somewhere, as an external geocoder describes it.
+ *
+ * Everything but the coordinates is optional: the administrative chain differs
+ * by country, and a London borough is not a state. Render what is there.
+ */
+export interface Place {
+  latitude: number
+  longitude: number
+  /** The shortest phrase a person would use. */
+  label: string
+  /** The wider area, for "near you in Brooklyn". */
+  area: string
+  displayName?: string
+  country?: string | null
+  countryCode?: string | null
+  region?: string | null
+  county?: string | null
+  locality?: string | null
+  district?: string | null
+  neighbourhood?: string | null
+  road?: string | null
+  postcode?: string | null
+  kind?: string | null
+  /** How far around this place to look first - a road is not a borough. */
+  suggestedRadiusKm: number
+  provider: string
+}
+
+export interface LocationContext {
+  resolved: boolean
+  place?: Place | null
+  reason?: string | null
+}
+
+/** A place the explorer picked, kept so the interface can name it. */
+export interface ChosenPlace {
+  label: string
+  latitude: number
+  longitude: number
+  radiusKm: number
 }
 
 /* ------------------------------------------------------- commerce */

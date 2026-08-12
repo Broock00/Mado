@@ -7,22 +7,61 @@ import { useAppStore } from '@/app/store'
 import type { ExperienceSummary } from '@/lib/types'
 
 /**
- * Discovery parameters assembled from location consent and any chosen city.
+ * Where discovery should look.
  *
- * `city` is sent only when the explorer picked one. Left out, the server
- * resolves it from the coordinates - which is the behaviour that should need no
- * interaction, and the reason this no longer carries a default. A default here
- * meant everybody was told about the same city wherever they opened the app.
+ * A chosen place wins - somebody who searched for Brooklyn is asking about
+ * Brooklyn, wherever they happen to be sitting. Otherwise the device's own
+ * coordinates, which is the case that should need no interaction at all.
+ *
+ * The point is sent, never the place's name. Sending the text would re-resolve
+ * it on every request, and a search that quietly resolved somewhere else the
+ * second time is a hard thing to notice and a harder one to report.
  */
 export function useDiscoveryParams(limit = 12): DiscoveryParams {
   const citySlug = useAppStore((s) => s.citySlug)
+  const place = useAppStore((s) => s.place)
   const location = useAppStore((s) => s.location)
+
+  if (place) {
+    return {
+      lat: place.latitude,
+      lng: place.longitude,
+      radiusKm: place.radiusKm,
+      limit,
+    }
+  }
   return {
     city: citySlug ?? undefined,
     lat: location.granted ? location.latitude : undefined,
     lng: location.granted ? location.longitude : undefined,
     limit,
   }
+}
+
+/**
+ * Where the explorer actually is, in words.
+ *
+ * Resolved from the device's coordinates through a geocoding service, so it
+ * names a street in a town nobody has ever added to Mado. Skipped entirely when
+ * a place has been chosen - the interface should say Brooklyn then, not the
+ * street the explorer is standing on.
+ */
+export function useLocationContext() {
+  const location = useAppStore((s) => s.location)
+  const place = useAppStore((s) => s.place)
+  const enabled = Boolean(
+    !place && location.granted && location.latitude != null && location.longitude != null,
+  )
+
+  return useQuery({
+    queryKey: ['place-context', location.latitude, location.longitude],
+    queryFn: () => api.resolvePlace(location.latitude!, location.longitude!),
+    enabled,
+    // Somebody does not move far enough to change neighbourhood while browsing,
+    // and every miss costs a request to somebody else's service.
+    staleTime: 30 * 60_000,
+    retry: false,
+  })
 }
 
 export function useCanvas() {

@@ -8,11 +8,8 @@
 
 import { Link } from 'react-router-dom'
 import { Compass, MapPin, Sparkles } from 'lucide-react'
-import { useQuery } from '@tanstack/react-query'
-
-import { api } from '@/lib/api'
-import { useCanvas, useRequestLocation, useToggleSave } from '@/app/hooks'
-import { CityFilter } from './CityFilter'
+import { useCanvas, useLocationContext, useRequestLocation, useToggleSave } from '@/app/hooks'
+import { PlaceFilter } from './PlaceFilter'
 import { useAppStore } from '@/app/store'
 import { ExperienceCard, ExperienceCardSkeleton } from '@/features/experiences/ExperienceCard'
 import { Button, EmptyState, SectionHeading } from '@/design-system/primitives'
@@ -20,14 +17,23 @@ import type { FeedModule } from '@/lib/types'
 
 export function DiscoverPage() {
   const { data, isLoading, isError, refetch } = useCanvas()
-  const { data: cities } = useQuery({
-    queryKey: ['cities', 'live'],
-    queryFn: () => api.cities(true),
-    staleTime: 30 * 60_000,
-  })
-  const cityName = cities?.find((c) => c.slug === data?.city)?.name
+  const chosen = useAppStore((s) => s.place)
   const location = useAppStore((s) => s.location)
   const requestLocation = useRequestLocation()
+  const { data: context } = useLocationContext()
+
+  // Whether the interface knows where it is looking at all. A chosen place
+  // always does; otherwise it needs a granted location.
+  const hasSomewhere = Boolean(chosen) || location.granted
+
+  // Named from where we are actually looking: the place that was chosen, or the
+  // one the explorer's coordinates resolved to. Never from a constant - this
+  // line used to say "Addis Ababa" to everybody on earth.
+  const where =
+    chosen?.label ??
+    (context?.resolved ? context.place?.area || context.place?.label : null) ??
+    data?.areaLabel ??
+    null
   const { toggle, requiresAuth } = useToggleSave()
 
   return (
@@ -40,12 +46,12 @@ export function DiscoverPage() {
           {/* Named from what the server resolved, never from a constant. This
               line used to say "Addis Ababa" to every explorer on earth. */}
           <p className="mt-1.5 text-sand-500">
-            {data?.city
-              ? `Discover what is happening in ${cityName ?? data.city.replace(/-/g, ' ')} right now.`
+            {where
+              ? `Discover what is happening around ${where} right now.`
               : 'Discover what is happening around you right now.'}
           </p>
         </div>
-        <CityFilter resolvedCity={data?.city} />
+        <PlaceFilter />
       </header>
 
       {/* Location is requested in context, at the point where it visibly improves
@@ -79,17 +85,21 @@ export function DiscoverPage() {
       )}
 
       {/*
-        Two different empty states, because they have different remedies. Mado
-        not covering where you are is answered by choosing a city or sharing a
-        location; a covered city with nothing on is answered by coming back.
-        Collapsing them into one message was what made "nothing here" read as a
-        broken page.
+        Two empty states, because they have different remedies. Not knowing
+        where to look is answered by sharing a location or searching; knowing
+        and finding nothing is answered by looking somewhere else or coming
+        back. Collapsing them is what made "nothing here" read as a broken page.
+
+        The condition is whether *we* have somewhere to look, not whether the
+        server matched a city row. Searching Brooklyn and being told "we do not
+        know where you are" was the version of this that shipped for one
+        screenshot: the header said Brooklyn and the body said we had no idea.
       */}
-      {data && data.resolvedBy === 'unknown' && (
+      {data && !hasSomewhere && (
         <EmptyState
           icon={<Compass className="size-8" />}
           title="We do not know where you are yet"
-          description="Share your location and Mado will show what is on around you, or choose a city above."
+          description="Share your location and Mado will show what is on around you, or search for anywhere above."
           action={
             !location.granted ? (
               <Button onClick={requestLocation}>Use my location</Button>
@@ -98,11 +108,11 @@ export function DiscoverPage() {
         />
       )}
 
-      {data && data.resolvedBy !== 'unknown' && data.modules.length === 0 && (
+      {data && hasSomewhere && data.modules.length === 0 && (
         <EmptyState
           icon={<Compass className="size-8" />}
-          title="Nothing published here yet"
-          description="This city has no published experiences at the moment. Try another city, or check back soon."
+          title="Nothing published around here yet"
+          description="Nobody has posted anything near this spot. Search for somewhere else above, or check back soon."
         />
       )}
 

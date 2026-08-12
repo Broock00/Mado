@@ -66,6 +66,8 @@ import type {
   Plan,
   PlanRequestInput,
   PrivacySettings,
+  Place,
+  LocationContext,
   Sdk,
   Ticketing,
   TicketTypeSummary,
@@ -256,6 +258,8 @@ export interface DiscoveryParams {
   city?: string
   lat?: number | null
   lng?: number | null
+  /** How far around the point to look. Omitted lets the server start small. */
+  radiusKm?: number
   raining?: boolean
   limit?: number
 }
@@ -834,6 +838,23 @@ export const api = {
     request<CollectionEnvelope<AuditEntry>>(`/api/v1/admin/audit${query({ days })}`).then(
       (r) => r.data,
     ),
+
+  // ---------------------------------------------------------------- places
+  /**
+   * Where these coordinates are. Nothing is stored on either side - the answer
+   * comes from a geocoding service, so it works for somewhere Mado has never
+   * heard of.
+   */
+  resolvePlace: (lat: number, lng: number) =>
+    request<Envelope<LocationContext>>(
+      `/api/v1/places/resolve${query({ lat, lng })}`,
+    ).then((r) => r.data),
+
+  /** Any place by name - a country, a city, a neighbourhood, a street. */
+  searchPlaces: (q: string, near?: { lat: number; lng: number } | null, limit = 6) =>
+    request<CollectionEnvelope<Place>>(
+      `/api/v1/places/search${query({ q, lat: near?.lat, lng: near?.lng, limit })}`,
+    ).then((r) => r.data),
 
   // -------------------------------------------------------------- commerce
   ticketing: (experienceId: string, occurrenceId: string) =>
