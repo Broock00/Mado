@@ -210,7 +210,7 @@ async def _search_experiences(
         outcome = await service.search_experiences(
             query,
             ctx,
-            area=Area(city_slug=city_slug) if city_slug else None,
+            city_slug=city_slug,
             category_slugs=categories,
             free_only=free_only,
             limit=limit,
@@ -252,7 +252,7 @@ async def _find_events(
 
     experiences = await catalog_repo.query_experiences(
         session,
-        city_slug=city_slug,
+        area=Area(city_slug=city_slug) if city_slug else None,
         category_slugs=categories,
         free_only=free_only,
         starts_between=(start, end) if end else None,

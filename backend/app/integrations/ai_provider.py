@@ -263,6 +263,13 @@ def _compose_offline_reply(*, intent: str, results: list[dict], context: dict) -
             "Try fewer words, or ask me for something nearby instead."
         )
 
+    # Nothing matched, and what follows is a substitute. Saying "here is what I
+    # found" over it would claim these answer the question, which is how a
+    # broken search reads as a thin catalogue - and did, for a while.
+    if context.get("substituted"):
+        listed = "\n".join(f"{i}. {_describe(item)}" for i, item in enumerate(results, 1))
+        return f"Nothing matched that exactly. Here is what else is on in {city}:\n\n{listed}"
+
     # A stated time window is the most useful thing to reflect back, so it takes
     # precedence over the intent-derived phrasing.
     if time_label:

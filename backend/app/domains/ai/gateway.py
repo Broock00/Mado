@@ -209,6 +209,7 @@ class AIGateway:
         # 3-5. Plan and execute tools. Facts are gathered before generation.
         plan_diff = None
         if classification.intent == intents.REFINE_PLAN and pending_plan:
+            substituted = False
             tool_calls, results, plan, plan_diff = await self._refine_plan(
                 text,
                 reading=reading,
@@ -217,7 +218,7 @@ class AIGateway:
                 city_slug=city_slug,
             )
         else:
-            tool_calls, results, plan = await self._execute_plan(
+            tool_calls, results, plan, substituted = await self._execute_plan(
                 classification, ctx=ctx, city_slug=city_slug
             )
 
@@ -232,6 +233,7 @@ class AIGateway:
             preferences=preferences,
             memories=memories,
             plan=plan,
+            substituted=substituted,
         )
 
         # 7. Validate. The reader proposes its own question when it could not read
@@ -453,7 +455,7 @@ class AIGateway:
 
     async def _execute_plan(
         self, classification: intents.Classification, *, ctx: RankingContext, city_slug: str
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None, bool]:
         """Choose and run tools for the classified intent.
 
         Deterministic routing rather than letting the model pick: for this set of
@@ -539,6 +541,8 @@ class AIGateway:
             seen.add(identifier)
             deduped.append(item)
 
+        substituted = False
+
         # A fallback so an explorer is never met with nothing at all - but *only*
         # when no time window was asked for. If someone asks what is on tonight and
         # nothing is, substituting undated places would answer a question they did
@@ -554,6 +558,11 @@ class AIGateway:
             )
             if fallback.ok:
                 deduped = fallback.items
+                # Recorded, because the reply must not present these as matches.
+                # Saying "here is what I found" over a list that answers nothing
+                # the explorer asked is how a broken search reads as a thin
+                # catalogue - which is exactly how a real one hid for a while.
+                substituted = True
                 tool_calls.append(
                     {
                         "tool": "search_experiences",
@@ -563,7 +572,7 @@ class AIGateway:
                     }
                 )
 
-        return tool_calls, deduped[:MAX_RESULTS_IN_CONTEXT], payload
+        return tool_calls, deduped[:MAX_RESULTS_IN_CONTEXT], payload, substituted
 
     async def _synthesize(
         self,
@@ -573,6 +582,7 @@ class AIGateway:
         history: list[Message],
         text: str,
         city_name: str,
+        substituted: bool = False,
         ctx: RankingContext,
         preferences: dict | None,
         memories: list[UserMemory] | None = None,
@@ -615,6 +625,11 @@ class AIGateway:
                 "time_label": classification.time_window.label
                 if classification.time_window
                 else None,
+                # True when nothing matched and the results below are a
+                # substitute. The reply has to say so: presenting them as
+                # matches is the difference between "we have little" and "your
+                # question was ignored", and only one of those is true.
+                "substituted": substituted,
             },
             temperature=0.4,
             # A plan reply lists several stops with times, so it needs more
