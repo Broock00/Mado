@@ -122,6 +122,20 @@ class Settings(BaseSettings):
     payment_provider: Literal["stub", "chapa"] = "stub"
     chapa_secret_key: str = ""
     chapa_base_url: str = "https://api.chapa.co/v1"
+
+    # Stripe is the intended primary once it is switched on, with Chapa kept for
+    # birr. Built and tested now, off until then: the flag decides whether the
+    # router ever reaches for it, so turning it on is a deployment decision
+    # rather than a code change, and turning it off again is too.
+    #
+    # While this is false, every order goes to whatever `payment_provider` says,
+    # which is the behaviour that exists today.
+    stripe_enabled: bool = False
+    stripe_secret_key: str = ""
+    stripe_base_url: str = "https://api.stripe.com/v1"
+    # Stripe signs with its own scheme and its own secret, so it does not share
+    # MADO_PAYMENT_WEBHOOK_SECRET with Chapa. Empty refuses every callback.
+    stripe_webhook_secret: str = ""
     # Used to authenticate the provider's callback. Empty means every callback
     # is refused - see `signature_is_valid`. That is the safe direction: an
     # unsigned callback issues tickets, so a missing setting must not become a

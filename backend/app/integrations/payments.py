@@ -61,12 +61,57 @@ FAILED = "failed"
 # Minor units per major unit, by currency. Not universal - JPY has none, KWD has
 # three - so the table is explicit rather than a hardcoded 100 that is wrong for
 # a currency nobody tested.
-MINOR_UNITS: dict[str, int] = {"ETB": 100, "USD": 100, "EUR": 100, "GBP": 100}
+MINOR_UNITS: dict[str, int] = {
+    "ETB": 100,
+    "USD": 100,
+    "EUR": 100,
+    "GBP": 100,
+    "KES": 100,
+    "NGN": 100,
+    "ZAR": 100,
+    # Zero-decimal. There is no such thing as a hundredth of a yen, and treating
+    # one as though there were multiplies every Japanese price by a hundred -
+    # which both Stripe and the customer would notice.
+    "JPY": 1,
+    "KRW": 1,
+    "VND": 1,
+    "UGX": 1,
+    "RWF": 1,
+}
 DEFAULT_MINOR_UNITS = 100
 
 
 class PaymentError(RuntimeError):
     """The provider could not be reached, or answered with something unusable."""
+
+
+def _provider_message(response: httpx.Response) -> str:
+    """The provider's own explanation of a refusal, if it gave one.
+
+    Both Chapa and Stripe answer a rejected request with a body that names the
+    problem - a field that failed validation, an amount below the minimum, a
+    callback URL they will not accept. Logging only the status code turns a
+    five-second fix into an afternoon, and the body is not sensitive: it
+    describes the request we sent, and the credential never appears in it.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return (response.text or "")[:400]
+
+    if isinstance(body, dict):
+        for key in ("message", "error", "detail"):
+            value = body.get(key)
+            if isinstance(value, str) and value:
+                return value[:400]
+            if isinstance(value, dict):
+                # Chapa nests per-field validation errors; Stripe puts its
+                # message inside `error`.
+                inner = value.get("message")
+                if isinstance(inner, str) and inner:
+                    return inner[:400]
+                return str(value)[:400]
+    return str(body)[:400]
 
 
 def minor_to_major(amount_minor: int, currency: str) -> Decimal:
@@ -90,6 +135,10 @@ class Checkout:
     provider: str
     reference: str
     redirect_url: str
+    # The provider's own handle for this attempt. Chapa is happy to be asked
+    # about our reference; Stripe can only be asked about its session id, so it
+    # has to be kept from the moment checkout starts.
+    provider_reference: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,7 +171,9 @@ class PaymentProvider(Protocol):
         callback_url: str,
     ) -> Checkout: ...
 
-    async def verify(self, reference: str) -> PaymentStatus: ...
+    async def verify(
+        self, reference: str, *, provider_reference: str | None = None
+    ) -> PaymentStatus: ...
 
     def signature_is_valid(self, *, body: bytes, signature: str | None) -> bool: ...
 
@@ -181,7 +232,11 @@ class ChapaPayments:
             raise PaymentError("Chapa did not return a checkout URL.")
         return Checkout(provider=self.name, reference=reference, redirect_url=url)
 
-    async def verify(self, reference: str) -> PaymentStatus:
+    async def verify(
+        self, reference: str, *, provider_reference: str | None = None
+    ) -> PaymentStatus:
+        # Chapa is asked about our own tx_ref, so the provider's handle is not
+        # needed here. Accepted for the protocol's sake.
         data = await self._get(f"/transaction/verify/{reference}")
         body = data.get("data") or {}
         raw = str(body.get("status") or data.get("status") or "").lower()
@@ -220,26 +275,242 @@ class ChapaPayments:
 
     async def _call(self, method: str, path: str, *, json: dict | None = None) -> dict:
         started = time.perf_counter()
+        outcome = "error"
         try:
-            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-                response = await client.request(
-                    method,
-                    f"{self._base}{path}",
-                    json=json,
-                    headers={"Authorization": f"Bearer {self._secret}"},
-                )
-            response.raise_for_status()
-            return response.json()
+            with tracing.span("payment"):
+                async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+                    response = await client.request(
+                        method,
+                        f"{self._base}{path}",
+                        json=json,
+                        headers={"Authorization": f"Bearer {self._secret}"},
+                    )
+                response.raise_for_status()
+                body = response.json()
+            outcome = "ok"
+            return body
+        except httpx.HTTPStatusError as exc:
+            # The status line alone is useless here. Chapa answers a rejected
+            # initialisation with 400 and a body naming the field it did not
+            # like, and without it an operator is left guessing between a bad
+            # key, an unreachable callback URL and an amount below the minimum.
+            detail = _provider_message(exc.response)
+            logger.warning(
+                "chapa_request_failed",
+                path=path,
+                status=exc.response.status_code,
+                detail=detail,
+            )
+            raise PaymentError(detail or str(exc)) from exc
         except (httpx.HTTPError, ValueError) as exc:
             logger.warning("chapa_request_failed", path=path, error=str(exc))
             raise PaymentError(str(exc)) from exc
         finally:
-            elapsed = (time.perf_counter() - started) * 1000
-            tracing.record_span("payment", elapsed)
-            metrics.observe_external("chapa", elapsed)
+            # These are the real names. An earlier version called
+            # `tracing.record_span` and `metrics.observe_external`, neither of
+            # which exists - and being in a `finally`, it raised AttributeError
+            # on every Chapa request, successful ones included. It never showed
+            # up because every test and every verification ran on the stub
+            # provider, which is exactly the blind spot a stub creates.
+            metrics.dependency_calls.inc("payment", outcome)
+            metrics.dependency_duration.observe(time.perf_counter() - started, "payment")
+
+
+# ------------------------------------------------------------------ Stripe
+
+
+class StripePayments:
+    """Stripe Checkout - the vendor strategy's "Payments (Global)" row.
+
+    Hosted, like Chapa: a Checkout Session is created server-side and the
+    explorer is redirected to a page Stripe owns. No card detail crosses this
+    process, which is the whole reason to use Checkout rather than payment
+    intents with fields of our own.
+
+    Three things differ from Chapa, and each is a way to get this wrong.
+
+    **Amounts are already in the smallest unit.** `unit_amount` is santim, cents
+    or - for yen - whole yen, which is exactly what this module carries
+    everywhere. So there is no conversion here, and adding one would multiply
+    every price by a hundred.
+
+    **Stripe answers about its session, not our reference.**
+    `client_reference_id` carries ours through and comes back on the webhook,
+    but nothing looks a session up by it. So the session id is kept when
+    checkout starts and used to verify afterwards.
+
+    **The signature covers a timestamp as well as the body.** Stripe sends
+    `t=<unix>,v1=<hex>` and signs `"{t}.{body}"`. Checking only the digest would
+    accept a correctly-signed payload replayed a month later, which for a
+    settlement webhook means issuing the tickets again.
+    """
+
+    name = "stripe"
+
+    # How far out of date a signed callback may be. Stripe's own libraries
+    # default to five minutes; the point is that a captured payload stops being
+    # useful quickly.
+    SIGNATURE_TOLERANCE_SECONDS = 300
+
+    def __init__(self, secret_key: str, webhook_secret: str, base_url: str) -> None:
+        self._secret = secret_key
+        self._webhook_secret = webhook_secret
+        self._base = base_url.rstrip("/")
+
+    async def start(
+        self,
+        *,
+        reference: str,
+        amount_minor: int,
+        currency: str,
+        email: str,
+        display_name: str,
+        description: str,
+        return_url: str,
+        callback_url: str,
+    ) -> Checkout:
+        separator = "&" if "?" in return_url else "?"
+        form = {
+            "mode": "payment",
+            # Stripe substitutes the id into this itself, so the return page can
+            # identify the session without trusting a query string the explorer
+            # could have edited.
+            "success_url": f"{return_url}{separator}session={{CHECKOUT_SESSION_ID}}",
+            "cancel_url": return_url,
+            "client_reference_id": reference,
+            "customer_email": email,
+            "line_items[0][quantity]": "1",
+            "line_items[0][price_data][currency]": currency.lower(),
+            "line_items[0][price_data][unit_amount]": str(amount_minor),
+            "line_items[0][price_data][product_data][name]": description[:250] or "Tickets",
+            "metadata[reference]": reference,
+        }
+        data = await self._call(
+            "POST", "/checkout/sessions", form=form, idempotency_key=reference
+        )
+        session_id = (data or {}).get("id")
+        url = (data or {}).get("url")
+        if not session_id or not url:
+            raise PaymentError("Stripe did not return a checkout session.")
+        return Checkout(
+            provider=self.name,
+            reference=reference,
+            redirect_url=url,
+            provider_reference=str(session_id),
+        )
+
+    async def verify(
+        self, reference: str, *, provider_reference: str | None = None
+    ) -> PaymentStatus:
+        if not provider_reference:
+            # Nothing to ask about yet. Reported as pending rather than failed:
+            # the order may simply not have reached Stripe, and failing it here
+            # would release places somebody is in the middle of paying for.
+            return PaymentStatus(reference=reference, state=PENDING, raw_state="no_session")
+
+        data = await self._call("GET", f"/checkout/sessions/{provider_reference}")
+        if data is None:
+            return PaymentStatus(reference=reference, state=PENDING, raw_state="unreachable")
+
+        raw = str(data.get("payment_status") or "").lower()
+        state = {"paid": PAID, "no_payment_required": PAID, "unpaid": PENDING}.get(raw, PENDING)
+        # An expired session will never be paid, and saying so releases the
+        # places now instead of holding them until the sweep notices.
+        if state == PENDING and str(data.get("status") or "").lower() == "expired":
+            state = FAILED
+
+        total = data.get("amount_total")
+        return PaymentStatus(
+            reference=reference,
+            state=state,
+            # Already minor units. No conversion, deliberately.
+            amount_minor=int(total) if isinstance(total, int) else None,
+            currency=str(data.get("currency") or "").upper() or None,
+            provider_reference=str(data.get("payment_intent") or provider_reference),
+            raw_state=raw or str(data.get("status") or ""),
+        )
+
+    def signature_is_valid(self, *, body: bytes, signature: str | None) -> bool:
+        """Stripe's `t=...,v1=...` scheme, timestamp included.
+
+        Refused outright with no secret configured, for the same reason as
+        Chapa: an unauthenticated callback issues tickets.
+        """
+        if not self._webhook_secret or not signature:
+            return False
+
+        parts = dict(piece.split("=", 1) for piece in signature.split(",") if "=" in piece)
+        timestamp = parts.get("t")
+        sent = parts.get("v1")
+        if not timestamp or not sent:
+            return False
+
+        try:
+            age = abs(time.time() - int(timestamp))
+        except ValueError:
+            return False
+        if age > self.SIGNATURE_TOLERANCE_SECONDS:
+            # Correctly signed but stale. For a settlement webhook, accepting a
+            # replay means issuing the tickets a second time.
+            logger.warning("stripe_signature_too_old", age_seconds=int(age))
+            return False
+
+        expected = hmac.new(
+            self._webhook_secret.encode(),
+            f"{timestamp}.".encode() + body,
+            hashlib.sha256,
+        ).hexdigest()
+        return hmac.compare_digest(expected, sent)
+
+    async def _call(
+        self,
+        method: str,
+        path: str,
+        *,
+        form: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict | None:
+        started = time.perf_counter()
+        outcome = "error"
+        headers = {"Authorization": f"Bearer {self._secret}"}
+        if idempotency_key:
+            # Retrying a create must not open a second session and charge twice.
+            headers["Idempotency-Key"] = idempotency_key
+        try:
+            with tracing.span("payment"):
+                async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+                    response = await client.request(
+                        method, f"{self._base}{path}", data=form, headers=headers
+                    )
+                response.raise_for_status()
+                body = response.json()
+            outcome = "ok"
+            return body
+        except httpx.HTTPStatusError as exc:
+            detail = _provider_message(exc.response)
+            logger.warning(
+                "stripe_request_failed",
+                path=path,
+                status=exc.response.status_code,
+                detail=detail,
+            )
+            if method == "POST":
+                raise PaymentError(detail or str(exc)) from exc
+            return None
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("stripe_request_failed", path=path, error=str(exc))
+            # A failed create must stop the checkout; a failed read is answered
+            # as "not yet", because the order may still be paid.
+            if method == "POST":
+                raise PaymentError(str(exc)) from exc
+            return None
+        finally:
+            metrics.dependency_calls.inc("payment", outcome)
+            metrics.dependency_duration.observe(time.perf_counter() - started, "payment")
 
 
 # -------------------------------------------------------------------- stub
+
 
 
 class StubPayments:
@@ -289,7 +560,9 @@ class StubPayments:
             redirect_url=f"{return_url}{separator}simulated=1",
         )
 
-    async def verify(self, reference: str) -> PaymentStatus:
+    async def verify(
+        self, reference: str, *, provider_reference: str | None = None
+    ) -> PaymentStatus:
         known = self._payments.get(reference)
         if known is None:
             return PaymentStatus(reference=reference, state=FAILED, raw_state="stub_unknown")
@@ -323,40 +596,90 @@ class StubPayments:
         expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
         return hmac.compare_digest(expected, signature.strip())
 
-_provider: PaymentProvider | None = None
+
+# ---------------------------------------------------------------- routing
+
+# The currency Chapa settles in. Everything else is Stripe's, once Stripe is
+# switched on - which is the whole reason the routing is by currency rather than
+# by a single global setting.
+CHAPA_CURRENCIES = frozenset({"ETB"})
+
+_providers: dict[str, PaymentProvider] = {}
+
+
+def _build(name: str) -> PaymentProvider:
+    settings = get_settings()
+
+    if name == "chapa":
+        if not settings.chapa_secret_key:
+            logger.warning("payment_provider_unconfigured", requested="chapa")
+            return StubPayments()
+        return ChapaPayments(
+            settings.chapa_secret_key,
+            settings.payment_webhook_secret,
+            settings.chapa_base_url,
+        )
+
+    if name == "stripe":
+        if not settings.stripe_secret_key:
+            logger.warning("payment_provider_unconfigured", requested="stripe")
+            return StubPayments()
+        return StripePayments(
+            settings.stripe_secret_key,
+            settings.stripe_webhook_secret,
+            settings.stripe_base_url,
+        )
+
+    return StubPayments()
+
+
+def provider_named(name: str | None) -> PaymentProvider:
+    """The provider an order was actually started with.
+
+    Settlement must ask the provider that holds the money, not whichever one the
+    configuration currently prefers. An order started on Chapa and verified
+    against Stripe would be reported unpaid and have its places released while
+    the payment sat there perfectly complete.
+    """
+    key = (name or "").lower() or "stub"
+    if key not in _providers:
+        _providers[key] = _build(key)
+    return _providers[key]
+
+
+def provider_for(currency: str) -> PaymentProvider:
+    """Which provider should take this payment.
+
+    Currency decides, because that is the fact that actually constrains it:
+    Chapa settles birr and Stripe settles most other things, and a platform
+    operating in more than one country cannot express that with one global
+    setting.
+
+    Stripe is only ever reached when `MADO_STRIPE_ENABLED` is true. Until then
+    the answer is whatever `MADO_PAYMENT_PROVIDER` says, which keeps today's
+    behaviour exactly as it is - the adapter is built and tested and simply not
+    used.
+    """
+    settings = get_settings()
+    code = (currency or "").upper()
+
+    if settings.stripe_enabled and code not in CHAPA_CURRENCIES:
+        return provider_named("stripe")
+    if settings.stripe_enabled and code in CHAPA_CURRENCIES and settings.chapa_secret_key:
+        return provider_named("chapa")
+    return provider_named(settings.payment_provider)
 
 
 def get_provider() -> PaymentProvider:
-    """The configured provider, built once.
+    """The default provider, for callers with no currency to hand.
 
-    Chapa needs a secret; without one it would fail on every call, so an
-    unconfigured deployment gets the stub and says so in the log rather than
-    presenting a checkout that cannot work.
+    Kept because the simulated-checkout endpoint and a few tests need to know
+    whether this deployment is running on the stub. Anything taking money should
+    use :func:`provider_for`.
     """
-    global _provider
-    if _provider is not None:
-        return _provider
-
-    settings = get_settings()
-    choice = settings.payment_provider
-    if choice == "chapa":
-        if not settings.chapa_secret_key:
-            logger.warning("payment_provider_unconfigured", requested="chapa")
-            _provider = StubPayments()
-        else:
-            _provider = ChapaPayments(
-                settings.chapa_secret_key,
-                settings.payment_webhook_secret,
-                settings.chapa_base_url,
-            )
-    else:
-        _provider = StubPayments()
-
-    logger.info("payment_provider_selected", provider=_provider.name)
-    return _provider
+    return provider_named(get_settings().payment_provider)
 
 
 def reset_provider() -> None:
-    """Drop the cached provider. For tests and for a settings change."""
-    global _provider
-    _provider = None
+    """Drop the cached providers. For tests and for a settings change."""
+    _providers.clear()

@@ -340,15 +340,24 @@ async def withdraw_ticket_type(
 )
 async def payment_callback(request: Request, session: SessionDep) -> Response:
     body = await request.body()
-    signature = (
-        request.headers.get("chapa-signature")
-        or request.headers.get("x-chapa-signature")
-        or request.headers.get("x-mado-signature")
-    )
 
-    provider = payments.get_provider()
+    # Which provider is calling, decided by the header it signs with. Both
+    # providers post here and each has its own secret and its own scheme, so
+    # verifying with the wrong one would refuse every genuine callback.
+    stripe_signature = request.headers.get("stripe-signature")
+    if stripe_signature:
+        provider = payments.provider_named("stripe")
+        signature = stripe_signature
+    else:
+        provider = payments.provider_named("chapa")
+        signature = (
+            request.headers.get("chapa-signature")
+            or request.headers.get("x-chapa-signature")
+            or request.headers.get("x-mado-signature")
+        )
+
     if not provider.signature_is_valid(body=body, signature=signature):
-        logger.warning("payment_callback_rejected", reason="bad_signature")
+        logger.warning("payment_callback_rejected", reason="bad_signature", provider=provider.name)
         # 204 either way. A different status for a bad signature tells somebody
         # probing which of their guesses was closer.
         return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -358,7 +367,15 @@ async def payment_callback(request: Request, session: SessionDep) -> Response:
     except ValueError:
         payload = {}
 
-    reference = str(payload.get("tx_ref") or payload.get("reference") or "").strip()
+    # Stripe wraps the interesting part in an event envelope and carries our own
+    # reference as `client_reference_id`; Chapa posts the transaction directly.
+    inner = ((payload.get("data") or {}).get("object") or {}) if isinstance(payload, dict) else {}
+    reference = str(
+        payload.get("tx_ref")
+        or payload.get("reference")
+        or inner.get("client_reference_id")
+        or ""
+    ).strip()
     if not reference:
         logger.warning("payment_callback_rejected", reason="no_reference")
         return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -372,6 +389,9 @@ async def payment_callback(request: Request, session: SessionDep) -> Response:
     await service.settle(
         order,
         source="webhook",
+        # Stripe's event id is the natural idempotency key and is unique per
+        # delivery attempt group; Chapa supplies neither, so `settle` falls back
+        # to one built from the reference.
         external_id=str(payload.get("event_id") or payload.get("id") or "") or None,
         payload=payload if isinstance(payload, dict) else {},
     )

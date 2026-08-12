@@ -138,6 +138,11 @@ class CheckoutService:
                 code="TOO_MANY_TICKETS",
             )
 
+        # Checked before anything is held. Raising after the seats are taken
+        # would leave a hold on an order that can never be paid, and the places
+        # would sit out of the room until the sweep expired them.
+        email = self._email_of(user)
+
         occurrence = await self.session.get(EventInstance, occurrence_id)
         if occurrence is None:
             raise NotFoundError("That date does not exist.", code="OCCURRENCE_NOT_FOUND")
@@ -250,13 +255,16 @@ class CheckoutService:
         # guess which order it was about.
         return_url = f"{return_url_base.rstrip('/')}/{order.id}"
 
-        provider = payments.get_provider()
+        # Chosen by the money, not by a global setting: Chapa settles birr and
+        # Stripe settles the rest, and a platform operating in more than one
+        # country cannot express that with one switch.
+        provider = payments.provider_for(order.currency)
         try:
             checkout = await provider.start(
                 reference=order.reference,
                 amount_minor=order.amount_minor,
                 currency=order.currency,
-                email=self._email_of(user),
+                email=email,
                 display_name=self._name_of(user),
                 description=f"{experience.title}",
                 return_url=return_url,
@@ -275,6 +283,9 @@ class CheckoutService:
 
         order.provider = checkout.provider
         order.checkout_url = checkout.redirect_url
+        # Kept from the start because Stripe can only be asked about its own
+        # session id, not about our reference.
+        order.provider_reference = checkout.provider_reference
         await self.session.flush()
         logger.info(
             "checkout_started",
@@ -311,8 +322,14 @@ class CheckoutService:
         if order.status in (ORDER_CANCELLED, ORDER_FAILED, ORDER_EXPIRED):
             return order
 
-        provider = payments.get_provider()
-        status = await provider.verify(order.reference)
+        # The provider that holds the money, not whichever one the configuration
+        # currently prefers. An order started on Chapa and verified against
+        # Stripe would come back unpaid and have its places released while the
+        # payment sat there perfectly complete.
+        provider = payments.provider_named(order.provider)
+        status = await provider.verify(
+            order.reference, provider_reference=order.provider_reference
+        )
 
         # Recorded before acting, and unique per (provider, external_id), so a
         # second delivery of the same signal loses the race and does nothing.
@@ -454,8 +471,24 @@ class CheckoutService:
         return status.amount_minor == order.amount_minor
 
     def _email_of(self, user: User) -> str:
+        """The address the provider will send a receipt to.
+
+        Refused rather than invented when there is none. The previous fallback
+        was `explorer@mado.local`, and `.local` is a reserved TLD that any real
+        provider rejects - Chapa answers `{"email": ["validation.email"]}` and
+        the explorer sees "payments are unavailable", which is both wrong and
+        unactionable. Saying what is missing takes them somewhere they can fix
+        it.
+        """
         profile = getattr(user, "profile", None)
-        return (getattr(profile, "email", None) or "").strip() or "explorer@mado.local"
+        email = (getattr(profile, "email", None) or "").strip()
+        if not email:
+            raise ValidationError(
+                "Add an email address to your profile before buying tickets - "
+                "the payment provider sends the receipt there.",
+                code="EMAIL_REQUIRED_FOR_PAYMENT",
+            )
+        return email
 
     def _name_of(self, user: User) -> str:
         profile = getattr(user, "profile", None)
