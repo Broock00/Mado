@@ -13,11 +13,17 @@ from app.core.config import get_settings
 from app.core.envelope import CollectionEnvelope, Envelope, clamp_limit
 from app.core.errors import PermissionDeniedError
 from app.domains.catalog import repository as catalog_repo
-from app.domains.catalog.repository import RESOLVED_BY_UNKNOWN
+from app.domains.catalog.repository import (
+    RADIUS_STEPS_KM,
+    RESOLVED_BY_CHOSEN,
+    RESOLVED_BY_UNKNOWN,
+    Area,
+)
 from app.domains.catalog.schemas import CamelModel, ExperienceSummary
 from app.domains.discovery.service import DiscoveryService, build_context
 from app.domains.explorer.learning import infer_preferences
 from app.domains.explorer.service import ExplorerService
+from app.integrations import places as places_module
 
 router = APIRouter(tags=["discovery"])
 settings = get_settings()
@@ -40,6 +46,12 @@ class DiscoveryQuery(CamelModel):
     resolved_by: str = RESOLVED_BY_UNKNOWN
     latitude: float | None = None
     longitude: float | None = None
+    radius_km: float | None = None
+    # Where the query is about, as a point and a radius. This is the real
+    # scoping key; `city` survives for an explicit choice and for the label.
+    area: Area | None = None
+    # Where the point came from, in words, for "near you in Brooklyn".
+    place_label: str | None = None
     raining: bool = False
     limit: int = Field(default=12, ge=1, le=50)
 
@@ -49,24 +61,77 @@ async def discovery_query(
     city: str | None = Query(default=None),
     latitude: float | None = Query(default=None, alias="lat"),
     longitude: float | None = Query(default=None, alias="lng"),
+    radius_km: float | None = Query(default=None, alias="radiusKm", ge=0.2, le=200),
+    place: str | None = Query(
+        default=None,
+        description=(
+            "Anywhere by name - a neighbourhood, a street, a city. Resolved "
+            "through a geocoding service, so it need not exist in Mado."
+        ),
+    ),
     raining: bool = Query(default=False, description="Current weather signal from the client."),
     limit: int = Query(default=12, ge=1, le=50),
 ) -> DiscoveryQuery:
-    """Decide which city this request is about.
+    """Work out where this request is about.
 
-    An explicit `city` is a filter the explorer chose and always wins - somebody
-    planning a trip to a city they are not in yet is an ordinary thing to do.
-    Otherwise their coordinates decide, which is the common case and the one
-    that should need no interaction at all.
+    Three ways, in order of how explicit they are. A named `place` wins: typing
+    "Brooklyn" means Brooklyn even from Manhattan, and it is resolved through a
+    geocoder rather than looked up in a table, so it works for a street or a
+    neighbourhood nobody has ever added. Then an explicit `city`, which is a
+    filter the explorer chose. Otherwise their own coordinates, which is the
+    common case and should need no interaction at all.
+
+    The result is a point and a radius. That is the real scoping key now - a
+    curated city row is a label, not a precondition for asking what is nearby.
     """
-    city, resolved_by = await catalog_repo.resolve_city_slug(
-        session, city=city, latitude=latitude, longitude=longitude
-    )
+    place_label: str | None = None
+    area: Area | None = None
+
+    if place:
+        near = (latitude, longitude) if latitude is not None and longitude is not None else None
+        found = await places_module.get_provider().search(place, near=near, limit=1)
+        if found:
+            target = found[0]
+            place_label = target.area_label or target.label
+            area = Area(
+                latitude=target.latitude,
+                longitude=target.longitude,
+                # The place decides how wide to look: a road is a short walk and
+                # a borough is not.
+                radius_km=radius_km or target.suggested_radius_km,
+            )
+
+    if area is None and city:
+        area = Area(city_slug=city)
+
+    if area is None and latitude is not None and longitude is not None:
+        area = Area(
+            latitude=latitude,
+            longitude=longitude,
+            radius_km=radius_km or RADIUS_STEPS_KM[0],
+        )
+
+    if place_label is not None:
+        # A named place answers "where is this showing" by itself, and it may be
+        # somewhere with no city row at all. Resolving the explorer's own city
+        # here would label a Brooklyn search with the city they are sitting in.
+        resolved_by = RESOLVED_BY_CHOSEN
+        city = None
+    else:
+        # The city is still resolved, because the interface says where it is
+        # showing and the seeded catalogue is organised that way. It no longer
+        # decides what is searched.
+        city, resolved_by = await catalog_repo.resolve_city_slug(
+            session, city=city, latitude=latitude, longitude=longitude
+        )
     return DiscoveryQuery(
         city=city,
         resolved_by=resolved_by,
         latitude=latitude,
         longitude=longitude,
+        radius_km=radius_km,
+        area=area,
+        place_label=place_label,
         raining=raining,
         limit=limit,
     )
@@ -116,6 +181,10 @@ class CanvasOut(CamelModel):
     """
 
     city: str | None = None
+    # What to call where this is showing. Set when a place was searched for by
+    # name, which may be nowhere the explorer has ever been and may have no
+    # city row at all.
+    area_label: str | None = None
     resolved_by: str = RESOLVED_BY_UNKNOWN
     modules: list[FeedModuleOut]
 
@@ -136,14 +205,15 @@ async def discovery_canvas(
     ctx = await _context(session, user, params)
     modules = (
         await DiscoveryService(session).build_canvas(
-            ctx, city_slug=params.city, module_limit=params.limit
+            ctx, area=params.area, module_limit=params.limit
         )
-        if params.city
+        if params.area is not None
         else []
     )
     return Envelope(
         data=CanvasOut(
             city=params.city,
+            area_label=params.place_label,
             resolved_by=params.resolved_by,
             modules=[
                 FeedModuleOut(
@@ -163,12 +233,12 @@ async def discovery_canvas(
 async def discover_now(
     session: SessionDep, user: OptionalUser, params: QueryDep
 ) -> CollectionEnvelope[ExperienceSummary]:
-    if not params.city:
+    if params.area is None:
         # Nowhere resolved: an empty list rather than another city's evening.
         return CollectionEnvelope(data=[])
     ctx = await _context(session, user, params)
     items = await DiscoveryService(session).happening_now(
-        ctx, city_slug=params.city, limit=params.limit
+        ctx, area=params.area, limit=params.limit
     )
     return CollectionEnvelope(data=items)
 
@@ -181,11 +251,11 @@ async def discover_now(
 async def discover_tonight(
     session: SessionDep, user: OptionalUser, params: QueryDep
 ) -> CollectionEnvelope[ExperienceSummary]:
-    if not params.city:
+    if params.area is None:
         # Nowhere resolved: an empty list rather than another city's evening.
         return CollectionEnvelope(data=[])
     ctx = await _context(session, user, params)
-    items = await DiscoveryService(session).tonight(ctx, city_slug=params.city, limit=params.limit)
+    items = await DiscoveryService(session).tonight(ctx, area=params.area, limit=params.limit)
     return CollectionEnvelope(data=items)
 
 
@@ -197,11 +267,11 @@ async def discover_tonight(
 async def discover_weekend(
     session: SessionDep, user: OptionalUser, params: QueryDep
 ) -> CollectionEnvelope[ExperienceSummary]:
-    if not params.city:
+    if params.area is None:
         # Nowhere resolved: an empty list rather than another city's evening.
         return CollectionEnvelope(data=[])
     ctx = await _context(session, user, params)
-    items = await DiscoveryService(session).weekend(ctx, city_slug=params.city, limit=params.limit)
+    items = await DiscoveryService(session).weekend(ctx, area=params.area, limit=params.limit)
     return CollectionEnvelope(data=items)
 
 
@@ -213,11 +283,11 @@ async def discover_weekend(
 async def discover_trending(
     session: SessionDep, user: OptionalUser, params: QueryDep
 ) -> CollectionEnvelope[ExperienceSummary]:
-    if not params.city:
+    if params.area is None:
         # Nowhere resolved: an empty list rather than another city's evening.
         return CollectionEnvelope(data=[])
     ctx = await _context(session, user, params)
-    items = await DiscoveryService(session).trending(ctx, city_slug=params.city, limit=params.limit)
+    items = await DiscoveryService(session).trending(ctx, area=params.area, limit=params.limit)
     return CollectionEnvelope(data=items)
 
 
@@ -233,7 +303,9 @@ async def discover_nearby(
     radius_km: float = Query(default=3.0, ge=0.2, le=25, alias="radiusKm"),
 ) -> CollectionEnvelope[ExperienceSummary]:
     ctx = await _context(session, user, params)
-    items = await DiscoveryService(session).nearby(ctx, radius_km=radius_km, limit=params.limit)
+    items = await DiscoveryService(session).nearby(
+        ctx, area=params.area, radius_km=radius_km, limit=params.limit
+    )
     return CollectionEnvelope(data=items)
 
 
@@ -324,12 +396,12 @@ async def suggestions(
 async def for_you(
     session: SessionDep, user: OptionalUser, params: QueryDep
 ) -> CollectionEnvelope[ExperienceSummary]:
-    if not params.city:
+    if params.area is None:
         # Recommendations are about a place. Without one they would be a list of
         # things somewhere the explorer is not.
         return CollectionEnvelope(data=[])
     ctx = await _context(session, user, params)
-    items = await DiscoveryService(session).for_you(ctx, city_slug=params.city, limit=params.limit)
+    items = await DiscoveryService(session).for_you(ctx, area=params.area, limit=params.limit)
     return CollectionEnvelope(data=items)
 
 

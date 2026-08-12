@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import get_logger
 from app.domains.catalog import repository as catalog_repo
 from app.domains.catalog.models import Experience
+from app.domains.catalog.repository import Area
 from app.domains.catalog.schemas import ExperienceSummary
 from app.domains.catalog.serializers import to_summary
 from app.domains.discovery.embedding_service import (
@@ -106,13 +107,34 @@ class DiscoveryService:
             for item in ranked
         ]
 
+    async def _pool(self, *, area: Area, **filters) -> list:
+        """Candidates for one rail, looking close in before looking further out.
+
+        "What is happening near you" should mean the next street before it means
+        the far side of the city. So the smallest radius is tried first and the
+        search only widens when there is not enough nearby to rank into
+        anything - an empty answer at two kilometres is not an empty city.
+
+        Widening is not the same as ignoring distance: the ranker scores
+        proximity, so a wider pool still puts the closest things first. This
+        only decides what it is allowed to consider.
+        """
+        found: list = []
+        for step in area.ladder():
+            found = await catalog_repo.query_experiences(
+                self.session, area=step, limit=CANDIDATE_POOL, **filters
+            )
+            if len(found) >= catalog_repo.MIN_CANDIDATES:
+                break
+        return found
+
     # ----------------------------------------------------------------- canvas
 
     async def build_canvas(
         self,
         ctx: RankingContext,
         *,
-        city_slug: str,
+        area: Area,
         module_limit: int = 12,
     ) -> list[FeedModule]:
         """Assemble the Discovery Canvas.
@@ -123,7 +145,7 @@ class DiscoveryService:
         """
         modules: list[FeedModule] = []
 
-        for_you = await self.for_you(ctx, city_slug=city_slug, limit=module_limit)
+        for_you = await self.for_you(ctx, area=area, limit=module_limit)
         if for_you:
             modules.append(
                 FeedModule(
@@ -135,7 +157,7 @@ class DiscoveryService:
                 )
             )
 
-        tonight = await self.tonight(ctx, city_slug=city_slug, limit=module_limit)
+        tonight = await self.tonight(ctx, area=area, limit=module_limit)
         if tonight:
             modules.append(
                 FeedModule(
@@ -147,8 +169,8 @@ class DiscoveryService:
                 )
             )
 
-        if ctx.has_location:
-            nearby = await self.nearby(ctx, limit=module_limit)
+        if ctx.has_location or (area is not None and area.has_point):
+            nearby = await self.nearby(ctx, area=area, limit=module_limit)
             if nearby:
                 modules.append(
                     FeedModule(
@@ -160,7 +182,7 @@ class DiscoveryService:
                     )
                 )
 
-        weekend = await self.weekend(ctx, city_slug=city_slug, limit=module_limit)
+        weekend = await self.weekend(ctx, area=area, limit=module_limit)
         if weekend:
             modules.append(
                 FeedModule(
@@ -172,7 +194,7 @@ class DiscoveryService:
                 )
             )
 
-        free = await self.free_experiences(ctx, city_slug=city_slug, limit=module_limit)
+        free = await self.free_experiences(ctx, area=area, limit=module_limit)
         if free:
             modules.append(
                 FeedModule(
@@ -184,7 +206,7 @@ class DiscoveryService:
                 )
             )
 
-        trending = await self.trending(ctx, city_slug=city_slug, limit=module_limit)
+        trending = await self.trending(ctx, area=area, limit=module_limit)
         if trending:
             modules.append(
                 FeedModule(
@@ -196,7 +218,7 @@ class DiscoveryService:
                 )
             )
 
-        hidden = await self.hidden_gems(ctx, city_slug=city_slug, limit=module_limit)
+        hidden = await self.hidden_gems(ctx, area=area, limit=module_limit)
         if hidden:
             modules.append(
                 FeedModule(
@@ -213,88 +235,86 @@ class DiscoveryService:
     # ---------------------------------------------------------------- modules
 
     async def for_you(
-        self, ctx: RankingContext, *, city_slug: str, limit: int = 12
+        self, ctx: RankingContext, *, area: Area, limit: int = 12
     ) -> list[ExperienceSummary]:
-        candidates = await catalog_repo.query_experiences(
-            self.session, city_slug=city_slug, limit=CANDIDATE_POOL
-        )
+        candidates = await self._pool(area=area)
         return self.summarize(candidates, ctx, limit=limit)
 
     async def happening_now(
-        self, ctx: RankingContext, *, city_slug: str, limit: int = 12
+        self, ctx: RankingContext, *, area: Area, limit: int = 12
     ) -> list[ExperienceSummary]:
         """In progress or starting within the hour."""
         window = (ctx.now - timedelta(hours=2), ctx.now + timedelta(hours=1))
-        candidates = await catalog_repo.query_experiences(
-            self.session,
-            city_slug=city_slug,
-            starts_between=window,
-            limit=CANDIDATE_POOL,
-        )
+        candidates = await self._pool(area=area, starts_between=window)
         return self.summarize(candidates, ctx, limit=limit)
 
     async def tonight(
-        self, ctx: RankingContext, *, city_slug: str, limit: int = 12
+        self, ctx: RankingContext, *, area: Area, limit: int = 12
     ) -> list[ExperienceSummary]:
-        candidates = await catalog_repo.query_experiences(
-            self.session,
-            city_slug=city_slug,
-            starts_between=tonight_window(ctx.now),
-            limit=CANDIDATE_POOL,
-        )
+        candidates = await self._pool(area=area, starts_between=tonight_window(ctx.now))
         return self.summarize(candidates, ctx, limit=limit)
 
     async def weekend(
-        self, ctx: RankingContext, *, city_slug: str, limit: int = 12
+        self, ctx: RankingContext, *, area: Area, limit: int = 12
     ) -> list[ExperienceSummary]:
-        candidates = await catalog_repo.query_experiences(
-            self.session,
-            city_slug=city_slug,
-            starts_between=weekend_window(ctx.now),
-            limit=CANDIDATE_POOL,
-        )
+        candidates = await self._pool(area=area, starts_between=weekend_window(ctx.now))
         return self.summarize(candidates, ctx, limit=limit)
 
     async def nearby(
-        self, ctx: RankingContext, *, radius_km: float = 5.0, limit: int = 12
+        self,
+        ctx: RankingContext,
+        *,
+        area: Area | None = None,
+        radius_km: float = 5.0,
+        limit: int = 12,
     ) -> list[ExperienceSummary]:
-        if not ctx.has_location:
+        """Close to the area being looked at, which is not always the explorer.
+
+        Somebody in Addis searching "Brooklyn" is asking about Brooklyn. Reading
+        the coordinates off the ranking context instead would answer with things
+        near them - the one rail on the page confidently showing the wrong
+        continent, under a heading that says "near you".
+        """
+        point = (
+            (area.latitude, area.longitude)
+            if area is not None and area.has_point
+            else (ctx.latitude, ctx.longitude)
+            if ctx.has_location
+            else None
+        )
+        if point is None:
             return []
+
         candidates = await catalog_repo.nearby_experiences(
             self.session,
-            latitude=ctx.latitude,
-            longitude=ctx.longitude,
-            radius_km=radius_km,
+            latitude=point[0],
+            longitude=point[1],
+            radius_km=(area.radius_km if area is not None and area.has_point else None)
+            or radius_km,
             limit=CANDIDATE_POOL,
         )
         return self.summarize(candidates, ctx, limit=limit)
 
     async def trending(
-        self, ctx: RankingContext, *, city_slug: str, limit: int = 12
+        self, ctx: RankingContext, *, area: Area, limit: int = 12
     ) -> list[ExperienceSummary]:
-        candidates = await catalog_repo.query_experiences(
-            self.session, city_slug=city_slug, limit=CANDIDATE_POOL
-        )
+        candidates = await self._pool(area=area)
         # Trend score is the point of this rail, so it is sorted on directly rather
         # than blended - but the full ranker still supplies reasons and distances.
         candidates.sort(key=lambda exp: float(exp.trend_score or 0), reverse=True)
         return self.summarize(candidates[: limit * 2], ctx, limit=limit, diversify=False)
 
     async def free_experiences(
-        self, ctx: RankingContext, *, city_slug: str, limit: int = 12
+        self, ctx: RankingContext, *, area: Area, limit: int = 12
     ) -> list[ExperienceSummary]:
-        candidates = await catalog_repo.query_experiences(
-            self.session, city_slug=city_slug, free_only=True, limit=CANDIDATE_POOL
-        )
+        candidates = await self._pool(area=area, free_only=True)
         return self.summarize(candidates, ctx, limit=limit)
 
     async def hidden_gems(
-        self, ctx: RankingContext, *, city_slug: str, limit: int = 12
+        self, ctx: RankingContext, *, area: Area, limit: int = 12
     ) -> list[ExperienceSummary]:
         """High quality, low popularity - the serendipity rail (spec principle 14)."""
-        candidates = await catalog_repo.query_experiences(
-            self.session, city_slug=city_slug, limit=CANDIDATE_POOL
-        )
+        candidates = await self._pool(area=area)
         gems = [
             exp
             for exp in candidates
@@ -303,14 +323,9 @@ class DiscoveryService:
         return self.summarize(gems, ctx, limit=limit)
 
     async def by_category(
-        self, ctx: RankingContext, *, city_slug: str, category_slug: str, limit: int = 24
+        self, ctx: RankingContext, *, area: Area, category_slug: str, limit: int = 24
     ) -> list[ExperienceSummary]:
-        candidates = await catalog_repo.query_experiences(
-            self.session,
-            city_slug=city_slug,
-            category_slugs=[category_slug],
-            limit=CANDIDATE_POOL,
-        )
+        candidates = await self._pool(area=area, category_slugs=[category_slug])
         return self.summarize(candidates, ctx, limit=limit, diversify=False)
 
     async def similar_to(
@@ -403,7 +418,7 @@ class DiscoveryService:
 
             candidates = await catalog_repo.query_experiences(
                 self.session,
-                city_slug=city_slug,
+                area=Area(city_slug=city_slug) if city_slug else None,
                 category_slugs=category_slugs,
                 free_only=free_only,
                 experience_type=experience_type,

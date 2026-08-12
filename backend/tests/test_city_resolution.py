@@ -234,7 +234,11 @@ class TestNothingDefaultsToOneCityAnyMore:
         assert "Africa/Addis_Ababa" not in source
         assert "resolve_city_slug" in source
 
-    def test_a_feed_with_no_city_returns_nothing_rather_than_another_city(self):
+    def test_a_feed_with_nowhere_to_look_returns_nothing(self):
+        """The guard is on the *area* now, not the city: discovery is scoped by
+        a point and a radius, and a curated city row is a label rather than a
+        precondition. Either way the rule is the same - no somewhere, no
+        results, rather than somebody else's evening."""
         import inspect
 
         from app.api.routes import discovery
@@ -247,7 +251,7 @@ class TestNothingDefaultsToOneCityAnyMore:
             discovery.for_you,
         ):
             source = inspect.getsource(endpoint)
-            assert "if not params.city:" in source, endpoint.__name__
+            assert "if params.area is None:" in source, endpoint.__name__
 
     def test_but_search_still_searches_everywhere(self):
         """Search is an explicit act, and the repository already treats a null

@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import PermissionDeniedError
 from app.domains.catalog import repository as catalog_repo
+from app.domains.catalog.repository import Area
 from app.domains.catalog.serializers import next_event_of
 from app.domains.discovery.ranking import RankingContext
 from app.domains.discovery.service import DiscoveryService
@@ -209,7 +210,7 @@ async def _search_experiences(
         outcome = await service.search_experiences(
             query,
             ctx,
-            city_slug=city_slug,
+            area=Area(city_slug=city_slug) if city_slug else None,
             category_slugs=categories,
             free_only=free_only,
             limit=limit,
@@ -220,7 +221,7 @@ async def _search_experiences(
         # serves better than an empty full-text search.
         experiences = await catalog_repo.query_experiences(
             session,
-            city_slug=city_slug,
+            area=Area(city_slug=city_slug) if city_slug else None,
             category_slugs=categories,
             free_only=free_only,
             limit=60,

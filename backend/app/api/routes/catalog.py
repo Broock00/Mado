@@ -94,7 +94,7 @@ async def list_experiences(
 
     experiences = await catalog_repo.query_experiences(
         session,
-        city_slug=city,
+        area=catalog_repo.Area(city_slug=city) if city else None,
         category_slugs=category,
         tag_slugs=tag,
         experience_type=experience_type,
@@ -213,7 +213,7 @@ async def list_events(
     now = datetime.now(UTC)
     events = await catalog_repo.upcoming_events(
         session,
-        city_slug=city,
+        area=catalog_repo.Area(city_slug=city) if city else None,
         starts_after=now,
         starts_before=now + timedelta(days=days),
         limit=limit,

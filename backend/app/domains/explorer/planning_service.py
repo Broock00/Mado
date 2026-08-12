@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.domains.catalog import repository as catalog_repo
+from app.domains.catalog.repository import Area
 from app.domains.discovery.ranking import RankingContext
 from app.domains.explorer.models import Itinerary, ItineraryStop
 from app.domains.explorer.planning import Plan, PlanRequest, build_plan
@@ -41,7 +42,7 @@ class PlanningService:
         """
         candidates = await catalog_repo.query_experiences(
             self.session,
-            city_slug=request.city_slug,
+            area=Area(city_slug=request.city_slug) if request.city_slug else None,
             limit=PLANNING_POOL,
         )
         plan = build_plan(candidates, request, ctx)

@@ -8,6 +8,7 @@ route assemble its own query is how N+1 problems get in (spec 80.02 s18).
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import Select, and_, func, or_, select
@@ -228,10 +229,94 @@ async def get_experiences_by_ids(session: AsyncSession, ids: list[uuid.UUID]) ->
     return [found[i] for i in ids if i in found]
 
 
+@dataclass(frozen=True, slots=True)
+class Area:
+    """Where a query is about: a point with a radius, or a named city.
+
+    The point is the real one. A city slug survives because an explorer can
+    still choose a city explicitly and because the seeded catalogue is organised
+    that way, but geography is not Mado's data and a curated row must never be
+    the only way to ask "what is near here". Everything the platform learns
+    about the world arrives as coordinates.
+
+    Nothing set means everywhere, which is what search wants and what a feed
+    never does.
+    """
+
+    latitude: float | None = None
+    longitude: float | None = None
+    radius_km: float | None = None
+    city_slug: str | None = None
+
+    @property
+    def has_point(self) -> bool:
+        return (
+            self.latitude is not None
+            and self.longitude is not None
+            and (self.radius_km or 0) > 0
+        )
+
+    @property
+    def is_everywhere(self) -> bool:
+        return not self.has_point and not self.city_slug
+
+    def widened(self, radius_km: float) -> Area:
+        return Area(
+            latitude=self.latitude,
+            longitude=self.longitude,
+            radius_km=radius_km,
+            city_slug=self.city_slug,
+        )
+
+    def ladder(self) -> list[Area]:
+        """The same place, looked at from close in and then further out.
+
+        "What is happening near you" should mean the next street before it means
+        the far side of the city, and an empty answer at two kilometres is not
+        an empty city. Only a point widens - a chosen city is already the area
+        the explorer asked for.
+        """
+        if not self.has_point:
+            return [self]
+        start = self.radius_km or RADIUS_STEPS_KM[0]
+        steps = [step for step in RADIUS_STEPS_KM if step > start]
+        return [self] + [self.widened(step) for step in steps]
+
+
+# How "near you" widens when there is not much close by. Walking distance, then
+# the neighbourhood, then across town, then the whole metropolitan area.
+RADIUS_STEPS_KM = (2.0, 5.0, 15.0, 40.0)
+
+# Below this many candidates, the next radius is tried. Not a target - the
+# ranker still decides what is worth showing - but a pool this thin cannot be
+# ranked into anything good.
+MIN_CANDIDATES = 12
+
+
+def scope_to_area(stmt: Select, area: Area | None) -> Select:
+    """Restrict a query to an area.
+
+    A radius is a PostGIS `ST_DWithin` against the venue's geography column,
+    which is indexed. It therefore only finds experiences that have a venue -
+    correct, because something with no location cannot be near anybody, and
+    worth knowing when a listing does not appear in a nearby rail.
+    """
+    if area is None or area.is_everywhere:
+        return stmt
+    if area.has_point:
+        point = func.ST_SetSRID(
+            func.ST_MakePoint(area.longitude, area.latitude), 4326
+        ).cast(Venue.geo.type)
+        return stmt.join(Venue, Experience.venue_id == Venue.id).where(
+            func.ST_DWithin(Venue.geo, point, (area.radius_km or 0) * 1000)
+        )
+    return stmt.join(City, Experience.city_id == City.id).where(City.slug == area.city_slug)
+
+
 async def query_experiences(
     session: AsyncSession,
     *,
-    city_slug: str | None = None,
+    area: Area | None = None,
     category_slugs: list[str] | None = None,
     tag_slugs: list[str] | None = None,
     experience_type: str | None = None,
@@ -241,10 +326,8 @@ async def query_experiences(
     limit: int = 60,
 ) -> list[Experience]:
     """Filtered catalog read used by the feed modules and as the search fallback."""
-    stmt = published_experiences()
+    stmt = scope_to_area(published_experiences(), area)
 
-    if city_slug:
-        stmt = stmt.join(City, Experience.city_id == City.id).where(City.slug == city_slug)
     if category_slugs:
         stmt = stmt.join(Category, Experience.category_id == Category.id).where(
             Category.slug.in_(category_slugs)
@@ -308,7 +391,7 @@ async def upcoming_events(
     session: AsyncSession,
     *,
     experience_id: uuid.UUID | None = None,
-    city_slug: str | None = None,
+    area: Area | None = None,
     starts_after: datetime | None = None,
     starts_before: datetime | None = None,
     limit: int = 50,
@@ -337,8 +420,7 @@ async def upcoming_events(
     )
     if experience_id is not None:
         stmt = stmt.where(EventInstance.experience_id == experience_id)
-    if city_slug:
-        stmt = stmt.join(City, Experience.city_id == City.id).where(City.slug == city_slug)
+    stmt = scope_to_area(stmt, area)
     if starts_after is not None:
         stmt = stmt.where(EventInstance.start_time >= starts_after)
     if starts_before is not None:
