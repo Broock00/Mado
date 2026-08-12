@@ -18,6 +18,7 @@ from app.api.routes import (
     discovery,
     me,
     notifications,
+    places,
     planning,
     publishing,
     reservations,
@@ -37,6 +38,7 @@ api_router.include_router(commerce.router)
 api_router.include_router(concierge.router)
 api_router.include_router(developer.router)
 api_router.include_router(notifications.router)
+api_router.include_router(places.router)
 api_router.include_router(planning.router)
 api_router.include_router(publishing.router)
 api_router.include_router(reservations.router)

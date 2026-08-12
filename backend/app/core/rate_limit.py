@@ -106,6 +106,13 @@ REVIEW_LIMIT = Limit(times=30, seconds=3600, scope="review")
 # is the one limit protecting a synchronous compute path rather than a spend path.
 UPLOAD_LIMIT = Limit(times=40, seconds=3600, scope="upload")
 
+# Resolving where somebody is, and turning a typed place name into coordinates.
+# Generous, because this is on the read path now - an explorer who moves, or who
+# types into a place box, resolves repeatedly and legitimately. It exists at all
+# because every miss costs a request to somebody else's service, and
+# OpenStreetMap's operators allow one a second across the whole deployment.
+PLACES_LIMIT = Limit(times=120, seconds=3600, scope="places")
+
 # Geocoding calls a third party that rate limits us in turn - OpenStreetMap asks
 # for roughly one request a second across all of our traffic, so this protects
 # their service as much as ours.

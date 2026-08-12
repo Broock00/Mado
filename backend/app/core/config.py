@@ -61,6 +61,19 @@ class Settings(BaseSettings):
     geocoding_provider: Literal["auto", "google", "nominatim", "local"] = "auto"
     google_maps_api_key: str = ""
 
+    # Places: turning coordinates into a country/city/street, and a place name
+    # back into coordinates. The platform stores no geography of its own, so
+    # this is on the read path for every explorer who shares their location.
+    #   auto    Google when a key is set, OpenStreetMap otherwise (default)
+    #   google  Google Geocoding
+    #   osm     OpenStreetMap/Nominatim
+    #   stub    resolves nothing; for tests and offline work
+    places_provider: Literal["auto", "google", "osm", "stub"] = "auto"
+    # Nominatim's operators require an identifying User-Agent and block traffic
+    # without one. Put a real contact address here before running in public.
+    nominatim_user_agent: str = "Mado/1.0 (city discovery; contact: ops@mado.local)"
+    nominatim_base_url: str = "https://nominatim.openstreetmap.org"
+
     # Routing (spec MAP-002, vendor strategy 82.01). Same shape as geocoding:
     #   auto      Google when a key is set, OSRM otherwise (default)
     #   google    Google Routes
