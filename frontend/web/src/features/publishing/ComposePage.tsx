@@ -30,6 +30,7 @@ import type { PickedLocation } from '@/features/map/LocationPicker'
 import { Badge, Button, Card, Input } from '@/design-system/primitives'
 import { cn } from '@/lib/utils'
 import type { CreatePostInput, OwnPost } from '@/lib/types'
+import { TicketTypesEditor } from '@/features/commerce/TicketTypesEditor'
 import { WritingHelp } from './WritingHelp'
 
 const TYPES: { value: CreatePostInput['type']; label: string; hint: string }[] = [
@@ -471,16 +472,29 @@ export function ComposePage() {
               When does it happen?
             </h2>
             {upcoming.length > 0 && (
-              <ul className="space-y-1.5">
+              <ul className="space-y-3">
                 {upcoming.map((event) => (
-                  <li key={event.id} className="rounded-lg bg-sand-100 px-3 py-2 text-sm text-sand-700">
-                    {new Date(event.startTime).toLocaleString(undefined, {
-                      weekday: 'short',
-                      day: 'numeric',
-                      month: 'short',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
+                  <li key={event.id}>
+                    <p className="rounded-lg bg-sand-100 px-3 py-2 text-sm text-sand-700">
+                      {new Date(event.startTime).toLocaleString(undefined, {
+                        weekday: 'short',
+                        day: 'numeric',
+                        month: 'short',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </p>
+                    {/* Prices belong to a date, not to the listing: last
+                        Friday sold out and next Friday has not. This is also
+                        the only way a date ever gets a checkout - without a
+                        ticket on it, the listing offers a free reservation. */}
+                    {draftId && (
+                      <TicketTypesEditor
+                        experienceId={draftId}
+                        occurrenceId={event.id}
+                        currency={post?.price.currency ?? 'ETB'}
+                      />
+                    )}
                   </li>
                 ))}
               </ul>
