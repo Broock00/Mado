@@ -260,6 +260,10 @@ export interface DiscoveryParams {
   lng?: number | null
   /** How far around the point to look. Omitted lets the server start small. */
   radiusKm?: number
+  /** south,west,north,east, for a place with real extent. */
+  bbox?: string
+  /** ISO code, for a whole country. */
+  country?: string
   raining?: boolean
   limit?: number
 }
@@ -557,6 +561,11 @@ export const api = {
     conversationId?: string | null
     /** Omitted unless chosen; the server resolves it from the coordinates. */
     city?: string
+    /** The place the explorer is looking at, when it is not where they are. */
+    radiusKm?: number | null
+    bbox?: string | null
+    country?: string | null
+    placeLabel?: string | null
     latitude?: number | null
     longitude?: number | null
   }) =>

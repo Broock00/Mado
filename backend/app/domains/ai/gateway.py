@@ -36,6 +36,7 @@ from app.domains.ai.prompts import (
 )
 from app.domains.ai.understanding import understand
 from app.domains.catalog import repository as catalog_repo
+from app.domains.catalog.repository import Area
 from app.domains.discovery.ranking import RankingContext
 from app.domains.explorer.planning import PlanRequest
 from app.integrations.ai_provider import GenerationRequest, get_provider
@@ -168,7 +169,11 @@ class AIGateway:
         conversation: Conversation,
         text: str,
         ctx: RankingContext,
-        city_slug: str,
+        city_slug: str | None,
+        # Where the explorer is looking, which is not always a city: they may
+        # have picked a street, or a whole country. The tools scope to this; the
+        # city slug survives only for planning and stored plans, which need one.
+        area: Area | None,
         city_name: str,
         timezone: str,
         preferences: dict | None = None,
@@ -215,11 +220,11 @@ class AIGateway:
                 reading=reading,
                 pending=pending_plan,
                 ctx=ctx,
-                city_slug=city_slug,
+                area=area,
             )
         else:
             tool_calls, results, plan, substituted = await self._execute_plan(
-                classification, ctx=ctx, city_slug=city_slug
+                classification, ctx=ctx, area=area
             )
 
         # 6. Synthesize. The model phrases; it does not decide the facts.
@@ -333,7 +338,7 @@ class AIGateway:
         plan: list[tuple[str, dict[str, Any]]],
         *,
         ctx: RankingContext,
-        city_slug: str,
+        area: Area | None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
         """Execute a tool plan, collecting calls, items and the last payload.
 
@@ -349,7 +354,7 @@ class AIGateway:
             arguments = {k: v for k, v in raw_arguments.items() if v is not None}
             try:
                 outcome = await tools.execute_tool(
-                    name, arguments, session=self.session, ctx=ctx, city_slug=city_slug
+                    name, arguments, session=self.session, ctx=ctx, area=area
                 )
             except Exception as exc:  # noqa: BLE001
                 # A failed tool must not fail the turn: the concierge answers with
@@ -381,7 +386,7 @@ class AIGateway:
         reading,
         pending: dict[str, Any],
         ctx: RankingContext,
-        city_slug: str,
+        area: Area | None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None, Any]:
         """Adjust the plan already on the table (spec AI-004).
 
@@ -392,7 +397,7 @@ class AIGateway:
         a fresh roll of the dice rather than an adjustment.
         """
         stops = pending.get("stops") or []
-        previous = _request_from(pending, ctx=ctx, city_slug=city_slug)
+        previous = _request_from(pending, ctx=ctx, city_slug=area.city_slug if area else None)
 
         read = refinement.from_model(
             reading.entities.get("refinement"), stop_count=len(stops)
@@ -431,7 +436,7 @@ class AIGateway:
             "avoid": [str(i) for i in request.avoid_experience_ids],
         }
         tool_calls, results, plan = await self._run_tools(
-            [("plan_outing", arguments)], ctx=ctx, city_slug=city_slug
+            [("plan_outing", arguments)], ctx=ctx, area=area
         )
 
         if plan is None:
@@ -454,7 +459,11 @@ class AIGateway:
         return tool_calls, results, plan, diff
 
     async def _execute_plan(
-        self, classification: intents.Classification, *, ctx: RankingContext, city_slug: str
+        self,
+        classification: intents.Classification,
+        *,
+        ctx: RankingContext,
+        area: Area | None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None, bool]:
         """Choose and run tools for the classified intent.
 
@@ -528,7 +537,7 @@ class AIGateway:
             )
 
         tool_calls, results, payload = await self._run_tools(
-            plan, ctx=ctx, city_slug=city_slug
+            plan, ctx=ctx, area=area
         )
 
         # De-duplicate across tools while preserving rank order.
@@ -554,7 +563,7 @@ class AIGateway:
                 {"query": "", "limit": 6},
                 session=self.session,
                 ctx=ctx,
-                city_slug=city_slug,
+                area=area,
             )
             if fallback.ok:
                 deduped = fallback.items

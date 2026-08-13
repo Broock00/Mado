@@ -11,6 +11,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
+from geoalchemy2 import Geography
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -89,6 +90,11 @@ async def list_cities(session: AsyncSession, *, live_only: bool = False) -> list
 # cover yet, and saying so is better than quietly showing them a city they are
 # nowhere near.
 NEAREST_CITY_MAX_KM = 120.0
+
+# Beyond this, a bounding box has stopped describing a place. The United States
+# reports 360 degrees of longitude because its territories cross the
+# antimeridian, and a geography polygon that wide intersects nothing useful.
+MAX_BOX_DEGREES = 170.0
 
 EARTH_RADIUS_KM = 6371.0088
 
@@ -246,7 +252,28 @@ class Area:
     latitude: float | None = None
     longitude: float | None = None
     radius_km: float | None = None
+    # South, west, north, east. Present when the place has real extent, which a
+    # radius cannot represent: the centre of Kenya is four hundred kilometres
+    # from Nairobi and the centre of the United States is in Kansas, so a radius
+    # around either finds nothing at all.
+    bounding_box: tuple[float, float, float, float] | None = None
+    # An ISO country code, used when the explorer picked a whole country. Exact
+    # where a box is not: a bounding box around Kenya also covers parts of four
+    # neighbours, and the one around the United States spans 360 degrees of
+    # longitude because of the Pacific territories - which is not a polygon any
+    # geography library can intersect usefully.
+    country_code: str | None = None
     city_slug: str | None = None
+
+    @property
+    def has_box(self) -> bool:
+        if self.bounding_box is None:
+            return False
+        south, west, north, east = self.bounding_box
+        # A box this wide is not describing a place, it is describing a
+        # projection artefact. Treated as absent so the caller falls back to
+        # something meaningful.
+        return (east - west) < MAX_BOX_DEGREES and (north - south) < MAX_BOX_DEGREES
 
     @property
     def has_point(self) -> bool:
@@ -258,13 +285,20 @@ class Area:
 
     @property
     def is_everywhere(self) -> bool:
-        return not self.has_point and not self.city_slug
+        return (
+            not self.has_point
+            and not self.has_box
+            and not self.country_code
+            and not self.city_slug
+        )
 
     def widened(self, radius_km: float) -> Area:
         return Area(
             latitude=self.latitude,
             longitude=self.longitude,
             radius_km=radius_km,
+            bounding_box=self.bounding_box,
+            country_code=self.country_code,
             city_slug=self.city_slug,
         )
 
@@ -276,7 +310,9 @@ class Area:
         an empty city. Only a point widens - a chosen city is already the area
         the explorer asked for.
         """
-        if not self.has_point:
+        # A box or a country already describes exactly the area asked for.
+        # Widening either would be widening it into the sea.
+        if self.has_box or self.country_code or not self.has_point:
             return [self]
         start = self.radius_km or RADIUS_STEPS_KM[0]
         steps = [step for step in RADIUS_STEPS_KM if step > start]
@@ -303,6 +339,26 @@ def scope_to_area(stmt: Select, area: Area | None) -> Select:
     """
     if area is None or area.is_everywhere:
         return stmt
+    if area.country_code:
+        # Exact, and cheaper than geometry. A venue belongs to a city and a city
+        # knows its country, so this needs no coordinates at all.
+        return stmt.join(City, Experience.city_id == City.id).where(
+            City.country_code == area.country_code.upper()
+        )
+    if area.has_box:
+        # An envelope, not a radius. `ST_MakeEnvelope` takes west, south, east,
+        # north - a different order from the one geocoders report, and getting
+        # it wrong silently searches a box on the other side of the equator.
+        south, west, north, east = area.bounding_box
+        # Cast to a POLYGON geography, not to the column's own type - that is a
+        # POINT, and Postgres rejects an envelope cast to it outright. Casting
+        # the envelope rather than the column keeps the GiST index usable.
+        envelope = func.ST_MakeEnvelope(west, south, east, north, 4326).cast(
+            Geography(geometry_type="POLYGON", srid=4326)
+        )
+        return stmt.join(Venue, Experience.venue_id == Venue.id).where(
+            func.ST_Intersects(Venue.geo, envelope)
+        )
     if area.has_point:
         point = func.ST_SetSRID(
             func.ST_MakePoint(area.longitude, area.latitude), 4326

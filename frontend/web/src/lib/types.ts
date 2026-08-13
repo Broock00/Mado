@@ -444,12 +444,24 @@ export interface LocationContext {
   reason?: string | null
 }
 
-/** A place the explorer picked, kept so the interface can name it. */
+/**
+ * A place the explorer picked, kept so the interface can name it and the server
+ * can search it.
+ *
+ * Three ways to describe an area, because one does not fit them all. A street or
+ * a neighbourhood is a point and a radius. A borough or a city is a bounding
+ * box. A country is a country code - exact, where a box around Kenya also
+ * covers four neighbours and the one around the United States spans the globe.
+ */
 export interface ChosenPlace {
   label: string
   latitude: number
   longitude: number
   radiusKm: number
+  /** south,west,north,east - present when the place has real extent. */
+  bbox?: string | null
+  /** Set only when the explorer picked a whole country. */
+  countryCode?: string | null
 }
 
 /* ------------------------------------------------------- commerce */

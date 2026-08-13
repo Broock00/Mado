@@ -173,6 +173,13 @@ export function PlaceFilter() {
                         latitude: found.latitude,
                         longitude: found.longitude,
                         radiusKm: found.suggestedRadiusKm,
+                        // A country is searched by its code and a wide place by
+                        // its box. Only something small enough to be a circle
+                        // relies on the radius above.
+                        countryCode:
+                          (found.kind || '').toLowerCase() === 'country'
+                            ? found.countryCode
+                            : null,
                       })
                       setTerm('')
                       setOpen(false)

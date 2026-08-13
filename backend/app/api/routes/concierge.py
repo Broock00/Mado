@@ -24,6 +24,7 @@ from app.core.errors import BadRequestError, NotFoundError
 from app.core.logging import get_logger
 from app.domains.ai.gateway import AIGateway, resolve_city
 from app.domains.ai.memory import MemoryService, effective_confidence, memory_enabled
+from app.domains.catalog.repository import Area
 from app.domains.catalog.schemas import CamelModel
 from app.domains.discovery.service import build_context
 from app.domains.explorer.learning import infer_preferences
@@ -31,6 +32,12 @@ from app.domains.explorer.planning_service import PlanningService
 from app.domains.explorer.service import ExplorerService
 
 router = APIRouter(prefix="/assistant", tags=["concierge"])
+
+# How far around the explorer the concierge looks when they have shared a
+# location and chosen nothing. Wider than the discovery feed's first step: a
+# conversation asks one question and wants an answer, where a feed can widen
+# quietly between rails.
+NEARBY_RADIUS_KM = 15.0
 logger = get_logger("mado.concierge")
 settings = get_settings()
 
@@ -41,6 +48,13 @@ class MessageRequest(CamelModel):
     city: str | None = None
     latitude: float | None = None
     longitude: float | None = None
+    # Where the explorer is looking, when that is not simply where they are.
+    # Without these the concierge answers about the city they are standing in,
+    # and tells somebody who selected Kenya that it only knows Addis Ababa.
+    radius_km: float | None = Field(default=None, ge=0.2, le=200)
+    bbox: str | None = Field(default=None, max_length=120)
+    country: str | None = Field(default=None, min_length=2, max_length=2)
+    place_label: str | None = Field(default=None, max_length=160)
 
 
 class ResultItem(CamelModel):
@@ -143,6 +157,40 @@ async def _reply(*, session, user, anonymous_id: str | None, payload: MessageReq
         longitude=payload.longitude,
     )
 
+    # The area the tools search. A chosen place wins over the explorer's own
+    # position, and may be a whole country - which a radius cannot express, so a
+    # bounding box comes with it when the place has real extent.
+    box: tuple[float, float, float, float] | None = None
+    if payload.bbox:
+        try:
+            south, west, north, east = (float(part) for part in payload.bbox.split(","))
+            box = (south, west, north, east) if south <= north and west <= east else None
+        except (TypeError, ValueError):
+            box = None
+
+    if payload.country:
+        area = Area(
+            latitude=payload.latitude,
+            longitude=payload.longitude,
+            country_code=payload.country,
+        )
+    elif payload.latitude is not None and payload.longitude is not None:
+        area = Area(
+            latitude=payload.latitude,
+            longitude=payload.longitude,
+            radius_km=payload.radius_km or (None if box else NEARBY_RADIUS_KM),
+            bounding_box=box,
+            city_slug=city_slug,
+        )
+    else:
+        area = Area(city_slug=city_slug) if city_slug else None
+
+    # What the reply calls where it is looking. A chosen place names itself; a
+    # resolved city names the city. Saying "Addis Ababa" to somebody who asked
+    # about Kenya is the bug this replaces.
+    if payload.place_label:
+        city_name = payload.place_label
+
     explorer = ExplorerService(session)
     saved_ids = await explorer.saved_experience_ids(user.id if user else None)
     preferences = user.profile.preferences if user and user.profile else {}
@@ -173,6 +221,7 @@ async def _reply(*, session, user, anonymous_id: str | None, payload: MessageReq
         text=payload.message,
         ctx=ctx,
         city_slug=city_slug,
+        area=area,
         city_name=city_name,
         timezone=timezone,
         preferences=preferences,

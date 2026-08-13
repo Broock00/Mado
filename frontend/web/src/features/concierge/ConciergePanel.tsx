@@ -99,6 +99,7 @@ export function ConciergePanel() {
   const toggle = useAppStore((s) => s.toggleConcierge)
   const citySlug = useAppStore((s) => s.citySlug)
   const location = useAppStore((s) => s.location)
+  const place = useAppStore((s) => s.place)
 
   const [turns, setTurns] = useState<Turn[]>([])
   const [input, setInput] = useState('')
@@ -112,8 +113,15 @@ export function ConciergePanel() {
         message,
         conversationId,
         city: citySlug ?? undefined,
-        latitude: location.granted ? location.latitude : null,
-        longitude: location.granted ? location.longitude : null,
+        // The chosen place wins over where the explorer is sitting. Without
+        // this the concierge answered about their own city and told anyone who
+        // had picked Kenya that it only knows Addis Ababa.
+        latitude: place ? place.latitude : location.granted ? location.latitude : null,
+        longitude: place ? place.longitude : location.granted ? location.longitude : null,
+        radiusKm: place && !place.countryCode && !place.bbox ? place.radiusKm : null,
+        bbox: place?.bbox ?? null,
+        country: place?.countryCode ?? null,
+        placeLabel: place?.label ?? null,
       }),
     onSuccess: (response) => {
       setConversationId(response.conversationId)

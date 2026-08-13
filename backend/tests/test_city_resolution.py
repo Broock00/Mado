@@ -202,6 +202,60 @@ class TestResolution:
         assert (slug, why) == (None, RESOLVED_BY_UNKNOWN)
 
 
+class TestAnAreaCanBeBiggerThanACircle:
+    """The bug: picking Kenya or the United States showed nothing.
+
+    A radius cannot describe a country. The centre of Kenya is four hundred
+    kilometres from Nairobi, and the centre of the United States is in Kansas,
+    so sixty kilometres around either finds nothing at all.
+    """
+
+    def test_a_country_is_scoped_by_its_code(self):
+        """Exact, where a box is not: the box around Kenya covers parts of four
+        neighbours, and picking Kenya should not surface Ugandan listings."""
+        from app.domains.catalog.repository import Area
+
+        area = Area(country_code="KE")
+        assert not area.is_everywhere
+        assert not area.has_point
+
+    def test_a_country_area_never_widens(self):
+        """There is nothing wider to widen to, and trying would search the sea."""
+        from app.domains.catalog.repository import Area
+
+        assert Area(latitude=1.4, longitude=38.4, country_code="KE").ladder() == [
+            Area(latitude=1.4, longitude=38.4, country_code="KE")
+        ]
+
+    def test_a_box_is_used_for_somewhere_with_real_extent(self):
+        from app.domains.catalog.repository import Area
+
+        brooklyn = Area(
+            latitude=40.65, longitude=-73.95, bounding_box=(40.55, -74.06, 40.74, -73.83)
+        )
+        assert brooklyn.has_box
+
+    def test_an_absurd_box_is_ignored_rather_than_searched(self):
+        """The United States reports 360 degrees of longitude, because its
+        territories cross the antimeridian. A geography polygon that wide
+        intersects nothing useful, and Postgres does not complain - it just
+        returns nothing, which reads as an empty catalogue."""
+        from app.domains.catalog.repository import Area
+
+        whole_globe = Area(
+            latitude=39.8,
+            longitude=-100.4,
+            bounding_box=(-14.76, -180.0, 71.59, 180.0),
+        )
+        assert not whole_globe.has_box
+
+    def test_a_small_box_still_counts(self):
+        from app.domains.catalog.repository import MAX_BOX_DEGREES, Area
+
+        assert MAX_BOX_DEGREES < 360
+        assert Area(bounding_box=(51.3, -0.5, 51.7, 0.3)).has_box
+
+
 class TestNothingDefaultsToOneCityAnyMore:
     def test_discovery_does_not_default_its_city(self):
         """The regression that started this. A default here is invisible: every

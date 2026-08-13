@@ -102,7 +102,7 @@ def describe_tools() -> list[dict[str, Any]]:
 # eight listings five thousand kilometres away - the catalogue searched unscoped
 # because no city resolved. Quieter than the old bug, which at least named the
 # city it was wrong about, and worse for it.
-NEEDS_A_CITY = frozenset(
+NEEDS_A_PLACE = frozenset(
     {"search_experiences", "find_events", "find_nearby", "plan_outing"}
 )
 
@@ -113,7 +113,7 @@ async def execute_tool(
     *,
     session: AsyncSession,
     ctx: RankingContext,
-    city_slug: str | None,
+    area: Area | None,
     confirmed: bool = False,
 ) -> ToolResult:
     """Run a registered tool, enforcing the confirmation policy.
@@ -125,13 +125,13 @@ async def execute_tool(
     if tool is None:
         return ToolResult(tool=name, ok=False, error=f"Unknown tool '{name}'.")
 
-    if city_slug is None and name in NEEDS_A_CITY:
+    if (area is None or area.is_everywhere) and name in NEEDS_A_PLACE:
         return ToolResult(
             tool=name,
             ok=False,
             error=(
-                "I do not know which city you are in yet. Share your location or "
-                "pick a city, and I will look."
+                "I do not know where you are looking yet. Share your location or "
+                "pick a place, and I will look."
             ),
         )
 
@@ -142,7 +142,7 @@ async def execute_tool(
             details={"tool": tool.name, "sideEffect": tool.side_effect, "risk": tool.risk},
         )
 
-    return await tool.handler(session=session, ctx=ctx, city_slug=city_slug, **arguments)
+    return await tool.handler(session=session, ctx=ctx, area=area, **arguments)
 
 
 # --------------------------------------------------------------------- helpers
@@ -199,33 +199,57 @@ async def _search_experiences(
     *,
     session: AsyncSession,
     ctx: RankingContext,
-    city_slug: str,
+    area: Area | None,
     query: str = "",
     categories: list[str] | None = None,
     free_only: bool = False,
     limit: int = 8,
 ) -> ToolResult:
     service = DiscoveryService(session)
-    if query.strip():
+
+    # The search index knows nothing about geometry: it can filter by city slug
+    # and nothing else. So an area that is a shape rather than a city - a
+    # borough, a country - goes to the database instead, which can.
+    #
+    # Skipping this is how "what coffee is there in Kenya" came back with a list
+    # of Addis Ababa cafes under the heading "here is what I found in Kenya".
+    # The index was asked with no filter at all, because the area had no city
+    # slug to give it.
+    geographic = area is not None and (area.has_box or bool(area.country_code))
+
+    if query.strip() and not geographic:
         outcome = await service.search_experiences(
             query,
             ctx,
-            city_slug=city_slug,
+            city_slug=area.city_slug if area else None,
             category_slugs=categories,
             free_only=free_only,
             limit=limit,
         )
         items = outcome.items
     else:
-        # No query text means "show me things like this", which the browse path
-        # serves better than an empty full-text search.
         experiences = await catalog_repo.query_experiences(
             session,
-            area=Area(city_slug=city_slug) if city_slug else None,
+            area=area,
             category_slugs=categories,
             free_only=free_only,
-            limit=60,
+            limit=120 if query.strip() else 60,
         )
+        if query.strip():
+            # Matched here rather than by the index, on the fields an explorer
+            # would have read. Cruder than the hybrid retrieval, and it is
+            # scoped to the right part of the world, which matters more.
+            needle = query.casefold()
+            matched = [
+                experience
+                for experience in experiences
+                if needle in (experience.title or "").casefold()
+                or needle in (experience.summary or "").casefold()
+                or needle in (experience.description or "").casefold()
+            ]
+            # Nothing matched the words, but the area is still the answer to
+            # "what is there" - the caller decides whether that is useful.
+            experiences = matched
         items = service.summarize(experiences, ctx, limit=limit)
 
     return ToolResult(
@@ -240,7 +264,7 @@ async def _find_events(
     *,
     session: AsyncSession,
     ctx: RankingContext,
-    city_slug: str,
+    area: Area | None,
     starts_after: str | None = None,
     starts_before: str | None = None,
     categories: list[str] | None = None,
@@ -252,7 +276,7 @@ async def _find_events(
 
     experiences = await catalog_repo.query_experiences(
         session,
-        area=Area(city_slug=city_slug) if city_slug else None,
+        area=area,
         category_slugs=categories,
         free_only=free_only,
         starts_between=(start, end) if end else None,
@@ -277,7 +301,7 @@ async def _find_nearby(
     *,
     session: AsyncSession,
     ctx: RankingContext,
-    city_slug: str,
+    area: Area | None,
     radius_km: float = 3.0,
     limit: int = 8,
 ) -> ToolResult:
@@ -301,7 +325,7 @@ async def _get_experience_details(
     *,
     session: AsyncSession,
     ctx: RankingContext,
-    city_slug: str,
+    area: Area | None,
     experience_id: str,
 ) -> ToolResult:
     import uuid as _uuid
@@ -416,7 +440,7 @@ async def _plan_outing(
     *,
     session: AsyncSession,
     ctx: RankingContext,
-    city_slug: str,
+    area: Area | None,
     starts_after: str | None = None,
     starts_before: str | None = None,
     budget: float | None = None,
@@ -445,7 +469,7 @@ async def _plan_outing(
     request = PlanRequest(
         start=start,
         end=end,
-        city_slug=city_slug,
+        city_slug=area.city_slug if area else None,
         latitude=ctx.latitude,
         longitude=ctx.longitude,
         budget=budget,

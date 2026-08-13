@@ -26,7 +26,13 @@ export function useDiscoveryParams(limit = 12): DiscoveryParams {
     return {
       lat: place.latitude,
       lng: place.longitude,
-      radiusKm: place.radiusKm,
+      // A country is sent as a code and a wide place as a box; only somewhere
+      // small enough to be a circle is sent as a radius.
+      ...(place.countryCode
+        ? { country: place.countryCode }
+        : place.bbox
+          ? { bbox: place.bbox }
+          : { radiusKm: place.radiusKm }),
       limit,
     }
   }

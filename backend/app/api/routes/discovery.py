@@ -11,7 +11,7 @@ from app.api.deps import AnonymousId, CurrentUser, OptionalUser, SessionDep
 from app.core import rate_limit
 from app.core.config import get_settings
 from app.core.envelope import CollectionEnvelope, Envelope, clamp_limit
-from app.core.errors import PermissionDeniedError
+from app.core.errors import PermissionDeniedError, ValidationError
 from app.domains.catalog import repository as catalog_repo
 from app.domains.catalog.repository import (
     RADIUS_STEPS_KM,
@@ -62,6 +62,24 @@ async def discovery_query(
     latitude: float | None = Query(default=None, alias="lat"),
     longitude: float | None = Query(default=None, alias="lng"),
     radius_km: float | None = Query(default=None, alias="radiusKm", ge=0.2, le=200),
+    country: str | None = Query(
+        default=None,
+        min_length=2,
+        max_length=2,
+        description=(
+            "ISO country code, for when the explorer picked a whole country. "
+            "Exact where a bounding box is not - one around Kenya covers four "
+            "neighbours, and the one around the United States spans the globe."
+        ),
+    ),
+    bbox: str | None = Query(
+        default=None,
+        description=(
+            "south,west,north,east. How a place with real extent is searched - "
+            "a country is not a circle. Sent by the client for a place it "
+            "already resolved, so the geocoder is not asked twice."
+        ),
+    ),
     place: str | None = Query(
         default=None,
         description=(
@@ -87,18 +105,51 @@ async def discovery_query(
     place_label: str | None = None
     area: Area | None = None
 
-    if place:
+    if country:
+        area = Area(latitude=latitude, longitude=longitude, country_code=country)
+
+    if area is None and bbox and latitude is not None and longitude is not None:
+        try:
+            south, west, north, east = (float(part) for part in bbox.split(","))
+        except (TypeError, ValueError):
+            raise ValidationError(
+                "A bounding box is four numbers: south,west,north,east.",
+                code="INVALID_BOUNDING_BOX",
+            ) from None
+        if south > north or west > east:
+            raise ValidationError(
+                "That bounding box is inside out.", code="INVALID_BOUNDING_BOX"
+            )
+        area = Area(
+            latitude=latitude,
+            longitude=longitude,
+            bounding_box=(south, west, north, east),
+        )
+
+    if area is None and place:
         near = (latitude, longitude) if latitude is not None and longitude is not None else None
         found = await places_module.get_provider().search(place, near=near, limit=1)
         if found:
             target = found[0]
             place_label = target.area_label or target.label
+            # A country is scoped by its code rather than its shape. Exact,
+            # where a box is not - Kenya's box covers parts of four neighbours -
+            # and it works for the United States, whose box spans the globe
+            # because of the Pacific territories.
+            is_country = (target.kind or "").lower() == "country"
             area = Area(
                 latitude=target.latitude,
                 longitude=target.longitude,
                 # The place decides how wide to look: a road is a short walk and
                 # a borough is not.
                 radius_km=radius_km or target.suggested_radius_km,
+                # A region is not a circle either. Without its box, "Kenya"
+                # searches sixty kilometres around the middle of the country -
+                # four hundred from Nairobi - and finds nothing.
+                bounding_box=(
+                    target.bounding_box if radius_km is None and not is_country else None
+                ),
+                country_code=target.country_code if is_country else None,
             )
 
     if area is None and city:
