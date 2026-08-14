@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -134,10 +134,31 @@ class AIGateway:
         return conversation
 
     async def load_history(self, conversation_id: uuid.UUID) -> list[Message]:
+        """The conversation so far, oldest first.
+
+        Ordered by time *and* by role, because time alone does not order it. Both
+        messages of a turn are added in one transaction and get the same
+        ``created_at`` to the microsecond, so their relative order was a tie -
+        and Postgres returned the pair inverted, every time.
+
+        The model was therefore shown each answer before the question it
+        answered, ending with a question nobody had replied to. It did the
+        sensible thing with that and answered the dangling one: three cities out
+        of four replied to "find me something free to do" with an apology about
+        traditional coffee, the previous turn's subject, while holding five
+        correct free results it had just been handed.
+
+        A user message always precedes the assistant's within a turn, so ordering
+        on that invariant is not a tiebreaker hack - and unlike a new sequence
+        column it also repairs the conversations already stored.
+        """
         result = await self.session.execute(
             select(Message)
             .where(Message.conversation_id == conversation_id)
-            .order_by(Message.created_at.desc())
+            .order_by(
+                Message.created_at.desc(),
+                case((Message.role == "user", 1), else_=0),
+            )
             .limit(HISTORY_TURNS * 2)
         )
         return list(reversed(result.scalars().all()))
@@ -680,10 +701,13 @@ class AIGateway:
             # asked for. The offline composer was taught this and the model was
             # not, so the honesty held only where nobody was using it.
             user_message += (
-                "\n\nNOTE: nothing in the catalogue matched that request. The items "
+                f"\n\nNOTE: nothing in the catalogue matched {text!r} - the request "
+                "in this message, not any earlier one in the conversation. The items "
                 "above are other things on nearby, offered as an alternative. Say "
                 "plainly that nothing matched before mentioning them, and do not "
-                "present them as answers to what was asked."
+                "present them as answers to what was asked.\n"
+                "Answer the request in this message. Earlier subjects are context, "
+                "not the question."
             )
 
         request = GenerationRequest(

@@ -88,7 +88,18 @@ class TestTheCoordinatesAreReal:
         "new-york": (40.4, 41.0, -74.3, -73.7),
         "london": (51.3, 51.7, -0.5, 0.3),
         "nairobi": (-1.5, -1.1, 36.6, 37.0),
+        "tokyo": (35.4, 35.9, 139.4, 140.0),
+        "paris": (48.7, 49.0, 2.2, 2.5),
+        "mexico-city": (19.2, 19.6, -99.3, -99.0),
+        "berlin": (52.3, 52.7, 13.2, 13.6),
+        "sao-paulo": (-23.8, -23.4, -46.8, -46.5),
+        "mumbai": (18.8, 19.3, 72.7, 73.0),
     }
+
+    def test_every_city_has_a_box(self):
+        """Otherwise a new city silently skips the two checks below - which is
+        how it would fail: by adding a place and testing nothing about it."""
+        assert {city.slug for city in CITIES} == set(self.BOXES)
 
     def test_each_city_centre_is_where_it_says_it_is(self):
         for city in CITIES:
@@ -132,7 +143,19 @@ class TestTheFixtureItself:
         assert len({city.country_code for city in CITIES}) == len(CITIES)
         assert any(city.latitude < 0 for city in CITIES)
         assert any(city.latitude > 0 for city in CITIES)
-        assert len({city.currency for city in CITIES}) == len(CITIES)
+
+        # Most currencies differ, rather than all of them. This asserted one
+        # currency per city until Paris and Berlin were added, which share the
+        # euro - a fact about the world, not a mistake in the fixture. What the
+        # check is actually for is that money is exercised across several
+        # currencies rather than defaulting to one.
+        currencies = {city.currency for city in CITIES}
+        assert len(currencies) >= len(CITIES) - 1
+
+        # A zero-decimal currency is the one that matters most: 500 yen is 500
+        # minor units, and a factor of a hundred applied anyway is the kind of
+        # bug that reaches a payment provider before anyone notices.
+        assert "JPY" in currencies
 
     def test_no_city_borrows_the_pilot_currency(self):
         """Everything was ETB by default once. A demo city priced in birr would
