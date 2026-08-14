@@ -253,6 +253,12 @@ def _compose_offline_reply(*, intent: str, results: list[dict], context: dict) -
     time_label = context.get("time_label")
 
     if not results:
+        # Nothing was searched, so nothing can be said about what is out there.
+        # The two sentences below both name a place and report an absence; when
+        # the place is the thing we are missing, both are false.
+        blocked = context.get("blocked")
+        if blocked:
+            return str(blocked)
         if time_label:
             return (
                 f"Nothing is scheduled in {city} {time_label}. "

@@ -58,6 +58,10 @@ class ToolResult:
     items: list[dict[str, Any]] = field(default_factory=list)
     entity_ids: list[str] = field(default_factory=list)
     error: str | None = None
+    # Why it failed, for a caller that has to act on the reason rather than just
+    # report it. A code rather than a match against ``error``, so rewording the
+    # sentence an explorer reads cannot silently change what the gateway does.
+    code: str | None = None
     # Spec 56.03 s35-37: results carry freshness so the response layer can hedge
     # on data that ages quickly.
     freshness: str = "live"
@@ -106,6 +110,12 @@ NEEDS_A_PLACE = frozenset(
     {"search_experiences", "find_events", "find_nearby", "plan_outing"}
 )
 
+# The refusal above, as a code. The gateway turns this one into a question back
+# to the explorer rather than an apology about the catalogue: "I could not find
+# any coffee" and "I do not know where to look" are different sentences, and
+# only the second is true when no place has been resolved.
+NO_AREA = "NO_AREA"
+
 
 async def execute_tool(
     name: str,
@@ -129,6 +139,7 @@ async def execute_tool(
         return ToolResult(
             tool=name,
             ok=False,
+            code=NO_AREA,
             error=(
                 "I do not know where you are looking yet. Share your location or "
                 "pick a place, and I will look."

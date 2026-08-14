@@ -215,6 +215,8 @@ class AIGateway:
         plan_diff = None
         if classification.intent == intents.REFINE_PLAN and pending_plan:
             substituted = False
+            # A plan can only be refined if one was made, which needed a place.
+            blocked = None
             tool_calls, results, plan, plan_diff = await self._refine_plan(
                 text,
                 reading=reading,
@@ -223,7 +225,7 @@ class AIGateway:
                 area=area,
             )
         else:
-            tool_calls, results, plan, substituted = await self._execute_plan(
+            tool_calls, results, plan, substituted, blocked = await self._execute_plan(
                 classification, ctx=ctx, area=area
             )
 
@@ -239,13 +241,18 @@ class AIGateway:
             memories=memories,
             plan=plan,
             substituted=substituted,
+            blocked=blocked,
         )
 
         # 7. Validate. The reader proposes its own question when it could not read
         # the message, which is almost always more useful than a generic prompt -
         # it knows what was unclear.
         clarification = None
-        if reading.needs_clarification and reading.clarification_question:
+        if blocked:
+            # Nowhere to look beats every other thing that could be unclear: no
+            # answer to "did you mean tonight?" helps until we know where.
+            clarification = blocked
+        elif reading.needs_clarification and reading.clarification_question:
             clarification = reading.clarification_question
         elif reading.is_ambiguous:
             clarification = (
@@ -339,16 +346,30 @@ class AIGateway:
         *,
         ctx: RankingContext,
         area: Area | None,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
-        """Execute a tool plan, collecting calls, items and the last payload.
+    ) -> tuple[
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        dict[str, Any] | None,
+        list[tools.ToolResult],
+    ]:
+        """Execute a tool plan, collecting calls, items, the last payload and why
+        anything was refused.
 
         Extracted so refinement and first-time planning run tools the same way.
         A second copy of this loop would be a second place for "a failed tool
         must not fail the turn" to stop being true.
+
+        Safe failure means the turn survives a failed tool. It does not mean the
+        reason is thrown away, which is what used to happen here: an empty result
+        set reached the model with no explanation, and the model supplied the most
+        plausible one - that the catalogue had nothing. So an explorer who had
+        simply never granted location was told, fluently and falsely, that there
+        is no traditional coffee in Mado.
         """
         tool_calls: list[dict[str, Any]] = []
         results: list[dict[str, Any]] = []
         payload: dict[str, Any] | None = None
+        refusals: list[tools.ToolResult] = []
 
         for name, raw_arguments in plan:
             arguments = {k: v for k, v in raw_arguments.items() if v is not None}
@@ -376,8 +397,10 @@ class AIGateway:
                 results.extend(outcome.items)
                 if outcome.payload is not None:
                     payload = outcome.payload
+            else:
+                refusals.append(outcome)
 
-        return tool_calls, results, payload
+        return tool_calls, results, payload, refusals
 
     async def _refine_plan(
         self,
@@ -435,7 +458,7 @@ class AIGateway:
             "keep": [str(i) for i in request.keep_experience_ids],
             "avoid": [str(i) for i in request.avoid_experience_ids],
         }
-        tool_calls, results, plan = await self._run_tools(
+        tool_calls, results, plan, _refusals = await self._run_tools(
             [("plan_outing", arguments)], ctx=ctx, area=area
         )
 
@@ -536,7 +559,7 @@ class AIGateway:
                 )
             )
 
-        tool_calls, results, payload = await self._run_tools(
+        tool_calls, results, payload, refusals = await self._run_tools(
             plan, ctx=ctx, area=area
         )
 
@@ -557,6 +580,17 @@ class AIGateway:
         # dishonesty rather than a cure for one. That case already has its own
         # honest signal - the concierge asks what was meant.
         substituted = False
+
+        # Nothing ran, because there is nowhere to run it. That is not an empty
+        # catalogue and must not be phrased as one - and there is no point
+        # attempting the widening fallback below, which would be refused for the
+        # same reason.
+        blocked = next(
+            (r.error for r in refusals if r.code == tools.NO_AREA and r.error),
+            None,
+        )
+        if blocked and not deduped:
+            return tool_calls, [], payload, False, blocked
 
         # A fallback so an explorer is never met with nothing at all - but *only*
         # when no time window was asked for. If someone asks what is on tonight and
@@ -587,7 +621,7 @@ class AIGateway:
                     }
                 )
 
-        return tool_calls, deduped[:MAX_RESULTS_IN_CONTEXT], payload, substituted
+        return tool_calls, deduped[:MAX_RESULTS_IN_CONTEXT], payload, substituted, None
 
     async def _synthesize(
         self,
@@ -598,6 +632,7 @@ class AIGateway:
         text: str,
         city_name: str,
         substituted: bool = False,
+        blocked: str | None = None,
         ctx: RankingContext,
         preferences: dict | None,
         memories: list[UserMemory] | None = None,
@@ -629,7 +664,17 @@ class AIGateway:
             block, wrapper = _render_results_block(results), "RESULTS"
         user_message = f"{text}\n\n<{wrapper}>\n{block}\n</{wrapper}>"
 
-        if substituted:
+        if blocked:
+            # Told as an instruction, not as a result, because there is no result:
+            # the tools never ran. Without this the model sees an empty block and
+            # explains it the only way it can - by asserting the catalogue is
+            # empty, which is a claim no tool made.
+            user_message += (
+                f"\n\nNOTE: no search was run, because {blocked} Say exactly that, "
+                "briefly, and ask for a place. Do not say anything about what the "
+                "catalogue does or does not contain - nothing was looked at."
+            )
+        elif substituted:
             # The model has to be told, or it introduces a substitute as though
             # it were the answer - fluent prose over a list that matches nothing
             # asked for. The offline composer was taught this and the model was
@@ -657,6 +702,11 @@ class AIGateway:
                 # matches is the difference between "we have little" and "your
                 # question was ignored", and only one of those is true.
                 "substituted": substituted,
+                # Set when no tool ran at all. The offline composer needs it for
+                # the same reason the model does: its empty-result sentence names
+                # a city and claims nothing matched, and neither part is true
+                # when the search never happened.
+                "blocked": blocked,
             },
             temperature=0.4,
             # A plan reply lists several stops with times, so it needs more

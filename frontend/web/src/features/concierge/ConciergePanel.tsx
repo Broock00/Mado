@@ -19,6 +19,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { MapPin, Send, Sparkles, X } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
+import { useRequestLocation } from '@/app/hooks'
 import { Badge, Button, Input } from '@/design-system/primitives'
 import { cn } from '@/lib/utils'
 import type { ConciergeResult, OfferedPlan, SuggestedAction } from '@/lib/types'
@@ -100,6 +101,7 @@ export function ConciergePanel() {
   const citySlug = useAppStore((s) => s.citySlug)
   const location = useAppStore((s) => s.location)
   const place = useAppStore((s) => s.place)
+  const requestLocation = useRequestLocation()
 
   const [turns, setTurns] = useState<Turn[]>([])
   const [input, setInput] = useState('')
@@ -354,10 +356,19 @@ export function ConciergePanel() {
               <Send className="size-4" aria-hidden />
             </Button>
           </div>
-          {!location.granted && (
-            <p className="mt-2 text-xs text-sand-400">
-              Share your location for distance-aware answers.
-            </p>
+          {/* Somewhere to look, when there is nowhere. The concierge cannot
+              answer anything without a place and now says so - which was a
+              sentence with no button next to it, leaving the explorer told what
+              was wrong and given no way to fix it. A chosen place counts, so
+              this is only offered when there is neither. */}
+          {!location.granted && !place && (
+            <button
+              type="button"
+              onClick={() => requestLocation()}
+              className="mt-2 text-xs text-brand-700 underline underline-offset-2 hover:text-brand-800"
+            >
+              Share your location for answers about where you are
+            </button>
           )}
         </form>
       </div>

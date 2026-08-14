@@ -162,3 +162,54 @@ class TestItKnowsWhereItIs:
         answer = ask(client, "what is on tonight", latitude=None, longitude=None)
         assert not answer["results"]
         assert "Addis" not in (answer.get("message") or "")
+        # The half of this test that was missing, and the reason the bug below
+        # survived it: "guesses" was only ever checked as "does not say Addis".
+        assert answer.get("clarification"), (
+            "no location, no results and no question back - the explorer is told "
+            "nothing about why they got nothing"
+        )
+
+    def test_with_no_location_it_does_not_blame_the_catalogue(self, client):
+        """It answered "I couldn't find any experiences matching traditional
+        coffee in Mado's catalogue" to someone who had never shared a location.
+
+        Every tool had refused for want of a place, and the gateway - which
+        swallows tool failures on purpose - dropped the reason along with the
+        failure. The model was handed an empty result block and no explanation,
+        so it supplied the only one available, and asserted something about the
+        catalogue that no tool had looked at. Three questions in a row, each
+        apologising for a search that never ran.
+
+        Asserted on `clarification` rather than on wording, because the wording
+        belongs to whichever model is answering. What must hold for all of them
+        is that the turn carries the real reason.
+        """
+        answer = ask(
+            client,
+            "where can i get good traditional coffee?",
+            latitude=None,
+            longitude=None,
+        )
+        assert not answer["results"]
+        clarification = (answer.get("clarification") or "").lower()
+        assert "where" in clarification or "location" in clarification, (
+            f"the reply does not ask where to look: {answer.get('clarification')!r}"
+        )
+
+    def test_with_no_location_every_turn_asks_again(self, client):
+        """The report was three questions, three apologies. A conversation does
+        not acquire a location by continuing, so the second and third turns must
+        keep asking rather than drift into answering about nowhere."""
+        conversation_id = None
+        for question in (
+            "where can i get good traditional coffee?",
+            "find me something free to do",
+            "what is on today?",
+        ):
+            extra = {"conversationId": conversation_id} if conversation_id else {}
+            answer = ask(client, question, latitude=None, longitude=None, **extra)
+            conversation_id = answer["conversationId"]
+            assert not answer["results"]
+            assert answer.get("clarification"), (
+                f"turn {question!r} stopped asking where the explorer is looking"
+            )
