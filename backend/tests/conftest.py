@@ -64,6 +64,42 @@ def _report_api_state() -> None:
         print(f"\n[tests] API unreachable at {BASE_URL}; integration tests SKIPPED by request.\n")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _remove_what_the_tests_made():
+    """Delete the suite's accounts and listings when it finishes.
+
+    The integration tests drive a real API against a real database, so every run
+    leaves data behind. Nothing removed it, and it reached 3,038 accounts and
+    1,626 listings against 30 real ones - at which point the concierge was
+    recommending "An Evening of Spoken Word at Test Venue 0bf7" to the person
+    developing it, and "the catalogue is thin" was a reasonable and completely
+    wrong conclusion.
+
+    After the whole session rather than after each test: the tests are ordinary
+    HTTP calls with no shared transaction to roll back, and per-test cleanup
+    would add a round trip to every one of them for the same result.
+
+    Never fails the run. A suite that reports red because it could not tidy up
+    afterwards teaches people to ignore red.
+    """
+    yield
+
+    if not API_REACHABLE:
+        # Nothing ran against the database, so there is nothing to remove.
+        return
+    try:
+        from tests.cleanup import purge_blocking
+
+        removed = purge_blocking()
+    except Exception as exc:  # noqa: BLE001 - tidying up must not fail the suite
+        print(f"\n[tests] could not remove test data: {exc}\n")
+        return
+
+    if removed:
+        summary = ", ".join(f"{count} {name}" for name, count in removed.items())
+        print(f"\n[tests] removed {summary}\n")
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     """Pin anyio to asyncio so async tests do not also try trio."""

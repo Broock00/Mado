@@ -550,6 +550,12 @@ class AIGateway:
             seen.add(identifier)
             deduped.append(item)
 
+        # Only the fallback below counts as a substitution. Low confidence in
+        # the *intent* is a different thing: the search may have matched
+        # perfectly while the classifier was unsure what kind of answer was
+        # wanted, and saying "nothing matched" there would be a fresh
+        # dishonesty rather than a cure for one. That case already has its own
+        # honest signal - the concierge asks what was meant.
         substituted = False
 
         # A fallback so an explorer is never met with nothing at all - but *only*
@@ -622,6 +628,18 @@ class AIGateway:
         else:
             block, wrapper = _render_results_block(results), "RESULTS"
         user_message = f"{text}\n\n<{wrapper}>\n{block}\n</{wrapper}>"
+
+        if substituted:
+            # The model has to be told, or it introduces a substitute as though
+            # it were the answer - fluent prose over a list that matches nothing
+            # asked for. The offline composer was taught this and the model was
+            # not, so the honesty held only where nobody was using it.
+            user_message += (
+                "\n\nNOTE: nothing in the catalogue matched that request. The items "
+                "above are other things on nearby, offered as an alternative. Say "
+                "plainly that nothing matched before mentioning them, and do not "
+                "present them as answers to what was asked."
+            )
 
         request = GenerationRequest(
             system_prompt=system_prompt,

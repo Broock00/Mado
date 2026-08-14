@@ -47,6 +47,22 @@ def client():
         yield session
 
 
+@pytest.fixture(scope="module")
+def deterministic() -> bool:
+    """Whether the server is running the offline provider.
+
+    A live model writes its own words, so anything asserting on phrasing - or on
+    a model deciding a message was unclear - is a coin toss against it. Those
+    assertions are worth keeping and are only meaningful against the stub, whose
+    replies are composed by code.
+    """
+    try:
+        checks = httpx.get(f"{BASE_URL}/health/ready", timeout=20.0).json()["checks"]
+    except Exception:  # noqa: BLE001 - the readiness probe is not the test
+        return False
+    return any(c["name"] == "ai" and c["status"] == "disabled" for c in checks)
+
+
 def ask(client: httpx.Client, message: str, **overrides) -> dict:
     body = {"message": message, "latitude": LATITUDE, "longitude": LONGITUDE, **overrides}
     response = client.post("/api/v1/assistant/messages", json=body)
@@ -85,7 +101,9 @@ class TestItListensToTheQuestion:
             "being ignored and something upstream is answering instead"
         )
 
-    def test_an_unparseable_question_is_never_answered_confidently(self, client):
+    def test_an_unparseable_question_is_never_answered_confidently(
+        self, client, deterministic
+    ):
         """The concierge deliberately shows something rather than an empty page,
         which is a reasonable choice and must not be a silent one.
 
@@ -94,6 +112,9 @@ class TestItListensToTheQuestion:
         Generic results presented as an answer, with neither, is the shape a
         broken search takes - and did, for a while.
         """
+        if not deterministic:
+            pytest.skip("a live model decides for itself whether a message is unclear")
+
         answer = ask(client, "zqxjkv wpfmgh")
         message = answer.get("message") or ""
         honest = (
@@ -106,9 +127,14 @@ class TestItListensToTheQuestion:
             "clarification and no admission that nothing matched"
         )
 
-    def test_a_question_it_understands_is_answered_without_hedging(self, client):
+    def test_a_question_it_understands_is_answered_without_hedging(
+        self, client, deterministic
+    ):
         """The other side: a clear question should not be met with a clarifying
         question. One that always asks is as useless as one that never does."""
+        if not deterministic:
+            pytest.skip("a live model decides for itself whether to ask")
+
         answer = ask(client, "jazz")
         assert answer["results"]
         assert not answer.get("clarification")
@@ -118,6 +144,8 @@ class TestItKnowsWhereItIs:
     def test_it_answers_about_the_explorers_own_city(self, client):
         answer = ask(client, "what is on this week")
         assert answer["results"]
+        # Named somewhere in the reply. Which words surround it are the
+        # model's business; that it is the right place is not.
         assert "Addis" in (answer.get("message") or ""), (
             "the reply does not name the city the explorer is standing in"
         )
