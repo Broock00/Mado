@@ -24,6 +24,7 @@ import { SettingsPage } from '@/features/settings/SettingsPage'
 import { CollectionsPage } from '@/features/collections/CollectionsPage'
 import { CollectionDetailPage } from '@/features/collections/CollectionDetailPage'
 import { ModerationPage } from '@/features/moderation/ModerationPage'
+import { BookingsPage } from '@/features/commerce/BookingsPage'
 import { OrderDetailPage, OrdersPage } from '@/features/commerce/OrdersPage'
 import { DeveloperPage } from '@/features/developer/DeveloperPage'
 import { NotFoundPage } from '@/features/NotFoundPage'
@@ -62,6 +63,7 @@ const router = createBrowserRouter([
       { path: 'orders', element: <OrdersPage /> },
       { path: 'orders/:orderId', element: <OrderDetailPage /> },
       { path: 'posts', element: <MyPostsPage /> },
+      { path: 'posts/:experienceId/bookings', element: <BookingsPage /> },
       { path: 'compose', element: <ComposePage /> },
       { path: 'compose/:experienceId', element: <ComposePage /> },
       { path: 'plans', element: <PlanPage /> },

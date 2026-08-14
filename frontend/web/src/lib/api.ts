@@ -71,6 +71,7 @@ import type {
   Sdk,
   Ticketing,
   TicketTypeSummary,
+  Bookings,
   Order,
 } from './types'
 
@@ -924,6 +925,11 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       },
+    ).then((r) => r.data),
+
+  bookings: (experienceId: string, occurrenceId: string) =>
+    request<Envelope<Bookings>>(
+      `/api/v1/posts/${experienceId}/events/${occurrenceId}/bookings`,
     ).then((r) => r.data),
 
   withdrawTicketType: (experienceId: string, occurrenceId: string, ticketTypeId: string) =>

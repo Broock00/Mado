@@ -34,6 +34,7 @@ export const am = {
   'nav.lists': 'ዝርዝሮች',
   'nav.posts': 'ልጥፎች',
   'nav.moderation': 'ክትትል',
+  'nav.orders': 'ትኬቶቼ',
   'nav.settings': 'ግላዊነት እና መረጃ',
   'nav.notifications': 'ማሳወቂያዎች',
 

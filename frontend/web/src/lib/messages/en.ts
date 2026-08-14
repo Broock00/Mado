@@ -23,6 +23,7 @@ export const en = {
   'nav.lists': 'Lists',
   'nav.posts': 'Posts',
   'nav.moderation': 'Moderation',
+  'nav.orders': 'My tickets',
   'nav.settings': 'Privacy and data',
   'nav.notifications': 'Notifications',
 

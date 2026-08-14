@@ -16,6 +16,7 @@ import {
   Settings,
   Library,
   ShieldCheck,
+  Ticket,
   User,
 } from 'lucide-react'
 import { useSession } from '@/app/hooks'
@@ -107,6 +108,26 @@ export function AppShell() {
             {user ? (
               <div className="flex items-center gap-1">
                 <NotificationBell />
+                {/* Tickets an explorer has already paid for had no route into
+                    them at all: /orders existed and nothing linked to it, so
+                    the only way back to a ticket was the URL or the email.
+                    Beside the bell rather than in the tab bar because five is
+                    the ceiling there, and this is a thing you reach for on the
+                    door rather than something you browse. */}
+                <NavLink
+                  to="/orders"
+                  aria-label={t('nav.orders')}
+                  className={({ isActive }) =>
+                    cn(
+                      'rounded-lg p-2 transition-colors',
+                      isActive
+                        ? 'bg-brand-100 text-brand-800'
+                        : 'text-sand-600 hover:bg-sand-200/60 hover:text-sand-900',
+                    )
+                  }
+                >
+                  <Ticket className="size-4.5" aria-hidden />
+                </NavLink>
                 {/* A display hint only - /moderation re-checks server-side, so a
                     forged flag reveals an empty page and nothing else. */}
                 {user.isModerator && (

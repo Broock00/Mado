@@ -34,6 +34,7 @@ from app.core.logging import get_logger
 from app.domains.catalog.models import EventInstance, Experience
 from app.domains.catalog.schemas import CamelModel
 from app.domains.commerce import tickets as ticketing
+from app.domains.commerce.bookings import BookingService
 from app.domains.commerce.checkout import CheckoutService, Line
 from app.domains.commerce.models import Order, TicketType
 from app.domains.commerce.tickets import TicketTypeService
@@ -84,6 +85,54 @@ class CreateTicketTypeRequest(CamelModel):
     description: str | None = Field(default=None, max_length=300)
     sales_open_at: datetime | None = None
     sales_close_at: datetime | None = None
+
+
+class TierSalesOut(CamelModel):
+    ticket_type_id: uuid.UUID
+    name: str
+    price_minor: int
+    quantity: int | None = None
+    sold: int
+    remaining: int | None = None
+    revenue_minor: int
+
+
+class BuyerOut(CamelModel):
+    """One booking, as the publisher sees it.
+
+    Named, like the reservations door list and for the same reason: somebody
+    who bought a ticket has told this publisher they are coming. Nothing else
+    about them belongs here - not their email, not what else they have booked.
+    """
+
+    order_id: uuid.UUID
+    reference: str
+    name: str
+    quantity: int
+    amount_minor: int
+    status: str
+    tiers: list[str] = Field(default_factory=list)
+    ordered_at: datetime
+    paid_at: datetime | None = None
+
+
+class BookingsOut(CamelModel):
+    currency: str
+    capacity: int | None = None
+    # Paid and pending together, because that is what decides whether the room
+    # is full. The two are also reported apart, below, because only one of them
+    # is money.
+    seats_taken: int
+    seats_remaining: int | None = None
+    tickets_paid: int
+    tickets_pending: int
+    revenue_minor: int
+    pending_minor: int
+    orders_paid: int
+    orders_pending: int
+    orders_failed: int
+    tiers: list[TierSalesOut] = Field(default_factory=list)
+    buyers: list[BuyerOut] = Field(default_factory=list)
 
 
 class OrderLineOut(CamelModel):
@@ -294,6 +343,78 @@ async def create_ticket_type(
     view = _tier_out(tier)
     await session.commit()
     return Envelope(data=view)
+
+
+@router.get(
+    "/posts/{experience_id}/events/{occurrence_id}/bookings",
+    response_model=Envelope[BookingsOut],
+    summary="How this date is selling, and who is coming",
+    description=(
+        "The publisher of the listing only. Pending money is reported "
+        "separately from taken money rather than added to it: a pending order "
+        "is holding a seat and may still lapse, so folding it into revenue "
+        "reports income that does not exist."
+    ),
+)
+async def bookings(
+    experience_id: uuid.UUID,
+    occurrence_id: uuid.UUID,
+    session: SessionDep,
+    user: CurrentUser,
+) -> Envelope[BookingsOut]:
+    occurrence, experience = await _owned_occurrence(
+        session, user, experience_id, occurrence_id
+    )
+    report = await BookingService(session).for_occurrence(
+        occurrence.id,
+        capacity=occurrence.capacity,
+        currency=experience.currency or "ETB",
+    )
+    return Envelope(
+        data=BookingsOut(
+            currency=report.currency,
+            capacity=report.capacity,
+            seats_taken=report.seats_taken,
+            seats_remaining=(
+                max(0, report.capacity - report.seats_taken)
+                if report.capacity is not None
+                else None
+            ),
+            tickets_paid=report.tickets_paid,
+            tickets_pending=report.tickets_pending,
+            revenue_minor=report.revenue_minor,
+            pending_minor=report.pending_minor,
+            orders_paid=report.orders_paid,
+            orders_pending=report.orders_pending,
+            orders_failed=report.orders_failed,
+            tiers=[
+                TierSalesOut(
+                    ticket_type_id=tier.ticket_type_id,
+                    name=tier.name,
+                    price_minor=tier.price_minor,
+                    quantity=tier.quantity,
+                    sold=tier.sold,
+                    remaining=tier.remaining,
+                    revenue_minor=tier.revenue_minor,
+                )
+                for tier in report.tiers
+            ],
+            buyers=[
+                BuyerOut(
+                    order_id=buyer.order_id,
+                    reference=buyer.reference,
+                    name=buyer.name,
+                    quantity=buyer.quantity,
+                    amount_minor=buyer.amount_minor,
+                    status=buyer.status,
+                    tiers=buyer.tiers,
+                    ordered_at=buyer.ordered_at,
+                    paid_at=buyer.paid_at,
+                )
+                for buyer in report.buyers
+            ],
+        )
+    )
 
 
 @router.delete(

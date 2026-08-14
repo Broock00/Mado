@@ -467,6 +467,50 @@ export interface ChosenPlace {
 /* ------------------------------------------------------- commerce */
 
 /** One tier on one date: "General admission", "VIP" (spec COM-002). */
+/** One tier's sales, as the publisher sees them. */
+export interface TierSales {
+  ticketTypeId: string
+  name: string
+  priceMinor: number
+  quantity?: number | null
+  sold: number
+  remaining?: number | null
+  revenueMinor: number
+}
+
+/** One booking on the door list. Named, and nothing else about the person. */
+export interface Buyer {
+  orderId: string
+  reference: string
+  name: string
+  quantity: number
+  amountMinor: number
+  /** `paid` | `pending` */
+  status: string
+  /** Rendered lines, e.g. "2 x VIP". */
+  tiers: string[]
+  orderedAt: string
+  paidAt?: string | null
+}
+
+export interface Bookings {
+  currency: string
+  capacity?: number | null
+  /** Paid and pending together - what decides whether the room is full. */
+  seatsTaken: number
+  seatsRemaining?: number | null
+  ticketsPaid: number
+  ticketsPending: number
+  revenueMinor: number
+  /** Held, not taken. Never added to revenue. */
+  pendingMinor: number
+  ordersPaid: number
+  ordersPending: number
+  ordersFailed: number
+  tiers: TierSales[]
+  buyers: Buyer[]
+}
+
 export interface TicketTypeSummary {
   id: string
   name: string

@@ -17,6 +17,7 @@ import {
   PencilLine,
   Plus,
   ShieldAlert,
+  Ticket,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
@@ -239,6 +240,17 @@ function PostRow({
                   View
                 </Button>
               </Link>
+              {/* Only for a listing with dates: bookings hang off an
+                  occurrence, so a place that is simply open has nothing to
+                  show and the link would lead to an empty page. */}
+              {post.upcomingEvents.length > 0 && (
+                <Link to={`/posts/${post.id}/bookings`}>
+                  <Button variant="ghost" size="sm">
+                    <Ticket className="size-3.5" aria-hidden />
+                    Bookings
+                  </Button>
+                </Link>
+              )}
               <Button
                 variant="ghost"
                 size="sm"
