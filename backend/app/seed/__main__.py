@@ -14,6 +14,7 @@ python -m app.seed --remove-demo    delete every one of them again
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
@@ -24,6 +25,7 @@ from app.domains.discovery.embedding_service import backfill_embeddings
 from app.domains.discovery.indexer import reindex_all
 from app.domains.explorer.learning import recompute_engagement_scores
 from app.seed.addis_ababa import seed
+from app.seed.ticketing import attach_tickets_everywhere
 
 logger = get_logger("mado.seed.cli")
 
@@ -106,6 +108,10 @@ async def _demo_cities(*, remove: bool) -> None:
             print("Removed the demo cities:")
         else:
             counts = await seed_demo_cities(session)
+            # Tickets last: the tiers hang off the occurrences this just wrote.
+            tickets = await attach_tickets_everywhere(session, now=datetime.now(UTC))
+            counts["ticket tiers"] = tickets["tiers"]
+            counts["now bookable"] = tickets["listings"]
             await session.commit()
             print("Seeded demo cities (invented data - never run this in production):")
         for name, value in counts.items():
@@ -143,6 +149,12 @@ async def _run(
     async with SessionFactory() as session:
         if do_seed:
             counts = await seed(session)
+            # A paid listing with no tier shows a price and no way to pay it,
+            # which reads as a broken checkout rather than an unfinished
+            # fixture. After the seed, because the tiers hang off the
+            # occurrences it recreates on every run.
+            tickets = await attach_tickets_everywhere(session, now=datetime.now(UTC))
+            counts["ticket tiers"] = tickets["tiers"]
             # Derive popularity and trend from the interaction history the seed
             # just wrote, rather than letting the seed assert them. Same code path
             # the scheduled job uses.
