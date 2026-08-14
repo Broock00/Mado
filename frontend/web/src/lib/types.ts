@@ -854,6 +854,8 @@ export interface CreatePostInput {
   tags?: string[]
   priceType?: 'free' | 'fixed' | 'range'
   priceAmount?: number | null
+  /** Omitted follows the city's own currency, which is right almost always. */
+  currency?: string | null
   durationMinutes?: number | null
   isIndoor?: boolean | null
 }

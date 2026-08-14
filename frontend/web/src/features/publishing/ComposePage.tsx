@@ -71,6 +71,7 @@ export function ComposePage() {
     categorySlug: null,
     priceType: 'free',
     priceAmount: null,
+    currency: null,
   })
 
   // Venue is captured inline. Requiring people to find a venue in a picker before
@@ -105,6 +106,7 @@ export function ComposePage() {
       categorySlug: existing.category?.slug ?? null,
       priceType: existing.price.type,
       priceAmount: existing.price.amount ?? null,
+      currency: existing.price.currency ?? null,
     })
     setVenueId(existing.venue?.id ?? null)
     setDraftId(existing.id)
@@ -193,6 +195,14 @@ export function ComposePage() {
   })
 
   const chosenCity = cities?.find((c) => c.slug === form.citySlug) ?? null
+  // The city decides unless the publisher says otherwise. Sending nothing lets
+  // the server apply the same rule, so the two cannot disagree.
+  const effectiveCurrency = form.currency ?? chosenCity?.currency ?? 'ETB'
+  // Every currency Mado has a city in, plus the one being used. Built from the
+  // cities rather than hard-coded so a new city brings its own along.
+  const currencyChoices = Array.from(
+    new Set([effectiveCurrency, ...(cities ?? []).map((c) => c.currency)]),
+  ).sort()
 
   // A listing has to be somewhere. This used to be silently inherited from the
   // app's single hardcoded city, which meant every listing was filed in Addis
@@ -382,17 +392,46 @@ export function ComposePage() {
                   <option value="range">From</option>
                 </select>
                 {form.priceType !== 'free' && (
-                  <Input
-                    type="number"
-                    min={0}
-                    value={form.priceAmount ?? ''}
-                    onChange={(e) =>
-                      setForm({ ...form, priceAmount: e.target.value ? Number(e.target.value) : null })
-                    }
-                    placeholder="ETB"
-                  />
+                  <>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={form.priceAmount ?? ''}
+                      onChange={(e) =>
+                        setForm({ ...form, priceAmount: e.target.value ? Number(e.target.value) : null })
+                      }
+                      placeholder={effectiveCurrency}
+                    />
+                    {/* Defaults to the city's own currency, which is right
+                        almost always, and is overridable because it is not
+                        always: a tour priced in dollars in a city that is not. */}
+                    <select
+                      value={effectiveCurrency}
+                      onChange={(e) => setForm({ ...form, currency: e.target.value })}
+                      aria-label="Currency"
+                      className="h-11 rounded-lg border border-sand-300 bg-white px-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
+                    >
+                      {currencyChoices.map((code) => (
+                        <option key={code} value={code}>
+                          {code}
+                        </option>
+                      ))}
+                    </select>
+                  </>
                 )}
               </div>
+              {form.priceType !== 'free' && (
+                <p className="mt-1.5 text-xs text-sand-500">
+                  This is the headline price people see on the card. To actually sell
+                  tickets - general admission, VIP, VVIP, each with its own price and
+                  what it includes -{' '}
+                  {form.type !== 'event'
+                    ? 'set the type to Event, then add a date below and put tickets on it.'
+                    : draftId
+                      ? 'add a date below and put tickets on it.'
+                      : 'save this first, then add a date below and put tickets on it.'}
+                </p>
+              )}
             </div>
           </div>
         </Card>
