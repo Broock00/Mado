@@ -22,6 +22,7 @@ import {
   ImagePlus,
   MapPin,
   Plus,
+  Ticket,
   Upload,
 } from 'lucide-react'
 import { ApiError, api } from '@/lib/api'
@@ -30,7 +31,7 @@ import type { PickedLocation } from '@/features/map/LocationPicker'
 import { Badge, Button, Card, Input } from '@/design-system/primitives'
 import { cn } from '@/lib/utils'
 import type { CreatePostInput, OwnPost } from '@/lib/types'
-import { TicketTypesEditor } from '@/features/commerce/TicketTypesEditor'
+import { TicketPlanEditor } from '@/features/commerce/TicketPlanEditor'
 import { WritingHelp } from './WritingHelp'
 
 const TYPES: { value: CreatePostInput['type']; label: string; hint: string }[] = [
@@ -370,69 +371,6 @@ export function ComposePage() {
               </select>
             </div>
 
-            <div>
-              <label htmlFor="price" className="mb-1.5 block text-sm font-medium text-sand-700">
-                Price
-              </label>
-              <div className="flex gap-2">
-                <select
-                  id="price"
-                  value={form.priceType}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      priceType: e.target.value as CreatePostInput['priceType'],
-                      priceAmount: e.target.value === 'free' ? null : form.priceAmount,
-                    })
-                  }
-                  className="h-11 rounded-lg border border-sand-300 bg-white px-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
-                >
-                  <option value="free">Free</option>
-                  <option value="fixed">Fixed</option>
-                  <option value="range">From</option>
-                </select>
-                {form.priceType !== 'free' && (
-                  <>
-                    <Input
-                      type="number"
-                      min={0}
-                      value={form.priceAmount ?? ''}
-                      onChange={(e) =>
-                        setForm({ ...form, priceAmount: e.target.value ? Number(e.target.value) : null })
-                      }
-                      placeholder={effectiveCurrency}
-                    />
-                    {/* Defaults to the city's own currency, which is right
-                        almost always, and is overridable because it is not
-                        always: a tour priced in dollars in a city that is not. */}
-                    <select
-                      value={effectiveCurrency}
-                      onChange={(e) => setForm({ ...form, currency: e.target.value })}
-                      aria-label="Currency"
-                      className="h-11 rounded-lg border border-sand-300 bg-white px-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
-                    >
-                      {currencyChoices.map((code) => (
-                        <option key={code} value={code}>
-                          {code}
-                        </option>
-                      ))}
-                    </select>
-                  </>
-                )}
-              </div>
-              {form.priceType !== 'free' && (
-                <p className="mt-1.5 text-xs text-sand-500">
-                  This is the headline price people see on the card. To actually sell
-                  tickets - general admission, VIP, VVIP, each with its own price and
-                  what it includes -{' '}
-                  {form.type !== 'event'
-                    ? 'set the type to Event, then add a date below and put tickets on it.'
-                    : draftId
-                      ? 'add a date below and put tickets on it.'
-                      : 'save this first, then add a date below and put tickets on it.'}
-                </p>
-              )}
-            </div>
           </div>
         </Card>
 
@@ -514,6 +452,12 @@ export function ComposePage() {
               <ul className="space-y-3">
                 {upcoming.map((event) => (
                   <li key={event.id}>
+                    {/* Just the date. The tickets used to be edited here,
+                        once per night, which meant a six-night run asked for
+                        the same VIP tier six times - and any night missed sold
+                        nothing but general admission without saying so. They
+                        are written once, under the price, and applied to all
+                        of these. */}
                     <p className="rounded-lg bg-sand-100 px-3 py-2 text-sm text-sand-700">
                       {new Date(event.startTime).toLocaleString(undefined, {
                         weekday: 'short',
@@ -523,17 +467,6 @@ export function ComposePage() {
                         minute: '2-digit',
                       })}
                     </p>
-                    {/* Prices belong to a date, not to the listing: last
-                        Friday sold out and next Friday has not. This is also
-                        the only way a date ever gets a checkout - without a
-                        ticket on it, the listing offers a free reservation. */}
-                    {draftId && (
-                      <TicketTypesEditor
-                        experienceId={draftId}
-                        occurrenceId={event.id}
-                        currency={post?.price.currency ?? 'ETB'}
-                      />
-                    )}
                   </li>
                 ))}
               </ul>
@@ -556,6 +489,102 @@ export function ComposePage() {
             </div>
           </Card>
         )}
+
+        {/* Price and tickets together, because they are one decision. The
+            headline figure is what a card shows; the tickets are what somebody
+            actually buys, and having them in different parts of the form meant
+            publishers set the first and never found the second. */}
+        <Card className="space-y-4 p-5">
+          <h2 className="flex items-center gap-2 text-sm font-medium text-sand-700">
+            <Ticket className="size-4" aria-hidden />
+            What does it cost?
+          </h2>
+
+            <div>
+              <label htmlFor="price" className="mb-1.5 block text-sm font-medium text-sand-700">
+                Price
+              </label>
+              <div className="flex gap-2">
+                <select
+                  id="price"
+                  value={form.priceType}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      priceType: e.target.value as CreatePostInput['priceType'],
+                      priceAmount: e.target.value === 'free' ? null : form.priceAmount,
+                    })
+                  }
+                  className="h-11 rounded-lg border border-sand-300 bg-white px-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
+                >
+                  <option value="free">Free</option>
+                  <option value="fixed">Fixed</option>
+                  <option value="range">From</option>
+                </select>
+                {form.priceType !== 'free' && (
+                  <>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={form.priceAmount ?? ''}
+                      onChange={(e) =>
+                        setForm({ ...form, priceAmount: e.target.value ? Number(e.target.value) : null })
+                      }
+                      placeholder={effectiveCurrency}
+                    />
+                    {/* Defaults to the city's own currency, which is right
+                        almost always, and is overridable because it is not
+                        always: a tour priced in dollars in a city that is not. */}
+                    <select
+                      value={effectiveCurrency}
+                      onChange={(e) => setForm({ ...form, currency: e.target.value })}
+                      aria-label="Currency"
+                      className="h-11 rounded-lg border border-sand-300 bg-white px-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
+                    >
+                      {currencyChoices.map((code) => (
+                        <option key={code} value={code}>
+                          {code}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+              </div>
+              {form.priceType !== 'free' && (
+                <p className="mt-1.5 text-xs text-sand-500">
+                  This is the headline price people see on the card. To actually sell
+                  tickets - general admission, VIP, VVIP, each with its own price and
+                  what it includes -{' '}
+                  {form.type !== 'event'
+                    ? 'set the type to Event, then add a date below and put tickets on it.'
+                    : draftId
+                      ? 'add a date below and put tickets on it.'
+                      : 'save this first, then add a date below and put tickets on it.'}
+                </p>
+              )}
+            </div>
+
+          {draftId && form.type === 'event' && (
+            <TicketPlanEditor
+              experienceId={draftId}
+              currency={effectiveCurrency}
+              dateCount={upcoming.length}
+            />
+          )}
+
+          {form.type !== 'event' && form.priceType !== 'free' && (
+            <p className="text-xs text-sand-500">
+              Only an event sells tickets, because a ticket is for a date. A place
+              or an activity shows this price and people pay when they arrive.
+            </p>
+          )}
+          {form.type === 'event' && !draftId && (
+            <p className="text-xs text-sand-500">
+              Save this and you can add tickets - general admission, VIP, anything
+              else - written once and sold on every date.
+            </p>
+          )}
+        </Card>
 
         {draftId && (
           <Card className="space-y-3 p-5">

@@ -61,7 +61,7 @@ export function TicketTypesEditor({
         // Sent as undefined rather than as an empty string: the column is
         // nullable and "" would render as a tier with a blank line under it.
         description: description.trim() || undefined,
-        priceMinor: toMinor(price || '0'),
+        priceMinor: toMinor(price || '0', currency),
         quantity: quantity.trim() === '' ? null : Number(quantity),
       }),
     onSuccess: () => {

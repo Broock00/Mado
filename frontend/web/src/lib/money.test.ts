@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { money, toMinor } from './money'
+import { money, toMajorInput, toMinor } from './money'
 
 describe('reading a price somebody typed', () => {
   it('reads whole numbers', () => {
@@ -102,5 +102,38 @@ describe('showing a price the server sent', () => {
 
   it('keeps a negative amount negative', () => {
     expect(money(-1999, 'ETB')).toBe('-19.99 ETB')
+  })
+})
+
+describe('currencies with no minor unit', () => {
+  // The catalogue reached Tokyo and this file still assumed a hundredth of
+  // everything. A 2000 yen ticket read as santim renders as "20 JPY", and a
+  // publisher typing 2000 would have stored 200000 - a factor of a hundred, in
+  // both directions, silently, all the way to a payment provider.
+  it('renders yen whole', () => {
+    expect(money(2000, 'JPY')).toBe('2000 JPY')
+  })
+
+  it('does not multiply yen into existence', () => {
+    expect(toMinor('2000', 'JPY')).toBe(2000)
+  })
+
+  it('drops a fraction of a yen rather than rounding one up', () => {
+    expect(toMinor('2000.7', 'JPY')).toBe(2000)
+  })
+
+  it('still treats birr as hundredths', () => {
+    expect(money(2000, 'ETB')).toBe('20 ETB')
+    expect(toMinor('20', 'ETB')).toBe(2000)
+  })
+
+  it('round-trips through the edit box without moving the price', () => {
+    for (const [minor, currency] of [
+      [1999, 'ETB'],
+      [2000, 'JPY'],
+      [50, 'USD'],
+    ] as const) {
+      expect(toMinor(toMajorInput(minor, currency), currency)).toBe(minor)
+    }
   })
 })

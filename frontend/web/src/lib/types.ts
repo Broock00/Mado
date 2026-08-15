@@ -467,6 +467,27 @@ export interface ChosenPlace {
 /* ------------------------------------------------------- commerce */
 
 /** One tier on one date: "General admission", "VIP" (spec COM-002). */
+/**
+ * One ticket as the publisher thinks of it: across every date, not on one.
+ *
+ * Tiers are stored per date because inventory is, but nobody authors them that
+ * way - a six-night run sells the same VIP ticket on all six.
+ */
+export interface PlanEntry {
+  name: string
+  description?: string | null
+  priceMinor: number
+  currency: string
+  quantity?: number | null
+  /** How many dates carry it. */
+  dates: number
+  sold: number
+  remaining?: number | null
+  isActive: boolean
+  /** True when the dates disagree - somebody edited one by hand. */
+  varies: boolean
+}
+
 /** One tier's sales, as the publisher sees them. */
 export interface TierSales {
   ticketTypeId: string

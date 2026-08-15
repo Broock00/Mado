@@ -72,6 +72,7 @@ import type {
   Ticketing,
   TicketTypeSummary,
   Bookings,
+  PlanEntry,
   Order,
 } from './types'
 
@@ -924,6 +925,37 @@ export const api = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+      },
+    ).then((r) => r.data),
+
+  ticketPlan: (experienceId: string) =>
+    request<CollectionEnvelope<PlanEntry>>(`/api/v1/posts/${experienceId}/tickets`).then(
+      (r) => r.data,
+    ),
+
+  sellTicket: (
+    experienceId: string,
+    body: {
+      name: string
+      priceMinor: number
+      quantity?: number | null
+      description?: string | null
+      currency?: string | null
+    },
+  ) =>
+    request<CollectionEnvelope<PlanEntry>>(`/api/v1/posts/${experienceId}/tickets`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((r) => r.data),
+
+  stopSellingTicket: (experienceId: string, name: string) =>
+    request<CollectionEnvelope<PlanEntry>>(
+      `/api/v1/posts/${experienceId}/tickets/withdraw`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
       },
     ).then((r) => r.data),
 

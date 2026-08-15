@@ -28,6 +28,7 @@ from app.domains.catalog import repository as catalog_repo
 from app.domains.catalog.models import Experience
 from app.domains.catalog.schemas import CamelModel, EventInstanceOut
 from app.domains.catalog.serializers import to_detail
+from app.domains.commerce import plan as commerce_plan
 from app.domains.discovery.embedding_service import embed_experience
 from app.domains.discovery.indexer import index_experience, remove_experience
 from app.domains.publisher.assistant import ContentAssistant
@@ -378,6 +379,14 @@ async def add_event(
         start_time=payload.start_time,
         end_time=payload.end_time,
         capacity=payload.capacity,
+    )
+    # The new date inherits whatever the listing already sells. Composed here
+    # rather than inside the publishing service, so the publisher domain does
+    # not have to know commerce exists - the route is the layer allowed to know
+    # about both. Without it, "define the tickets once" would hold only until
+    # somebody added another night, and that night would go on sale empty.
+    await commerce_plan.materialise_for(
+        session, experience_id=experience_id, occurrence=event
     )
     view = EventInstanceOut.model_validate(event)
     await session.commit()

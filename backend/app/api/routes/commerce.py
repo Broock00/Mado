@@ -33,6 +33,7 @@ from app.core.errors import NotFoundError, PermissionDeniedError, ValidationErro
 from app.core.logging import get_logger
 from app.domains.catalog.models import EventInstance, Experience
 from app.domains.catalog.schemas import CamelModel
+from app.domains.commerce import plan
 from app.domains.commerce import tickets as ticketing
 from app.domains.commerce.bookings import BookingService
 from app.domains.commerce.checkout import CheckoutService, Line
@@ -85,6 +86,36 @@ class CreateTicketTypeRequest(CamelModel):
     description: str | None = Field(default=None, max_length=300)
     sales_open_at: datetime | None = None
     sales_close_at: datetime | None = None
+
+
+class PlanEntryOut(CamelModel):
+    """One tier as the publisher thinks of it: across every date, not on one."""
+
+    name: str
+    description: str | None = None
+    price_minor: int
+    currency: str
+    quantity: int | None = None
+    # How many dates carry it, and how it is doing across all of them.
+    dates: int
+    sold: int
+    remaining: int | None = None
+    is_active: bool
+    # True when the dates disagree - somebody edited one by hand. Said out loud
+    # rather than papered over by showing whichever one came first.
+    varies: bool = False
+
+
+class PlanTierRequest(CamelModel):
+    name: str = Field(max_length=ticketing.MAX_TIER_NAME)
+    price_minor: int = Field(ge=0)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    quantity: int | None = Field(default=None, ge=0)
+    description: str | None = Field(default=None, max_length=300)
+
+
+class WithdrawTierRequest(CamelModel):
+    name: str = Field(max_length=ticketing.MAX_TIER_NAME)
 
 
 class TierSalesOut(CamelModel):
@@ -293,6 +324,87 @@ async def cancel_order(
 
 
 # -------------------------------------------------------------- publisher
+
+
+@router.get(
+    "/posts/{experience_id}/tickets",
+    response_model=CollectionEnvelope[PlanEntryOut],
+    summary="The tickets this listing sells",
+    description=(
+        "One row per tier rather than per tier per date. Tiers are still stored "
+        "against a date, because inventory is - but a publisher thinks in terms "
+        "of what the event sells, not what each night sells."
+    ),
+)
+async def ticket_plan(
+    experience_id: uuid.UUID, session: SessionDep, user: CurrentUser
+) -> CollectionEnvelope[PlanEntryOut]:
+    await _owned_experience(session, user, experience_id)
+    return CollectionEnvelope(
+        data=[_plan_out(entry) for entry in await plan.plan_for(session, experience_id)]
+    )
+
+
+@router.put(
+    "/posts/{experience_id}/tickets",
+    response_model=CollectionEnvelope[PlanEntryOut],
+    summary="Sell this ticket on every date",
+    description=(
+        "Adds the tier where it is missing and updates it where it is not, on "
+        "every date still to come. PUT rather than POST because applying the "
+        "same tier twice has to mean the same as applying it once - a publisher "
+        "correcting a price is doing exactly that."
+    ),
+)
+async def put_ticket_plan(
+    experience_id: uuid.UUID,
+    payload: PlanTierRequest,
+    session: SessionDep,
+    user: CurrentUser,
+) -> CollectionEnvelope[PlanEntryOut]:
+    experience = await _owned_experience(session, user, experience_id)
+    reached = await plan.apply_tier(
+        session,
+        experience_id=experience_id,
+        name=payload.name.strip(),
+        price_minor=payload.price_minor,
+        currency=(payload.currency or experience.currency or "ETB").upper(),
+        quantity=payload.quantity,
+        description=payload.description,
+    )
+    if reached == 0:
+        raise ValidationError(
+            "Add a date first - a ticket is sold for a date, so there is nothing "
+            "to put this on yet.",
+            code="NO_DATES_TO_SELL",
+        )
+    entries = [_plan_out(entry) for entry in await plan.plan_for(session, experience_id)]
+    await session.commit()
+    return CollectionEnvelope(data=entries)
+
+
+@router.post(
+    "/posts/{experience_id}/tickets/withdraw",
+    response_model=CollectionEnvelope[PlanEntryOut],
+    summary="Stop selling one of them",
+    description=(
+        "Withdrawn on every date still to come, and deleted nowhere: an order "
+        "that bought one has to keep reading. The name is sent in the body "
+        "rather than the path because a tier may be called anything, including "
+        "something with a slash in it."
+    ),
+)
+async def withdraw_from_plan(
+    experience_id: uuid.UUID,
+    payload: WithdrawTierRequest,
+    session: SessionDep,
+    user: CurrentUser,
+) -> CollectionEnvelope[PlanEntryOut]:
+    await _owned_experience(session, user, experience_id)
+    await plan.withdraw_tier(session, experience_id=experience_id, name=payload.name)
+    entries = [_plan_out(entry) for entry in await plan.plan_for(session, experience_id)]
+    await session.commit()
+    return CollectionEnvelope(data=entries)
 
 
 @router.get(
@@ -563,6 +675,21 @@ async def simulate_payment(
 # ------------------------------------------------------------------ mapping
 
 
+def _plan_out(entry: plan.PlanEntry) -> PlanEntryOut:
+    return PlanEntryOut(
+        name=entry.name,
+        description=entry.description,
+        price_minor=entry.price_minor,
+        currency=entry.currency,
+        quantity=entry.quantity,
+        dates=entry.dates,
+        sold=entry.sold,
+        remaining=entry.remaining,
+        is_active=entry.is_active,
+        varies=entry.varies,
+    )
+
+
 def _tier_out(tier: TicketType, *, now: datetime | None = None) -> TicketTypeOut:
     on_sale, reason = ticketing.sales_window(tier, now or datetime.now(UTC))
     return TicketTypeOut(
@@ -661,6 +788,26 @@ async def _occurrence_of(
     if experience is None:
         raise NotFoundError("That listing does not exist.", code="EXPERIENCE_NOT_FOUND")
     return occurrence, experience
+
+
+async def _owned_experience(session, user, experience_id: uuid.UUID) -> Experience:
+    """The listing, if this person publishes it.
+
+    The same check as :func:`_owned_occurrence` without needing a date, because
+    the ticket plan belongs to the listing rather than to any one of its nights.
+    """
+    experience = await session.get(Experience, experience_id)
+    if experience is None:
+        raise NotFoundError("That listing does not exist.", code="EXPERIENCE_NOT_FOUND")
+    publisher = (
+        await session.execute(select(Publisher).where(Publisher.id == experience.publisher_id))
+    ).scalars().first()
+    if publisher is None or publisher.owner_user_id != user.id:
+        raise PermissionDeniedError(
+            "Only the publisher of this listing can manage its tickets.",
+            code="NOT_THE_PUBLISHER",
+        )
+    return experience
 
 
 async def _owned_occurrence(
