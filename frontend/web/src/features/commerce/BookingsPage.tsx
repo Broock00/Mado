@@ -21,11 +21,11 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, Ticket as TicketIcon, Users } from 'lucide-react'
+import { ArrowLeft, ScanLine, Ticket as TicketIcon, Users } from 'lucide-react'
 
 import { api } from '@/lib/api'
 import type { Bookings } from '@/lib/types'
-import { Badge, Card, EmptyState, SectionHeading, Skeleton } from '@/design-system/primitives'
+import { Badge, Button, Card, EmptyState, SectionHeading, Skeleton } from '@/design-system/primitives'
 import { money } from '@/lib/money'
 import { cn } from '@/lib/utils'
 
@@ -147,6 +147,18 @@ export function BookingsPage() {
               </button>
             ))}
           </div>
+
+          {/* The scanner belongs to the date shown above, and is reached from
+              it rather than from a menu: the thing that makes it safe is that
+              it can only admit tickets for this one. */}
+          {selected && (
+            <Link to={`/posts/${experienceId}/events/${selected}/scan`}>
+              <Button variant="secondary" size="sm" className="mt-4">
+                <ScanLine className="size-4" aria-hidden />
+                Scan tickets at the door
+              </Button>
+            </Link>
+          )}
 
           {isLoading || !data ? (
             <Skeleton className="mt-6 h-56 w-full" />

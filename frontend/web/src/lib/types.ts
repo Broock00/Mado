@@ -467,6 +467,19 @@ export interface ChosenPlace {
 /* ------------------------------------------------------- commerce */
 
 /** One tier on one date: "General admission", "VIP" (spec COM-002). */
+/** What the door was told about one scan. Codes, not sentences. */
+export interface Scan {
+  /** `admitted` | `already_admitted` | `wrong_event` | `void` | `unknown` */
+  verdict: string
+  /** Absent unless the ticket is for this door. */
+  name?: string | null
+  ticketTypeName?: string | null
+  reference?: string | null
+  checkedInAt?: string | null
+  admittedCount: number
+  issuedCount: number
+}
+
 /**
  * One ticket as the publisher thinks of it: across every date, not on one.
  *

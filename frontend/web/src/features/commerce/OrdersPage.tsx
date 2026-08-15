@@ -23,6 +23,7 @@ import { useAppStore } from '@/app/store'
 import type { Order } from '@/lib/types'
 import { Badge, Button, Card, EmptyState, SectionHeading } from '@/design-system/primitives'
 import { money } from '@/lib/money'
+import { TicketQr } from '@/features/commerce/TicketQr'
 
 const STATUS_TONE: Record<string, 'success' | 'danger' | 'neutral'> = {
   paid: 'success',
@@ -68,18 +69,44 @@ function Countdown({ expiresAt }: { expiresAt: string }) {
   )
 }
 
-function Tickets({ order }: { order: Order }) {
+function Tickets({ order, detailed = false }: { order: Order; detailed?: boolean }) {
   if (order.tickets.length === 0) return null
+
+  // The square only on the ticket's own page. A list of six orders is a list,
+  // and six QR codes in it is a wall - the one being shown at a door is opened
+  // deliberately.
+  if (!detailed) {
+    return (
+      <ul className="mt-3 space-y-2">
+        {order.tickets.map((ticket) => (
+          <li
+            key={ticket.id}
+            className="flex items-center justify-between rounded-lg border border-sand-300 bg-white px-3 py-2"
+          >
+            <span className="text-sm text-sand-700">{ticket.ticketTypeName}</span>
+            {/* Monospace and spaced, because this gets read aloud at a door. */}
+            <span className="font-mono text-sm tracking-widest text-sand-900">{ticket.code}</span>
+          </li>
+        ))}
+      </ul>
+    )
+  }
+
   return (
-    <ul className="mt-3 space-y-2">
+    <ul className="mt-3 grid gap-3 sm:grid-cols-2">
       {order.tickets.map((ticket) => (
         <li
           key={ticket.id}
-          className="flex items-center justify-between rounded-lg border border-sand-300 bg-white px-3 py-2"
+          className="flex flex-col items-center gap-2 rounded-xl border border-sand-300 bg-white p-4"
         >
-          <span className="text-sm text-sand-700">{ticket.ticketTypeName}</span>
-          {/* Monospace and spaced, because this gets read aloud at a door. */}
-          <span className="font-mono text-sm tracking-widest text-sand-900">{ticket.code}</span>
+          <span className="text-sm font-medium text-sand-800">{ticket.ticketTypeName}</span>
+          <TicketQr code={ticket.code} />
+          {/* Said plainly, because somebody turned away at a door with a ticket
+              that reads "issued" on their phone has no idea why. */}
+          {ticket.checkedInAt && (
+            <Badge tone="neutral">Used {when(ticket.checkedInAt)}</Badge>
+          )}
+          {ticket.status === 'void' && <Badge tone="danger">Not valid</Badge>}
         </li>
       ))}
     </ul>
@@ -111,7 +138,7 @@ function OrderCard({ order, detailed = false }: { order: Order; detailed?: boole
 
       {order.outcomeReason && <p className="mt-1 text-sm text-sand-600">{order.outcomeReason}</p>}
 
-      {detailed && <Tickets order={order} />}
+      {detailed && <Tickets order={order} detailed={detailed} />}
 
       {!detailed && order.tickets.length > 0 && (
         <Link className="mt-2 inline-block text-sm text-brand-700 hover:underline" to={`/orders/${order.id}`}>

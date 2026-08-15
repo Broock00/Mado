@@ -37,6 +37,7 @@ from app.domains.commerce import plan
 from app.domains.commerce import tickets as ticketing
 from app.domains.commerce.bookings import BookingService
 from app.domains.commerce.checkout import CheckoutService, Line
+from app.domains.commerce.door import DoorService
 from app.domains.commerce.models import Order, TicketType
 from app.domains.commerce.tickets import TicketTypeService
 from app.domains.publisher.models import Publisher
@@ -86,6 +87,32 @@ class CreateTicketTypeRequest(CamelModel):
     description: str | None = Field(default=None, max_length=300)
     sales_open_at: datetime | None = None
     sales_close_at: datetime | None = None
+
+
+class ScanRequest(CamelModel):
+    code: str = Field(min_length=1, max_length=64)
+    # False looks the ticket up without spending it. Checking a code by hand
+    # should not quietly use somebody's admission.
+    admit: bool = True
+
+
+class ScanOut(CamelModel):
+    """What the door was told.
+
+    A code, not a sentence - the wording belongs to whoever is reading it, and
+    a door in Addis reads it in Amharic.
+    """
+
+    # admitted | already_admitted | wrong_event | void | unknown
+    verdict: str
+    # Absent unless the ticket is for this door. A code somebody happens to hold
+    # is not permission to read a stranger's booking.
+    name: str | None = None
+    ticket_type_name: str | None = None
+    reference: str | None = None
+    checked_in_at: datetime | None = None
+    admitted_count: int = 0
+    issued_count: int = 0
 
 
 class PlanEntryOut(CamelModel):
@@ -324,6 +351,42 @@ async def cancel_order(
 
 
 # -------------------------------------------------------------- publisher
+
+
+@router.post(
+    "/posts/{experience_id}/events/{occurrence_id}/scan",
+    response_model=Envelope[ScanOut],
+    summary="Admit somebody at the door",
+    description=(
+        "Scoped to one date on purpose: a ticket for another night must not "
+        "read as valid here, and the scanner is the only thing standing between "
+        "those two outcomes. The second scan of the same ticket is refused and "
+        "says when the first happened - a screenshot forwarded to three friends "
+        "is still one admission."
+    ),
+)
+async def scan_ticket(
+    experience_id: uuid.UUID,
+    occurrence_id: uuid.UUID,
+    payload: ScanRequest,
+    session: SessionDep,
+    user: CurrentUser,
+) -> Envelope[ScanOut]:
+    occurrence, _ = await _owned_occurrence(session, user, experience_id, occurrence_id)
+    result = await DoorService(session).scan(
+        occurrence_id=occurrence.id, code=payload.code, admit=payload.admit
+    )
+    view = ScanOut(
+        verdict=result.verdict,
+        name=result.name,
+        ticket_type_name=result.ticket_type_name,
+        reference=result.reference,
+        checked_in_at=result.checked_in_at,
+        admitted_count=result.admitted_count,
+        issued_count=result.issued_count,
+    )
+    await session.commit()
+    return Envelope(data=view)
 
 
 @router.get(

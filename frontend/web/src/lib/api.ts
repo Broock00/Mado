@@ -73,6 +73,7 @@ import type {
   TicketTypeSummary,
   Bookings,
   PlanEntry,
+  Scan,
   Order,
 } from './types'
 
@@ -925,6 +926,21 @@ export const api = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+      },
+    ).then((r) => r.data),
+
+  scanTicket: (
+    experienceId: string,
+    occurrenceId: string,
+    code: string,
+    admit = true,
+  ) =>
+    request<Envelope<Scan>>(
+      `/api/v1/posts/${experienceId}/events/${occurrenceId}/scan`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, admit }),
       },
     ).then((r) => r.data),
 
