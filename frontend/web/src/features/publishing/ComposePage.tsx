@@ -130,13 +130,23 @@ export function ComposePage() {
         latitude: picked!.latitude,
         longitude: picked!.longitude,
       }),
-    onSuccess: (created) => setVenueId(created.id),
+    onSuccess: (created) => {
+      setVenueId(created.id)
+      // Saved immediately, because the readiness list and the Publish button
+      // read the *saved* draft. Leaving it local meant somebody placed their
+      // pin, watched "Add a location" stay on screen, and had no way to tell
+      // that the fix was to press Save.
+      if (draftId) saveWith({ venueId: created.id })
+    },
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Could not add that place.'),
   })
 
   const save = useMutation({
-    mutationFn: async () => {
-      const payload = { ...form, venueId }
+    mutationFn: async (overrides?: Partial<CreatePostInput> & { venueId?: string | null }) => {
+      // The override exists because state set moments ago is not readable here:
+      // saving right after creating a venue would otherwise send the previous
+      // (null) id and undo the thing that just happened.
+      const payload = { ...form, venueId, ...(overrides ?? {}) }
       if (draftId) return api.updatePost(draftId, payload)
       return api.createPost(payload)
     },
@@ -148,6 +158,9 @@ export function ComposePage() {
     },
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Could not save that.'),
   })
+
+  const saveWith = (overrides?: Partial<CreatePostInput> & { venueId?: string | null }) =>
+    save.mutate(overrides)
 
   const addDate = useMutation({
     mutationFn: () => api.addPostDate(draftId!, new Date(dateInput).toISOString()),
@@ -212,6 +225,38 @@ export function ComposePage() {
     form.title.trim().length >= 4 &&
     form.description.trim().length > 0 &&
     Boolean(form.citySlug)
+
+  // Whether what is on screen has drifted from what the server holds. The
+  // readiness list below describes the *saved* draft, so without this the
+  // composer can tell somebody to add a location they have already added and
+  // call itself "Saved as a draft" while doing it.
+  const dirty = useMemo(() => {
+    if (!post) return canSave
+    return (
+      form.title !== post.title ||
+      form.description !== post.description ||
+      (form.summary ?? '') !== (post.summary ?? '') ||
+      form.type !== post.type ||
+      (form.citySlug || '') !== (post.citySlug ?? '') ||
+      (form.categorySlug ?? null) !== (post.category?.slug ?? null) ||
+      form.priceType !== post.price.type ||
+      (form.priceAmount ?? null) !== (post.price.amount ?? null) ||
+      (venueId ?? null) !== (post.venue?.id ?? null)
+    )
+  }, [post, form, venueId, canSave])
+
+  // Saves first when there is anything to save, so nobody is held out by a
+  // warning about a draft they have already fixed on screen. The server
+  // re-checks and is still the authority - it answers EXPERIENCE_INCOMPLETE
+  // with the list, which is what fills the card above.
+  const publishNow = async () => {
+    try {
+      if (dirty && canSave) await save.mutateAsync(undefined)
+      await publish.mutateAsync()
+    } catch {
+      // Both mutations already report through onError.
+    }
+  }
   const upcoming = useMemo(
     () => (post?.upcomingEvents ?? []).filter((e) => e.status !== 'cancelled'),
     [post],
@@ -423,16 +468,30 @@ export function ComposePage() {
               </Suspense>
               )}
 
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => createVenue.mutate()}
-                loading={createVenue.isPending}
-                disabled={!venue.name.trim() || !picked}
-              >
-                <Plus className="size-4" aria-hidden />
-                Use this location
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => createVenue.mutate()}
+                  loading={createVenue.isPending}
+                  disabled={!venue.name.trim() || !picked}
+                >
+                  <Plus className="size-4" aria-hidden />
+                  Use this location
+                </Button>
+                {/* A disabled button that does not say why is the same as a
+                    broken one. Both halves are needed and it is not obvious
+                    that placing the pin is a separate act from typing a name. */}
+                {(!venue.name.trim() || !picked) && (
+                  <span className="text-xs text-sand-500">
+                    {!venue.name.trim() && !picked
+                      ? 'Name the place and drop a pin on the map.'
+                      : !venue.name.trim()
+                        ? 'Give the place a name.'
+                        : 'Tap the map to drop a pin.'}
+                  </span>
+                )}
+              </div>
               {createVenue.isError && (
                 <p className="text-sm text-red-700" role="alert">
                   {(createVenue.error as Error).message}
@@ -660,6 +719,15 @@ export function ComposePage() {
               <AlertTriangle className="size-4" aria-hidden />
               Before this can go live
             </p>
+            {/* Said plainly. This list is the server's answer about the last
+                save, and presenting it as though it described the screen is
+                what made it look wrong to somebody who had just fixed it. */}
+            {dirty && (
+              <p className="mt-1 text-xs text-accent-700/80">
+                From your last save. Press Publish and this is re-checked with your
+                latest changes.
+              </p>
+            )}
             <ul className="mt-2 space-y-1 pl-6 text-sm text-accent-700">
               {problems.map((problem) => (
                 <li key={problem} className="list-disc">
@@ -688,7 +756,7 @@ export function ComposePage() {
                 <Badge tone={post?.status === 'published' ? 'success' : 'neutral'}>
                   {post?.status ?? 'draft'}
                 </Badge>
-                {save.isPending ? 'Saving…' : 'Saved as a draft'}
+                {save.isPending ? 'Saving…' : dirty ? 'Unsaved changes' : 'Saved as a draft'}
               </span>
             ) : (
               'Not saved yet'
@@ -697,16 +765,20 @@ export function ComposePage() {
           <div className="flex shrink-0 gap-2">
             <Button
               variant="secondary"
-              onClick={() => save.mutate()}
+              onClick={() => save.mutate(undefined)}
               loading={save.isPending}
               disabled={!canSave}
             >
               Save
             </Button>
             <Button
-              onClick={() => publish.mutate()}
-              loading={publish.isPending}
-              disabled={!draftId || problems.length > 0}
+              onClick={() => void publishNow()}
+              loading={publish.isPending || save.isPending}
+              // Only genuinely blocked when the saved draft is short of
+              // something *and* there is nothing new to save. Disabling it
+              // while the fix is sitting unsaved on screen is how this turned
+              // into a dead end with no way forward and no explanation.
+              disabled={!draftId || (problems.length > 0 && !dirty)}
             >
               Publish
             </Button>
