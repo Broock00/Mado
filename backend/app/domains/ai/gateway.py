@@ -75,6 +75,41 @@ class ConciergeReply:
     plan_change: str | None = None
 
 
+# Words that make a sentence a request rather than the name of a thing. A query
+# built only from these named nothing, however many of them there are.
+_ASKING = frozenset(
+    {
+        "a", "an", "and", "any", "anything", "are", "around", "at", "by", "can",
+        "close", "do", "find", "for", "get", "give", "go", "good", "here", "i",
+        "in", "is", "know", "looking", "me", "my", "near", "nearby", "of", "on",
+        "or", "out", "please", "recommend", "share", "show", "some", "someone",
+        "something", "somewhere", "suggest", "surprise", "tell", "the", "there",
+        "thing", "things", "to", "us", "want", "what", "whats", "where", "with",
+        "you", "your",
+    }
+)
+
+
+def names_something(query: str) -> bool:
+    """Whether a search query names a subject, or is just the asking.
+
+    "traditional coffee" names something and "nothing matched it" is worth
+    saying. "share something nearby" names nothing - it is a way of asking, and
+    reporting that the catalogue contains no activity *called* "share something
+    nearby" is answering a question nobody asked. The explorer asked for a
+    recommendation and got one; the apology in front of it was noise, and read
+    as the assistant not understanding plain English.
+
+    Punctuation is stripped rather than split on, so "what's" reduces to
+    "whats" and is recognised.
+    """
+    words = [
+        "".join(character for character in word if character.isalnum())
+        for word in query.lower().split()
+    ]
+    return any(word and word not in _ASKING for word in words)
+
+
 class AIGateway:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -235,7 +270,8 @@ class AIGateway:
         # 3-5. Plan and execute tools. Facts are gathered before generation.
         plan_diff = None
         if classification.intent == intents.REFINE_PLAN and pending_plan:
-            substituted = False
+            # Refining an existing plan substitutes nothing.
+            substituted: str | None = None
             # A plan can only be refined if one was made, which needed a place.
             blocked = None
             tool_calls, results, plan, plan_diff = await self._refine_plan(
@@ -521,6 +557,12 @@ class AIGateway:
         categories = constraints.get("categories")
         window = classification.time_window
 
+        # What was actually searched for, as opposed to the sentence it was
+        # lifted out of. Everything the reply says about a failed match talks
+        # about this - quoting somebody's whole request back at them as though
+        # it were a listing title is how this went wrong.
+        searched = str(classification.entities.get("query", "") or "")
+
         # Planning is checked first, and ahead of the time-window rule below.
         # Someone asking to plan an evening has asked for a *sequence* - answering
         # with an unordered list of things happening tonight leaves them to work out
@@ -573,7 +615,7 @@ class AIGateway:
                 (
                     "search_experiences",
                     {
-                        "query": classification.entities.get("query", ""),
+                        "query": searched,
                         "categories": categories,
                         "free_only": constraints.get("free_only", False),
                     },
@@ -600,7 +642,12 @@ class AIGateway:
         # wanted, and saying "nothing matched" there would be a fresh
         # dishonesty rather than a cure for one. That case already has its own
         # honest signal - the concierge asks what was meant.
-        substituted = False
+        #
+        # Carries the words that matched nothing rather than a flag, so the
+        # reply can name them. It used to quote the explorer's whole message,
+        # which is how "share something nearby" came back as an activity the
+        # catalogue supposedly does not have one called.
+        substituted: str | None = None
 
         # Nothing ran, because there is nowhere to run it. That is not an empty
         # catalogue and must not be phrased as one - and there is no point
@@ -632,7 +679,15 @@ class AIGateway:
                 # Saying "here is what I found" over a list that answers nothing
                 # the explorer asked is how a broken search reads as a thin
                 # catalogue - which is exactly how a real one hid for a while.
-                substituted = True
+                #
+                # But only when the explorer named something. "Share something
+                # nearby" names nothing: no listing is called that, and saying
+                # so is not a fact about the catalogue. It produced "I couldn't
+                # find an activity specifically called 'share something nearby'"
+                # in front of a perfectly good list of nearby things - they
+                # asked for a recommendation and got one, and the apology read
+                # as the assistant not following plain English.
+                substituted = searched if names_something(searched) else None
                 tool_calls.append(
                     {
                         "tool": "search_experiences",
@@ -652,7 +707,7 @@ class AIGateway:
         history: list[Message],
         text: str,
         city_name: str,
-        substituted: bool = False,
+        substituted: str | None = None,
         blocked: str | None = None,
         ctx: RankingContext,
         preferences: dict | None,
@@ -701,11 +756,12 @@ class AIGateway:
             # asked for. The offline composer was taught this and the model was
             # not, so the honesty held only where nobody was using it.
             user_message += (
-                f"\n\nNOTE: nothing in the catalogue matched {text!r} - the request "
-                "in this message, not any earlier one in the conversation. The items "
-                "above are other things on nearby, offered as an alternative. Say "
-                "plainly that nothing matched before mentioning them, and do not "
-                "present them as answers to what was asked.\n"
+                f"\n\nNOTE: searching for {substituted!r} matched nothing. Those are "
+                "the words that were searched for, not a title - say that nothing "
+                "matched them, never that the catalogue has no activity 'called' "
+                "them. The items above are other things on nearby, offered as an "
+                "alternative. Say plainly that nothing matched before mentioning "
+                "them, and do not present them as answers to what was asked.\n"
                 "Answer the request in this message. Earlier subjects are context, "
                 "not the question."
             )

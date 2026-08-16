@@ -274,7 +274,12 @@ def _compose_offline_reply(*, intent: str, results: list[dict], context: dict) -
     # broken search reads as a thin catalogue - and did, for a while.
     if context.get("substituted"):
         listed = "\n".join(f"{i}. {_describe(item)}" for i, item in enumerate(results, 1))
-        return f"Nothing matched that exactly. Here is what else is on in {city}:\n\n{listed}"
+        # Names the words that were searched for, now that the gateway sends
+        # them. "Nothing matched X" is a fact about a search; the older wording
+        # said "that exactly", which left the explorer guessing which part of
+        # what they wrote had failed.
+        terms = str(context["substituted"])
+        return f"Nothing matched {terms!r}. Here is what else is on in {city}:\n\n{listed}"
 
     # A stated time window is the most useful thing to reflect back, so it takes
     # precedence over the intent-derived phrasing.
