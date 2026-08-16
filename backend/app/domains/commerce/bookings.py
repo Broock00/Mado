@@ -22,7 +22,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -162,6 +162,25 @@ def summarise(
         )
 
     return report
+
+
+async def sold_for_experience(session: AsyncSession, experience_id: uuid.UUID) -> int:
+    """How many tickets across this listing are somebody's, right now.
+
+    Paid and pending both count. A pending order is holding a seat and may still
+    become money, and deleting the listing out from under it is the same
+    unpleasant surprise either way.
+
+    Exists so the publishing routes can ask without reading this domain's tables
+    themselves.
+    """
+    return (
+        await session.execute(
+            select(func.coalesce(func.sum(Order.quantity), 0))
+            .where(Order.experience_id == experience_id)
+            .where(Order.status.in_((ORDER_PAID, ORDER_PENDING)))
+        )
+    ).scalar() or 0
 
 
 class BookingService:

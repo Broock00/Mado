@@ -411,6 +411,27 @@ class PublishingService:
         await self.session.flush()
         return experience
 
+    async def delete(self, user: User, experience_id: uuid.UUID) -> Experience:
+        """Remove a listing for good, as far as anybody can see.
+
+        Soft, because `deleted_at` is already what the rest of the platform
+        reads: the author's own list and `is_discoverable` both exclude it, so
+        setting it removes the listing from every surface at once. Keeping the
+        row is not sentimentality - an order carries the title and the time it
+        was bought for, and a ticket that outlives the listing has to keep
+        reading at the door.
+
+        Refusing when something has been sold is the caller's job rather than
+        this method's, because the count lives in another domain. Deciding it
+        here would mean the publisher domain reading commerce's tables.
+        """
+        experience = await self._load_owned(user, experience_id)
+        experience.deleted_at = datetime.now(UTC)
+        experience.status = STATUS_ARCHIVED
+        await self.session.flush()
+        logger.info("experience_deleted", experience_id=str(experience.id))
+        return experience
+
     async def restore(self, user: User, experience_id: uuid.UUID) -> Experience:
         experience = await self._load_owned(user, experience_id)
         if experience.status != STATUS_ARCHIVED:

@@ -11,7 +11,7 @@ from __future__ import annotations
 import contextlib
 import uuid
 
-from fastapi import APIRouter, File, Form, Query, Request, UploadFile, status
+from fastapi import APIRouter, File, Form, Query, Request, Response, UploadFile, status
 from pydantic import Field
 
 from app.api.deps import (
@@ -23,12 +23,18 @@ from app.api.deps import (
 )
 from app.core import rate_limit
 from app.core.envelope import CollectionEnvelope, Envelope
-from app.core.errors import PermissionDeniedError, RateLimitError, ValidationError
+from app.core.errors import (
+    ConflictError,
+    PermissionDeniedError,
+    RateLimitError,
+    ValidationError,
+)
 from app.domains.catalog import repository as catalog_repo
 from app.domains.catalog.models import Experience
 from app.domains.catalog.schemas import CamelModel, EventInstanceOut
 from app.domains.catalog.serializers import to_detail
 from app.domains.commerce import plan as commerce_plan
+from app.domains.commerce.bookings import sold_for_experience
 from app.domains.discovery.embedding_service import embed_experience
 from app.domains.discovery.indexer import index_experience, remove_experience
 from app.domains.publisher.assistant import ContentAssistant
@@ -341,6 +347,47 @@ async def upload_media(
     view = _own_view(experience)
     await session.commit()
     return Envelope(data=view)
+
+
+@router.delete(
+    "/{experience_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a post",
+    description=(
+        "Removes the listing from discovery, from search and from your own "
+        "list. Refused once anybody holds a ticket for it - cancel the date "
+        "instead, which tells them, rather than having the thing they paid for "
+        "quietly stop existing."
+    ),
+)
+async def delete_post(
+    experience_id: uuid.UUID,
+    user: ExperienceWriter,
+    session: SessionDep,
+) -> Response:
+    service = PublishingService(session)
+    experience = await service.get_own_experience(user, experience_id)
+
+    # Asked of commerce rather than worked out here, so this route does not read
+    # another domain's tables. Pending counts as well as paid: a held seat is
+    # somebody's plan for the evening either way.
+    held = await sold_for_experience(session, experience_id)
+    if held:
+        raise ConflictError(
+            f"{held} {'ticket has' if held == 1 else 'tickets have'} been booked for this. "
+            "Cancel the date instead - that tells whoever is holding them.",
+            code="TICKETS_ALREADY_SOLD",
+            details={"held": held},
+        )
+
+    await service.delete(user, experience_id)
+    # Out of the index too. A listing that is gone from the database and still
+    # in search is worse than either state on its own: it appears, and then
+    # 404s the person who tapped it.
+    with contextlib.suppress(Exception):
+        await remove_experience(str(experience.id))
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete(

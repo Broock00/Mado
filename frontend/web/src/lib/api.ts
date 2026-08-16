@@ -486,6 +486,9 @@ export const api = {
       body: JSON.stringify(input),
     }).then((r) => r.data),
 
+  deletePost: (id: string) =>
+    request<void>(`/api/v1/posts/${id}`, { method: 'DELETE' }),
+
   postAction: (id: string, action: 'publish' | 'unpublish' | 'archive' | 'restore') =>
     request<Envelope<OwnPost>>(`/api/v1/posts/${id}/${action}`, { method: 'POST' }).then(
       (r) => r.data,

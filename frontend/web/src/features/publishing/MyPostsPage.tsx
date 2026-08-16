@@ -8,6 +8,7 @@
  */
 
 import { Link, useSearchParams } from 'react-router-dom'
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertTriangle,
@@ -18,8 +19,9 @@ import {
   Plus,
   ShieldAlert,
   Ticket,
+  Trash2,
 } from 'lucide-react'
-import { api } from '@/lib/api'
+import { ApiError, api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
 import { Badge, Button, Card, EmptyState, Skeleton } from '@/design-system/primitives'
 import { formatPrice, formatWhen } from '@/lib/utils'
@@ -43,6 +45,24 @@ export function MyPostsPage() {
     queryKey: ['my-posts'],
     queryFn: () => api.myPosts(),
     enabled: Boolean(user),
+  })
+
+  const [refusal, setRefusal] = useState<string | null>(null)
+
+  // Kept apart from the ordinary actions because it is the one that cannot be
+  // undone, and because it is the one that can be refused - a listing somebody
+  // holds a ticket for is not the publisher's alone to remove.
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deletePost(id),
+    onSuccess: () => {
+      setRefusal(null)
+      void queryClient.invalidateQueries({ queryKey: ['my-posts'] })
+      void queryClient.invalidateQueries({ queryKey: ['canvas'] })
+    },
+    onError: (caught) =>
+      setRefusal(
+        caught instanceof ApiError ? caught.message : 'That post could not be deleted.',
+      ),
   })
 
   const action = useMutation({
@@ -129,13 +149,23 @@ export function MyPostsPage() {
         />
       )}
 
+      {refusal && (
+        <p
+          role="alert"
+          className="mb-3 rounded-lg bg-accent-100/60 px-3 py-2 text-sm text-accent-800"
+        >
+          {refusal}
+        </p>
+      )}
+
       <div className="space-y-3">
         {posts?.map((post) => (
           <PostRow
             key={post.id}
             post={post}
-            busy={action.isPending}
+            busy={action.isPending || remove.isPending}
             onAction={(act) => action.mutate({ id: post.id, act })}
+            onDelete={() => remove.mutate(post.id)}
           />
         ))}
       </div>
@@ -147,11 +177,17 @@ function PostRow({
   post,
   busy,
   onAction,
+  onDelete,
 }: {
   post: OwnPost
   busy: boolean
   onAction: (act: 'publish' | 'unpublish' | 'archive' | 'restore') => void
+  onDelete: () => void
 }) {
+  // Two taps, in place. A confirm() blocks the whole page and a modal for one
+  // sentence is more ceremony than this needs - but a single tap that destroys
+  // something is not a thing to offer either.
+  const [confirming, setConfirming] = useState(false)
   const image = post.media[0]
   const withheld = post.moderationStatus === 'flagged' || post.moderationStatus === 'rejected'
   const pending = post.moderationStatus === 'pending'
@@ -272,6 +308,39 @@ function PostRow({
               disabled={busy || post.readinessProblems.length > 0}
             >
               Publish
+            </Button>
+          )}
+
+          {/* Last, and apart, because it is the only one that cannot be taken
+              back. The server refuses it once somebody holds a ticket. */}
+          {confirming ? (
+            <span className="flex items-center gap-1.5">
+              <span className="text-xs text-sand-600">Delete this?</span>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setConfirming(false)
+                  onDelete()
+                }}
+                disabled={busy}
+              >
+                Yes, delete
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
+                Keep
+              </Button>
+            </span>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setConfirming(true)}
+              disabled={busy}
+              className="text-red-700 hover:bg-red-50"
+            >
+              <Trash2 className="size-3.5" aria-hidden />
+              Delete
             </Button>
           )}
         </div>
