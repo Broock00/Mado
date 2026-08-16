@@ -29,11 +29,15 @@ import { ApiError, api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
 import type { PickedLocation } from '@/features/map/LocationPicker'
 import { Badge, Button, Card, Input } from '@/design-system/primitives'
+import { toMajorInput, toMinor } from '@/lib/money'
 import { cn } from '@/lib/utils'
 import type { CreatePostInput, OwnPost } from '@/lib/types'
 import { TicketPlanEditor } from '@/features/commerce/TicketPlanEditor'
 import type { DraftTicket } from '@/features/commerce/TicketPlanEditor'
 import { WritingHelp } from './WritingHelp'
+
+/** What the listing's own price becomes, once it is a thing to buy. */
+export const ORDINARY_TICKET = 'General admission'
 
 const TYPES: { value: CreatePostInput['type']; label: string; hint: string }[] = [
   { value: 'place', label: 'A place', hint: 'Somewhere people can go any time it is open' },
@@ -283,6 +287,25 @@ export function ComposePage() {
         }
       }
 
+      // What the card says has to be what somebody can actually pay. The
+      // ticketing view already derives its price from the tiers; the listing's
+      // own fields feed search and the free-only filter, so leaving them
+      // behind would file a paid event as free.
+      if (hasDates && tickets.length > 0) {
+        const prices = tickets.map((ticket) => ticket.priceMinor).sort((a, b) => a - b)
+        const low = prices[0]
+        const high = prices[prices.length - 1]
+        const shape = high === 0 ? 'free' : low === high ? 'fixed' : 'range'
+        // Through the same table the rest of the money handling uses, rather
+        // than dividing by a hundred - yen has no minor unit, and nor do four
+        // other currencies the catalogue already contains.
+        const amount = high === 0 ? null : Number(toMajorInput(low, effectiveCurrency))
+        if (shape !== form.priceType || amount !== (form.priceAmount ?? null)) {
+          await api.updatePost(saved.id, { priceType: shape, priceAmount: amount })
+          setForm((current) => ({ ...current, priceType: shape, priceAmount: amount }))
+        }
+      }
+
       if (thenPublish) return api.postAction(saved.id, 'publish')
       return saved
     },
@@ -307,6 +330,34 @@ export function ComposePage() {
       setError(err instanceof ApiError ? err.message : 'Could not save that.')
     },
   })
+
+  /**
+   * The price a publisher types *is* a ticket - the ordinary one.
+   *
+   * It was not, and the result was quietly wrong in two directions: a listing
+   * priced at 300 with a VIP tier added showed 800 on the card, because the
+   * displayed price is derived from the tiers, and offered no way at all to buy
+   * the 300 one. The publisher had typed a price that nobody could pay.
+   *
+   * So setting a price on an event puts a general admission ticket in the list,
+   * where it is visible and editable like any other. Seeded once rather than
+   * kept in sync in both directions: after it exists the list is the truth, and
+   * a price field quietly overwriting a ticket somebody had adjusted would be
+   * the same class of bug pointing the other way.
+   */
+  useEffect(() => {
+    if (form.type !== 'event') return
+    if (form.priceType === 'free' || form.priceAmount == null) return
+    if (tickets.length > 0) return
+    setTickets([
+      {
+        name: ORDINARY_TICKET,
+        description: '',
+        priceMinor: toMinor(String(form.priceAmount), effectiveCurrency),
+        quantity: null,
+      },
+    ])
+  }, [form.type, form.priceType, form.priceAmount, tickets.length, effectiveCurrency])
 
   // Read at commit time rather than closed over, so a name typed a moment ago
   // is the one that gets used.
@@ -740,14 +791,9 @@ export function ComposePage() {
               </div>
               {form.priceType !== 'free' && (
                 <p className="mt-1.5 text-xs text-sand-500">
-                  This is the headline price people see on the card. To actually sell
-                  tickets - general admission, VIP, VVIP, each with its own price and
-                  what it includes -{' '}
-                  {form.type !== 'event'
-                    ? 'set the type to Event, then add a date below and put tickets on it.'
-                    : draftId
-                      ? 'add a date below and put tickets on it.'
-                      : 'save this first, then add a date below and put tickets on it.'}
+                  {form.type === 'event'
+                    ? 'This becomes your ordinary ticket, below. Add more for VIP or anything else you offer.'
+                    : 'What people pay when they arrive. Only an event sells tickets in advance, because a ticket is for a date.'}
                 </p>
               )}
             </div>

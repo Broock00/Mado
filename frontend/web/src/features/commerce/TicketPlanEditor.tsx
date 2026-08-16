@@ -185,7 +185,7 @@ export function TicketPlanEditor({
               value={draft.price}
               onChange={(e) => setDraft({ ...draft, price: e.target.value })}
               inputMode="decimal"
-              placeholder={currency}
+              placeholder={`Price in ${currency}`}
               aria-label={`Price in ${currency}`}
             />
             <Input
