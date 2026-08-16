@@ -21,9 +21,9 @@ import {
   Clock,
   ImagePlus,
   MapPin,
-  Plus,
   Ticket,
   Upload,
+  X,
 } from 'lucide-react'
 import { ApiError, api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
@@ -32,6 +32,7 @@ import { Badge, Button, Card, Input } from '@/design-system/primitives'
 import { cn } from '@/lib/utils'
 import type { CreatePostInput, OwnPost } from '@/lib/types'
 import { TicketPlanEditor } from '@/features/commerce/TicketPlanEditor'
+import type { DraftTicket } from '@/features/commerce/TicketPlanEditor'
 import { WritingHelp } from './WritingHelp'
 
 const TYPES: { value: CreatePostInput['type']; label: string; hint: string }[] = [
@@ -84,6 +85,17 @@ export function ComposePage() {
   const [dateInput, setDateInput] = useState('')
   const [imageUrl, setImageUrl] = useState('')
 
+  // Dates and tickets are edited here and written down once, in dependency
+  // order, when the post is saved or published. They used to be four separate
+  // trips to the server that could only happen in one sequence - price, save,
+  // date, ticket - which is an implementation detail nobody writing a post
+  // should have had to learn.
+  const [dates, setDates] = useState<{ id: string | null; startTime: string }[]>([])
+  const [tickets, setTickets] = useState<DraftTicket[]>([])
+  const [seeded, setSeeded] = useState(false)
+  // Which button is waiting, so only that one shows a spinner.
+  const [publishing, setPublishing] = useState(false)
+
   const { data: categories } = useQuery({
     queryKey: ['categories'],
     queryFn: () => api.categories(),
@@ -111,66 +123,41 @@ export function ComposePage() {
     })
     setVenueId(existing.venue?.id ?? null)
     setDraftId(existing.id)
+    setDates(
+      (existing.upcomingEvents ?? [])
+        .filter((event) => event.status !== 'cancelled')
+        .map((event) => ({ id: event.id, startTime: event.startTime })),
+    )
   }, [existing, citySlug])
 
+  // The saved ticket plan, folded in once. Seeded rather than kept in sync,
+  // because after that the list on screen is the one being edited and a refetch
+  // landing on top of it would throw away what somebody just typed.
+  const { data: savedPlan } = useQuery({
+    queryKey: ['ticket-plan', draftId],
+    queryFn: () => api.ticketPlan(draftId!),
+    enabled: Boolean(draftId),
+  })
+
+  useEffect(() => {
+    if (seeded || !savedPlan) return
+    setTickets(
+      savedPlan.map((entry) => ({
+        name: entry.name,
+        description: entry.description ?? '',
+        priceMinor: entry.priceMinor,
+        quantity: entry.quantity ?? null,
+        dates: entry.dates,
+        sold: entry.sold,
+        varies: entry.varies,
+      })),
+    )
+    setSeeded(true)
+  }, [savedPlan, seeded])
+
   const post: OwnPost | undefined = existing
-  const problems = post?.readinessProblems ?? []
-
-  const createVenue = useMutation({
-    mutationFn: () =>
-      api.createVenue({
-        name: venue.name,
-        // The reverse-geocoded label, or the coordinates themselves when
-        // nothing could name them. Either way it describes the pin the
-        // publisher actually placed.
-        address:
-          picked?.label ??
-          `${picked!.latitude.toFixed(5)}, ${picked!.longitude.toFixed(5)}`,
-        citySlug: form.citySlug,
-        latitude: picked!.latitude,
-        longitude: picked!.longitude,
-      }),
-    onSuccess: (created) => {
-      setVenueId(created.id)
-      // Saved immediately, because the readiness list and the Publish button
-      // read the *saved* draft. Leaving it local meant somebody placed their
-      // pin, watched "Add a location" stay on screen, and had no way to tell
-      // that the fix was to press Save.
-      if (draftId) saveWith({ venueId: created.id })
-    },
-    onError: (err) => setError(err instanceof ApiError ? err.message : 'Could not add that place.'),
-  })
-
-  const save = useMutation({
-    mutationFn: async (overrides?: Partial<CreatePostInput> & { venueId?: string | null }) => {
-      // The override exists because state set moments ago is not readable here:
-      // saving right after creating a venue would otherwise send the previous
-      // (null) id and undo the thing that just happened.
-      const payload = { ...form, venueId, ...(overrides ?? {}) }
-      if (draftId) return api.updatePost(draftId, payload)
-      return api.createPost(payload)
-    },
-    onSuccess: (saved) => {
-      setDraftId(saved.id)
-      setError(null)
-      queryClient.invalidateQueries({ queryKey: ['my-posts'] })
-      queryClient.invalidateQueries({ queryKey: ['my-post', saved.id] })
-    },
-    onError: (err) => setError(err instanceof ApiError ? err.message : 'Could not save that.'),
-  })
-
-  const saveWith = (overrides?: Partial<CreatePostInput> & { venueId?: string | null }) =>
-    save.mutate(overrides)
-
-  const addDate = useMutation({
-    mutationFn: () => api.addPostDate(draftId!, new Date(dateInput).toISOString()),
-    onSuccess: () => {
-      setDateInput('')
-      queryClient.invalidateQueries({ queryKey: ['my-post', draftId] })
-    },
-    onError: (err) => setError(err instanceof ApiError ? err.message : 'Could not add that date.'),
-  })
-
+  // Images still go straight to the server, because an upload needs somewhere
+  // to belong and is not something anybody expects to be batched.
   const uploadImage = useMutation({
     mutationFn: (file: File) => api.uploadPostImage(draftId!, file, form.title),
     onSuccess: () => {
@@ -190,24 +177,6 @@ export function ComposePage() {
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Could not add that image.'),
   })
 
-  const publish = useMutation({
-    mutationFn: () => api.postAction(draftId!, 'publish'),
-    onSuccess: (published) => {
-      queryClient.invalidateQueries({ queryKey: ['my-posts'] })
-      queryClient.invalidateQueries({ queryKey: ['canvas'] })
-      navigate(`/posts?published=${published.id}`)
-    },
-    onError: (err) => {
-      if (err instanceof ApiError && err.code === 'EXPERIENCE_INCOMPLETE') {
-        const list = (err.details?.problems as string[]) ?? []
-        setError(list.join(' '))
-        queryClient.invalidateQueries({ queryKey: ['my-post', draftId] })
-        return
-      }
-      setError(err instanceof ApiError ? err.message : 'Could not publish that.')
-    },
-  })
-
   const chosenCity = cities?.find((c) => c.slug === form.citySlug) ?? null
   // The city decides unless the publisher says otherwise. Sending nothing lets
   // the server apply the same rule, so the two cannot disagree.
@@ -218,49 +187,132 @@ export function ComposePage() {
     new Set([effectiveCurrency, ...(cities ?? []).map((c) => c.currency)]),
   ).sort()
 
-  // A listing has to be somewhere. This used to be silently inherited from the
-  // app's single hardcoded city, which meant every listing was filed in Addis
-  // Ababa whoever posted it and wherever they were.
   const canSave =
     form.title.trim().length >= 4 &&
     form.description.trim().length > 0 &&
     Boolean(form.citySlug)
 
-  // Whether what is on screen has drifted from what the server holds. The
-  // readiness list below describes the *saved* draft, so without this the
-  // composer can tell somebody to add a location they have already added and
-  // call itself "Saved as a draft" while doing it.
-  const dirty = useMemo(() => {
-    if (!post) return canSave
-    return (
-      form.title !== post.title ||
-      form.description !== post.description ||
-      (form.summary ?? '') !== (post.summary ?? '') ||
-      form.type !== post.type ||
-      (form.citySlug || '') !== (post.citySlug ?? '') ||
-      (form.categorySlug ?? null) !== (post.category?.slug ?? null) ||
-      form.priceType !== post.price.type ||
-      (form.priceAmount ?? null) !== (post.price.amount ?? null) ||
-      (venueId ?? null) !== (post.venue?.id ?? null)
-    )
-  }, [post, form, venueId, canSave])
+  /**
+   * What is still missing, judged from the screen rather than from the last
+   * save.
+   *
+   * This used to be the server's list about the saved draft, which meant it
+   * could tell somebody to add a location they had just added and leave Publish
+   * dead while the fix sat in front of them. The server still decides - it
+   * re-checks on publish and answers with its own list, which is what fills the
+   * error - but the thing shown while typing has to describe what is on screen.
+   *
+   * Kept deliberately in step with `readiness_problems` in
+   * app/domains/publisher/service.py.
+   */
+  const outstanding = useMemo(() => {
+    const missing: string[] = []
+    if (form.title.trim().length < 4) missing.push('Give it a title of at least 4 characters.')
+    if (form.description.trim().length < 40)
+      missing.push('Add a description of at least 40 characters.')
+    if (!form.citySlug) missing.push('Choose a city.')
+    if (!form.categorySlug) missing.push('Choose a category so people can find it.')
+    if (!venueId && !picked) missing.push('Add a location.')
+    if (form.type === 'event' && dates.length === 0)
+      missing.push('Add at least one date and time.')
+    if (form.priceType !== 'free' && form.priceAmount == null)
+      missing.push('Set a price, or mark it as free.')
+    return missing
+  }, [form, venueId, picked, dates])
 
-  // Saves first when there is anything to save, so nobody is held out by a
-  // warning about a draft they have already fixed on screen. The server
-  // re-checks and is still the authority - it answers EXPERIENCE_INCOMPLETE
-  // with the list, which is what fills the card above.
-  const publishNow = async () => {
-    try {
-      if (dirty && canSave) await save.mutateAsync(undefined)
-      await publish.mutateAsync()
-    } catch {
-      // Both mutations already report through onError.
-    }
+  /**
+   * Write everything down, in the order the server needs it.
+   *
+   * A venue has to exist before a listing can point at one, a listing before a
+   * date can hang off it, and a date before a ticket can be sold for it. That
+   * ordering is real and is not going away - but it was being enforced on the
+   * person filling in the form, who had to save, wait, add a date, wait, then
+   * discover where tickets lived. Everything is edited at once now and this
+   * puts it in order at the end.
+   */
+  const commit = useMutation({
+    mutationFn: async ({ thenPublish }: { thenPublish: boolean }) => {
+      // 1. The place, if a pin has been dropped and it is not saved yet.
+      let venue = venueId
+      if (!venue && picked && venue_name()) {
+        const created = await api.createVenue({
+          name: venue_name(),
+          address:
+            picked.label ?? `${picked.latitude.toFixed(5)}, ${picked.longitude.toFixed(5)}`,
+          citySlug: form.citySlug,
+          latitude: picked.latitude,
+          longitude: picked.longitude,
+        })
+        venue = created.id
+        setVenueId(created.id)
+      }
+
+      // 2. The listing.
+      const payload = { ...form, venueId: venue }
+      const saved = draftId
+        ? await api.updatePost(draftId, payload)
+        : await api.createPost(payload)
+      setDraftId(saved.id)
+
+      // 3. Its dates. Only the ones that are not on the server yet; the id is
+      //    what distinguishes them.
+      for (const date of dates) {
+        if (date.id) continue
+        await api.addPostDate(saved.id, new Date(date.startTime).toISOString())
+      }
+
+      // 4. Its tickets, but only once there is a date to sell them for -
+      //    applying them to nothing would be refused, and a listing with no
+      //    dates yet is a perfectly ordinary draft.
+      const hasDates = dates.length > 0
+      if (hasDates) {
+        for (const ticket of tickets) {
+          await api.sellTicket(saved.id, {
+            name: ticket.name,
+            description: ticket.description || null,
+            priceMinor: ticket.priceMinor,
+            quantity: ticket.quantity,
+            currency: effectiveCurrency,
+          })
+        }
+        // Anything removed on screen stops being sold. Withdrawn, not deleted.
+        for (const entry of savedPlan ?? []) {
+          if (!tickets.some((ticket) => ticket.name === entry.name)) {
+            await api.stopSellingTicket(saved.id, entry.name)
+          }
+        }
+      }
+
+      if (thenPublish) return api.postAction(saved.id, 'publish')
+      return saved
+    },
+    onSuccess: (result, variables) => {
+      setError(null)
+      void queryClient.invalidateQueries({ queryKey: ['my-posts'] })
+      void queryClient.invalidateQueries({ queryKey: ['my-post', result.id] })
+      void queryClient.invalidateQueries({ queryKey: ['ticket-plan', result.id] })
+      if (variables.thenPublish) {
+        void queryClient.invalidateQueries({ queryKey: ['canvas'] })
+        navigate(`/posts?published=${result.id}`)
+      }
+    },
+    onSettled: () => setPublishing(false),
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === 'EXPERIENCE_INCOMPLETE') {
+        const list = (err.details?.problems as string[] | undefined) ?? []
+        setError(list.join(' '))
+        void queryClient.invalidateQueries({ queryKey: ['my-post', draftId] })
+        return
+      }
+      setError(err instanceof ApiError ? err.message : 'Could not save that.')
+    },
+  })
+
+  // Read at commit time rather than closed over, so a name typed a moment ago
+  // is the one that gets used.
+  function venue_name() {
+    return venue.name.trim()
   }
-  const upcoming = useMemo(
-    () => (post?.upcomingEvents ?? []).filter((e) => e.status !== 'cancelled'),
-    [post],
-  )
 
   if (!user) {
     return (
@@ -277,7 +329,7 @@ export function ComposePage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 pb-28 pt-6 sm:px-6">
+    <div className="mx-auto w-full max-w-6xl px-4 pb-28 pt-6 sm:px-6">
       <button
         type="button"
         onClick={() => navigate('/posts')}
@@ -300,7 +352,12 @@ export function ComposePage() {
         </p>
       )}
 
-      <div className="mt-6 space-y-5">
+      {/* Two columns on a wide screen. What the thing *is* on the left, what
+          it costs and when it happens on the right - they are consulted
+          together, edited together and were previously several screens apart.
+          One column below the breakpoint, in the same order. */}
+      <div className="mt-6 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="space-y-5">
         <Card className="space-y-4 p-5">
           <fieldset>
             <legend className="mb-2 text-sm font-medium text-sand-700">What kind of thing?</legend>
@@ -468,64 +525,133 @@ export function ComposePage() {
               </Suspense>
               )}
 
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => createVenue.mutate()}
-                  loading={createVenue.isPending}
-                  disabled={!venue.name.trim() || !picked}
-                >
-                  <Plus className="size-4" aria-hidden />
-                  Use this location
-                </Button>
-                {/* A disabled button that does not say why is the same as a
-                    broken one. Both halves are needed and it is not obvious
-                    that placing the pin is a separate act from typing a name. */}
-                {(!venue.name.trim() || !picked) && (
-                  <span className="text-xs text-sand-500">
-                    {!venue.name.trim() && !picked
-                      ? 'Name the place and drop a pin on the map.'
-                      : !venue.name.trim()
-                        ? 'Give the place a name.'
-                        : 'Tap the map to drop a pin.'}
-                  </span>
-                )}
-              </div>
-              {createVenue.isError && (
-                <p className="text-sm text-red-700" role="alert">
-                  {(createVenue.error as Error).message}
+              {/* No "use this location" button any more. Dropping the pin is
+                  the act of choosing where it is; asking somebody to confirm
+                  the thing they just did, and hiding the rest of the form
+                  behind that confirmation, was a step that existed only because
+                  a venue row has to be created before a listing can point at
+                  one. It is created when the post is saved, along with
+                  everything else. */}
+              {picked && (
+                <p className="flex items-center gap-1.5 text-sm text-brand-800">
+                  <Check className="size-4 shrink-0" aria-hidden />
+                  {picked.label ?? `${picked.latitude.toFixed(4)}, ${picked.longitude.toFixed(4)}`}
                 </p>
               )}
             </>
           )}
         </Card>
 
-        {draftId && form.type === 'event' && (
+        {draftId && (
+          <Card className="space-y-3 p-5">
+            <h2 className="flex items-center gap-2 text-sm font-medium text-sand-700">
+              <ImagePlus className="size-4" aria-hidden />
+              A photo <span className="font-normal text-sand-400">(optional)</span>
+            </h2>
+            {post?.media && post.media.length > 0 && (
+              <div className="flex gap-2 overflow-x-auto">
+                {post.media.map((m) => (
+                  <img
+                    key={m.id}
+                    src={m.url}
+                    alt={m.altText ?? ''}
+                    className="size-20 shrink-0 rounded-lg object-cover"
+                  />
+                ))}
+              </div>
+            )}
+            {/* Upload first, paste-a-URL second. Almost nobody photographing a
+                venue has somewhere to host the picture already, so asking for a
+                URL was in practice asking most publishers not to add a photo. */}
+            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-sand-300 px-4 py-6 text-sm text-sand-600 hover:bg-sand-100">
+              <Upload className="size-4" aria-hidden />
+              {uploadImage.isPending ? 'Uploading…' : 'Choose a photo'}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="sr-only"
+                disabled={uploadImage.isPending}
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  if (file) uploadImage.mutate(file)
+                  // Reset so choosing the same file twice still fires a change.
+                  event.target.value = ''
+                }}
+              />
+            </label>
+            <p className="text-xs text-sand-500">
+              JPEG, PNG or WebP, up to 12&nbsp;MB. Photos are resized for the web and
+              their location data is removed before anything is stored.
+            </p>
+
+            <details className="text-sm">
+              <summary className="cursor-pointer text-sand-600">
+                Or paste an image address
+              </summary>
+              <div className="mt-2 flex gap-2">
+                <Input
+                  value={imageUrl}
+                  onChange={(e) => setImageUrl(e.target.value)}
+                  placeholder="https://…"
+                  aria-label="Image URL"
+                />
+                <Button
+                  variant="secondary"
+                  onClick={() => addImage.mutate()}
+                  loading={addImage.isPending}
+                  disabled={!imageUrl.startsWith('http')}
+                >
+                  Add
+                </Button>
+              </div>
+            </details>
+          </Card>
+        )}
+        </div>
+
+        {/* Sticky, because it is the part being adjusted while the left side
+            is read back. */}
+        <div className="space-y-5 lg:sticky lg:top-20">
+        {form.type === 'event' && (
           <Card className="space-y-3 p-5">
             <h2 className="flex items-center gap-2 text-sm font-medium text-sand-700">
               <Clock className="size-4" aria-hidden />
               When does it happen?
             </h2>
-            {upcoming.length > 0 && (
-              <ul className="space-y-3">
-                {upcoming.map((event) => (
-                  <li key={event.id}>
-                    {/* Just the date. The tickets used to be edited here,
-                        once per night, which meant a six-night run asked for
-                        the same VIP tier six times - and any night missed sold
-                        nothing but general admission without saying so. They
-                        are written once, under the price, and applied to all
-                        of these. */}
-                    <p className="rounded-lg bg-sand-100 px-3 py-2 text-sm text-sand-700">
-                      {new Date(event.startTime).toLocaleString(undefined, {
+            {/* Editable before anything is saved. Dates used to need a listing
+                to hang off, which is true of the row and was never a reason to
+                make somebody save first and come back. */}
+            {dates.length > 0 && (
+              <ul className="space-y-1.5">
+                {dates.map((date) => (
+                  <li
+                    key={date.id ?? date.startTime}
+                    className="flex items-center justify-between gap-2 rounded-lg bg-sand-100 px-3 py-2 text-sm text-sand-700"
+                  >
+                    <span>
+                      {new Date(date.startTime).toLocaleString(undefined, {
                         weekday: 'short',
                         day: 'numeric',
                         month: 'short',
                         hour: '2-digit',
                         minute: '2-digit',
                       })}
-                    </p>
+                    </span>
+                    {/* Only one not yet written down can be taken back here.
+                        Removing a date people may already hold tickets for is a
+                        different act with different consequences. */}
+                    {date.id === null && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label="Remove this date"
+                        onClick={() =>
+                          setDates(dates.filter((d) => d.startTime !== date.startTime))
+                        }
+                      >
+                        <X className="size-4" aria-hidden />
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -539,9 +665,12 @@ export function ComposePage() {
               />
               <Button
                 variant="secondary"
-                onClick={() => addDate.mutate()}
-                loading={addDate.isPending}
                 disabled={!dateInput}
+                onClick={() => {
+                  if (!dateInput) return
+                  setDates([...dates, { id: null, startTime: dateInput }])
+                  setDateInput('')
+                }}
               >
                 Add
               </Button>
@@ -623,11 +752,12 @@ export function ComposePage() {
               )}
             </div>
 
-          {draftId && form.type === 'event' && (
+          {form.type === 'event' && (
             <TicketPlanEditor
-              experienceId={draftId}
+              tickets={tickets}
+              onChange={setTickets}
               currency={effectiveCurrency}
-              dateCount={upcoming.length}
+              dateCount={dates.length}
             />
           )}
 
@@ -637,99 +767,20 @@ export function ComposePage() {
               or an activity shows this price and people pay when they arrive.
             </p>
           )}
-          {form.type === 'event' && !draftId && (
-            <p className="text-xs text-sand-500">
-              Save this and you can add tickets - general admission, VIP, anything
-              else - written once and sold on every date.
-            </p>
-          )}
+
         </Card>
 
-        {draftId && (
-          <Card className="space-y-3 p-5">
-            <h2 className="flex items-center gap-2 text-sm font-medium text-sand-700">
-              <ImagePlus className="size-4" aria-hidden />
-              A photo <span className="font-normal text-sand-400">(optional)</span>
-            </h2>
-            {post?.media && post.media.length > 0 && (
-              <div className="flex gap-2 overflow-x-auto">
-                {post.media.map((m) => (
-                  <img
-                    key={m.id}
-                    src={m.url}
-                    alt={m.altText ?? ''}
-                    className="size-20 shrink-0 rounded-lg object-cover"
-                  />
-                ))}
-              </div>
-            )}
-            {/* Upload first, paste-a-URL second. Almost nobody photographing a
-                venue has somewhere to host the picture already, so asking for a
-                URL was in practice asking most publishers not to add a photo. */}
-            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-sand-300 px-4 py-6 text-sm text-sand-600 hover:bg-sand-100">
-              <Upload className="size-4" aria-hidden />
-              {uploadImage.isPending ? 'Uploading…' : 'Choose a photo'}
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                className="sr-only"
-                disabled={uploadImage.isPending}
-                onChange={(event) => {
-                  const file = event.target.files?.[0]
-                  if (file) uploadImage.mutate(file)
-                  // Reset so choosing the same file twice still fires a change.
-                  event.target.value = ''
-                }}
-              />
-            </label>
-            <p className="text-xs text-sand-500">
-              JPEG, PNG or WebP, up to 12&nbsp;MB. Photos are resized for the web and
-              their location data is removed before anything is stored.
-            </p>
-
-            <details className="text-sm">
-              <summary className="cursor-pointer text-sand-600">
-                Or paste an image address
-              </summary>
-              <div className="mt-2 flex gap-2">
-                <Input
-                  value={imageUrl}
-                  onChange={(e) => setImageUrl(e.target.value)}
-                  placeholder="https://…"
-                  aria-label="Image URL"
-                />
-                <Button
-                  variant="secondary"
-                  onClick={() => addImage.mutate()}
-                  loading={addImage.isPending}
-                  disabled={!imageUrl.startsWith('http')}
-                >
-                  Add
-                </Button>
-              </div>
-            </details>
-          </Card>
-        )}
 
         {/* Shown continuously rather than only on failure, so nothing is a
             surprise at the moment of publishing. */}
-        {draftId && problems.length > 0 && (
+        {outstanding.length > 0 && (
           <Card className="border-accent-300 bg-accent-100/40 p-4">
             <p className="flex items-center gap-2 text-sm font-medium text-accent-700">
               <AlertTriangle className="size-4" aria-hidden />
               Before this can go live
             </p>
-            {/* Said plainly. This list is the server's answer about the last
-                save, and presenting it as though it described the screen is
-                what made it look wrong to somebody who had just fixed it. */}
-            {dirty && (
-              <p className="mt-1 text-xs text-accent-700/80">
-                From your last save. Press Publish and this is re-checked with your
-                latest changes.
-              </p>
-            )}
             <ul className="mt-2 space-y-1 pl-6 text-sm text-accent-700">
-              {problems.map((problem) => (
+              {outstanding.map((problem) => (
                 <li key={problem} className="list-disc">
                   {problem}
                 </li>
@@ -744,41 +795,49 @@ export function ComposePage() {
             {post.moderationNotes && <p className="mt-1 text-xs">{post.moderationNotes}</p>}
           </Card>
         )}
+        </div>
       </div>
 
       {/* Sticky action bar: saving and publishing stay reachable however long the
           form gets. */}
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-sand-200 bg-white/95 backdrop-blur sm:bottom-0">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div className="min-w-0 text-sm text-sand-500">
             {draftId ? (
               <span className="flex items-center gap-1.5">
                 <Badge tone={post?.status === 'published' ? 'success' : 'neutral'}>
                   {post?.status ?? 'draft'}
                 </Badge>
-                {save.isPending ? 'Saving…' : dirty ? 'Unsaved changes' : 'Saved as a draft'}
+                {commit.isPending
+                  ? 'Saving…'
+                  : post?.status === 'published'
+                    ? 'Live'
+                    : 'Saved as a draft'}
               </span>
             ) : (
               'Not saved yet'
             )}
           </div>
           <div className="flex shrink-0 gap-2">
+            {/* Both do the whole job. Save writes everything down and leaves it
+                a draft; Publish writes the same things down and then makes it
+                live. Neither is a prerequisite for the other, which is what
+                "save first, then publish" had quietly made them. */}
             <Button
               variant="secondary"
-              onClick={() => save.mutate(undefined)}
-              loading={save.isPending}
-              disabled={!canSave}
+              onClick={() => commit.mutate({ thenPublish: false })}
+              loading={commit.isPending && !publishing}
+              disabled={!canSave || commit.isPending}
             >
               Save
             </Button>
             <Button
-              onClick={() => void publishNow()}
-              loading={publish.isPending || save.isPending}
-              // Only genuinely blocked when the saved draft is short of
-              // something *and* there is nothing new to save. Disabling it
-              // while the fix is sitting unsaved on screen is how this turned
-              // into a dead end with no way forward and no explanation.
-              disabled={!draftId || (problems.length > 0 && !dirty)}
+              onClick={() => {
+                setPublishing(true)
+                commit.mutate({ thenPublish: true })
+              }}
+              loading={commit.isPending && publishing}
+              disabled={outstanding.length > 0 || commit.isPending}
             >
               Publish
             </Button>
