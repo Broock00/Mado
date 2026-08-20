@@ -126,10 +126,16 @@ async def create_post(
     service = PublishingService(session)
     trust = TrustService(session)
 
+    # `publisher_for`, not `personal_publisher`: a business account publishes as
+    # the business. This route resolves the publisher itself because the daily
+    # limit below is counted per publisher, and then passes the id on - so it and
+    # `create_experience` have to answer the question the same way. They did not,
+    # and the service's answer lost: a business account's posts came out under
+    # the owner's own name while every check passed.
     publisher = (
         await service.assert_can_publish_as(user, payload.publisher_id)
         if payload.publisher_id
-        else await service.personal_publisher(user)
+        else await service.publisher_for(user)
     )
     recent = await trust.recent_publish_count(publisher.id)
     if recent >= DAILY_PUBLISH_LIMIT:
@@ -156,6 +162,7 @@ async def create_post(
         duration_minutes=payload.duration_minutes,
         is_indoor=payload.is_indoor,
         accessibility=payload.accessibility,
+        suitability=payload.suitability,
         external_ticket_url=payload.external_ticket_url,
         publisher_id=publisher.id,
     )
@@ -608,6 +615,8 @@ async def create_venue(
         longitude=payload.longitude,
         neighborhood_id=payload.neighborhood_id,
         accessibility=payload.accessibility,
+        facilities=payload.facilities,
+        place_id=payload.place_id,
     )
     view = VenueOut.model_validate(venue)
     await session.commit()

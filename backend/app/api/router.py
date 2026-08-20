@@ -10,6 +10,7 @@ from app.api.routes import (
     admin,
     analytics,
     auth,
+    business,
     catalog,
     collections,
     commerce,
@@ -23,6 +24,7 @@ from app.api.routes import (
     publishing,
     reservations,
     reviews,
+    social,
     trust,
 )
 
@@ -31,6 +33,10 @@ api_router.include_router(admin.router)
 api_router.include_router(analytics.router)
 api_router.include_router(auth.router)
 api_router.include_router(me.router)
+# Before `catalog` for the same reason `discovery` is: `/businesses/by-slug/...`
+# and `/businesses/roles` are literal paths that a parameterised sibling would
+# otherwise shadow.
+api_router.include_router(business.router)
 api_router.include_router(discovery.router)
 api_router.include_router(catalog.router)
 api_router.include_router(collections.router)
@@ -43,4 +49,5 @@ api_router.include_router(planning.router)
 api_router.include_router(publishing.router)
 api_router.include_router(reservations.router)
 api_router.include_router(reviews.router)
+api_router.include_router(social.router)
 api_router.include_router(trust.router)

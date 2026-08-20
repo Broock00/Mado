@@ -23,6 +23,7 @@ import { api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
 import type { MemoryEntry, PrivacySettings } from '@/lib/types'
 import { Button, Card, EmptyState, SectionHeading } from '@/design-system/primitives'
+import { AccountKindSection } from '@/features/business/AccountKindSection'
 import { AccountSecurity } from './AccountSecurity'
 import { LanguageChoice } from './LanguageChoice'
 import { MyActivity } from '@/features/analytics/MyActivity'
@@ -282,6 +283,8 @@ export function SettingsPage() {
           the few publishers who automate and not at all to anybody else, and a
           permanent nav icon for a page most people open once is clutter charged
           to everyone. */}
+      <AccountKindSection />
+
       <section className="mt-10">
         <SectionHeading
           title="Developers"

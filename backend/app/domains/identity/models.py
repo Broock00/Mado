@@ -39,11 +39,35 @@ if TYPE_CHECKING:
 SCHEMA = "identity"
 
 
+# What kind of thing this account is. Chosen once, shortly after registering.
+#
+# An account is a person **or** a business, never both. That is the product
+# decision, and it is why this is a column on the user rather than something the
+# user owns: a business account has no personal profile sitting behind it, and
+# the two present differently once signed in.
+ACCOUNT_INDIVIDUAL = "individual"
+ACCOUNT_BUSINESS = "business"
+
+
 class User(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     __tablename__ = "users"
     __table_args__ = {"schema": SCHEMA}
 
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
+    # Individual until somebody says otherwise, so every account that existed
+    # before this column keeps working exactly as it did.
+    account_type: Mapped[str] = mapped_column(
+        String(16),
+        default=ACCOUNT_INDIVIDUAL,
+        server_default=ACCOUNT_INDIVIDUAL,
+        nullable=False,
+    )
+    # When the choice was made. Null means it was never made - the account
+    # predates the question, or was created and not yet asked - which is what
+    # lets the interface prompt once instead of assuming silence was an answer.
+    account_type_chosen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
@@ -54,6 +78,20 @@ class User(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     is_moderator: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
+
+    @property
+    def is_business(self) -> bool:
+        return self.account_type == ACCOUNT_BUSINESS
+
+    @property
+    def account_type_chosen(self) -> bool:
+        """Whether they have actually answered, as opposed to defaulted.
+
+        The column has a default so nothing breaks; this is how the interface
+        knows to ask rather than treating the default as a decision. Named to
+        match the field on `MeOut`, which reads it straight off this object.
+        """
+        return self.account_type_chosen_at is not None
 
     profile: Mapped[UserProfile] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan", lazy="selectin"

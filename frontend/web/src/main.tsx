@@ -10,6 +10,10 @@ import { registerServiceWorker } from '@/app/offline'
 import { DiscoverPage } from '@/features/discover/DiscoverPage'
 import { SearchPage } from '@/features/search/SearchPage'
 import { ExperienceDetailPage } from '@/features/experiences/ExperienceDetailPage'
+import { BusinessProfilePage } from '@/features/business/BusinessProfilePage'
+import { AccountTypePage } from '@/features/business/AccountTypePage'
+import { BecomeBusinessPage } from '@/features/business/BecomeBusinessPage'
+import { BusinessDashboardPage } from '@/features/business/BusinessDashboardPage'
 import { SavedPage } from '@/features/saved/SavedPage'
 import { SignInPage } from '@/features/auth/SignInPage'
 import { VerifyEmailPage } from '@/features/auth/VerifyEmailPage'
@@ -60,6 +64,17 @@ const router = createBrowserRouter([
       { path: 'forgot-password', element: <ForgotPasswordPage /> },
       { path: 'reset-password', element: <ResetPasswordPage /> },
       { path: 'experiences/:experienceId', element: <ExperienceDetailPage /> },
+      // Asked once, immediately after registering. `/welcome` rather than
+      // `/account-type` because that is what it is to the person seeing it -
+      // and it redirects away for anyone who has already answered.
+      { path: 'welcome', element: <AccountTypePage /> },
+      // Converting later. Reached from settings only.
+      { path: 'account-type/business', element: <BecomeBusinessPage /> },
+      // Before the public `:slug` route, which would otherwise swallow it.
+      { path: 'businesses/:businessId/manage', element: <BusinessDashboardPage /> },
+      // Public, like a shared collection: a business hands this link out, and it
+      // has to work for somebody who has never signed in.
+      { path: 'businesses/:slug', element: <BusinessProfilePage /> },
       { path: 'saved', element: <SavedPage /> },
       { path: 'orders', element: <OrdersPage /> },
       { path: 'orders/:orderId', element: <OrderDetailPage /> },

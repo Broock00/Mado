@@ -81,6 +81,13 @@ class MeOut(CamelModel):
     # a display hint only - every moderation endpoint re-checks the real column,
     # because a flag the client can see is a flag an attacker can forge.
     is_moderator: bool = False
+    # Whether this account is a person or a business, and whether anybody has
+    # actually said. Both travel on `/me` because the shell needs them on every
+    # screen - the profile it shows, and whether to ask the question at all -
+    # and a second request for that would leave the header flickering between
+    # two identities on first paint.
+    account_type: str = "individual"
+    account_type_chosen: bool = False
 
 
 class AuthResponse(CamelModel):

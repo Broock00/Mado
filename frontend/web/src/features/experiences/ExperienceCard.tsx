@@ -10,7 +10,8 @@
  */
 
 import { Link } from 'react-router-dom'
-import { BadgeCheck, Bookmark, Clock, MapPin, Sparkles, Star } from 'lucide-react'
+import { RepostButton } from '@/features/social/RepostButton'
+import { BadgeCheck, Bookmark, Building2, Clock, MapPin, Sparkles, Star } from 'lucide-react'
 import type { ExperienceSummary } from '@/lib/types'
 import { Badge } from '@/design-system/primitives'
 import { cn, formatDistance, formatPrice, formatWhen, isStartingSoon } from '@/lib/utils'
@@ -30,6 +31,7 @@ export function ExperienceCard({ experience, onToggleSave, className, fixedWidth
   const soon = isStartingSoon(experience.nextEvent?.startTime)
   const cancelled = experience.nextEvent?.status === 'cancelled'
   const verified = experience.publisher?.verificationStatus === 'verified'
+  const business = experience.publisher?.type === 'organization'
 
   return (
     <article
@@ -121,6 +123,22 @@ export function ExperienceCard({ experience, onToggleSave, className, fixedWidth
           )}
         </div>
 
+        {/* Who posted it, when that is a business.
+            A person's name is not shown here: an individual posting about a
+            place they like is the ordinary case and naming them adds a line
+            without adding a fact. A business posting about itself is different
+            - it is the subject describing itself, and an explorer weighing the
+            claim deserves to know that before they read it. */}
+        {business && (
+          <p className="flex items-center gap-1.5 text-xs text-sand-600">
+            <Building2 className="size-3 shrink-0 text-sand-400" aria-hidden />
+            <span className="line-clamp-1">{experience.publisher?.name}</span>
+            <span className="shrink-0 rounded-full bg-sand-200 px-1.5 py-0.5 text-[0.625rem] font-medium uppercase tracking-wide text-sand-600">
+              Business
+            </span>
+          </p>
+        )}
+
         {/* The explanation. Spec DISC-003 requires the explorer to understand why
             an item appeared without exposing the inference behind it. */}
         {experience.reason && (
@@ -143,6 +161,13 @@ export function ExperienceCard({ experience, onToggleSave, className, fixedWidth
               />
             )}
           </div>
+        </div>
+
+        {/* Outside the link that wraps the rest of the card: this is a button,
+            and nesting an interactive element inside an anchor makes the whole
+            card fire on every tap. */}
+        <div className="-mx-1 -mb-1 border-t border-sand-200 pt-1">
+          <RepostButton experience={experience} />
         </div>
       </div>
     </article>

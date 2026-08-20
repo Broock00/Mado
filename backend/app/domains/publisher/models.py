@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import (
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -73,6 +74,23 @@ class Publisher(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     industry: Mapped[str | None] = mapped_column(String(80), default=None)
     website: Mapped[str | None] = mapped_column(Text, default=None)
     logo_url: Mapped[str | None] = mapped_column(Text, default=None)
+
+    # --- Business profile (see publisher/business.py) -----------------------
+    #
+    # What kind of business this is - hotel, museum, cafe. A label on the
+    # publisher rather than a subclass or a parallel entity: everything that
+    # actually differs between them is already modelled elsewhere. Location and
+    # opening hours belong to `catalog.venues`, what they put on belongs to
+    # `catalog.experiences`, and what they are suitable for belongs to the
+    # suitability vocabulary. Null for a person, and for an organization that has
+    # not said.
+    business_type: Mapped[str | None] = mapped_column(String(40), default=None, index=True)
+    # The wide image at the top of a business profile. `logo_url` is the small
+    # square one and already existed; a cover is a different picture doing a
+    # different job, not a bigger version of the same one.
+    cover_url: Mapped[str | None] = mapped_column(Text, default=None)
+    # Platform -> URL, over the fixed set in `business.SOCIAL_PLATFORMS`.
+    social: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}", nullable=False)
 
     # "unverified" is an honest resting state for a personal account. "pending"
     # would imply a review is queued, which is untrue unless verification was
@@ -125,6 +143,10 @@ class Publisher(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     venues: Mapped[list[Venue]] = relationship(back_populates="publisher")
     experiences: Mapped[list[Experience]] = relationship(back_populates="publisher")
 
+    members: Mapped[list[PublisherMember]] = relationship(
+        back_populates="publisher", cascade="all, delete-orphan"
+    )
+
     @property
     def is_verified(self) -> bool:
         return self.verification_status == "verified"
@@ -132,3 +154,83 @@ class Publisher(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     @property
     def is_personal(self) -> bool:
         return self.type == TYPE_INDIVIDUAL
+
+
+# A membership is offered, then accepted or declined. `removed` is kept rather
+# than deleted so "who had access in March" is answerable - which is the first
+# question asked after something is published that should not have been.
+MEMBERSHIP_INVITED = "invited"
+MEMBERSHIP_ACTIVE = "active"
+MEMBERSHIP_DECLINED = "declined"
+MEMBERSHIP_REMOVED = "removed"
+
+# How long an unanswered invitation stays usable, in days. An invitation is a
+# standing grant of access to somebody else's business; one that never expires
+# is a key left under a mat for years.
+INVITATION_TTL_DAYS = 14
+
+
+class PublisherMember(Base, UUIDPrimaryKey, Timestamps):
+    """Somebody other than the owner who may act for a business.
+
+    The owner is **not** a row here. Ownership is `publishers.owner_user_id`,
+    which every authorization check already keyed on before this table existed;
+    duplicating it as a membership would create a second answer to "who owns
+    this" that could disagree with the first.
+
+    A membership is scoped to exactly one publisher, which is what makes
+    cross-business access impossible to express rather than merely forbidden.
+    """
+
+    __tablename__ = "publisher_members"
+    __table_args__ = (
+        # One membership per person per business. Re-inviting somebody updates
+        # the existing row rather than accumulating a history of grants that
+        # each look current.
+        UniqueConstraint("publisher_id", "user_id", name="uq_publisher_member"),
+        Index("ix_publisher_members_user", "user_id", "status"),
+        {"schema": SCHEMA},
+    )
+
+    publisher_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.publishers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # Null until the invitation is accepted: somebody can be invited by email
+    # before they have an account, and the row is what the signup then attaches
+    # to. Not nullable-forever - an active membership always has a user.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="CASCADE"),
+        default=None,
+        index=True,
+    )
+    # Who it was sent to, lower-cased. Kept after acceptance as the record of
+    # what was offered and to whom.
+    invited_email: Mapped[str | None] = mapped_column(String(320), default=None, index=True)
+
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), default=MEMBERSHIP_INVITED, server_default=MEMBERSHIP_INVITED, nullable=False
+    )
+
+    invited_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="SET NULL"),
+        default=None,
+    )
+    invited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # When the invitation stops being usable. Checked on accept rather than
+    # swept by a job: an expired row that nobody has tried to use is harmless,
+    # and a sweeper is another thing that can fail silently.
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+    publisher: Mapped[Publisher] = relationship(back_populates="members")
+
+    @property
+    def is_active(self) -> bool:
+        return self.status == MEMBERSHIP_ACTIVE and self.user_id is not None

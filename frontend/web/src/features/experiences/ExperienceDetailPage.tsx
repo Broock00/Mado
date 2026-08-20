@@ -15,6 +15,7 @@ import {
   ArrowLeft,
   BadgeCheck,
   Bookmark,
+  Building2,
   Calendar,
   Clock,
   Flag,
@@ -28,6 +29,7 @@ import { AddToCollection } from '@/features/collections/AddToCollection'
 import { Badge, Button, Card, EmptyState, SectionHeading, Skeleton } from '@/design-system/primitives'
 import { ExperienceCard } from './ExperienceCard'
 import { Reviews } from '@/features/reviews/Reviews'
+import { RepostButton } from '@/features/social/RepostButton'
 import { TicketPanel } from '@/features/commerce/TicketPanel'
 import { ReportDialog } from '@/features/trust/ReportDialog'
 import { formatDistance, formatPrice, formatWhen } from '@/lib/utils'
@@ -134,6 +136,11 @@ export function ExperienceDetailPage() {
             )}
           </div>
 
+          {/* Above the description rather than at the bottom of the page: the
+              count is part of judging whether this is worth reading, not an
+              afterthought once you have. */}
+          <RepostButton experience={data} className="border-y border-sand-200 py-1" />
+
           <section>
             <h2 className="mb-2 text-lg font-semibold text-sand-900">About</h2>
             <p className="whitespace-pre-line leading-relaxed text-sand-700">{data.description}</p>
@@ -190,7 +197,9 @@ export function ExperienceDetailPage() {
           )}
 
           {/* Above "you might also like": what people said about *this* matters
-              more than what else there is. */}
+              more than what else there is.
+
+*/}
           <Reviews experienceId={data.id} />
 
           {similar && similar.length > 0 && (
@@ -277,19 +286,60 @@ export function ExperienceDetailPage() {
             )}
 
             {/* Provenance. Spec 57.03 s32-35 requires the explorer to see who
-                published this and how trusted they are. */}
+                published this and how trusted they are.
+
+                A business is a link to everything else it has posted; a person
+                is not. There is no profile page for an individual publisher to
+                go to, and a link that opens nothing is worse than plain text. */}
             {data.publisher && (
               <div className="mt-4 border-t border-sand-200 pt-4">
                 <p className="text-xs uppercase tracking-wide text-sand-400">Published by</p>
-                <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-sand-800">
-                  {data.publisher.name}
-                  {data.publisher.verificationStatus === 'verified' && (
-                    <BadgeCheck
-                      className="size-4 text-brand-600"
-                      aria-label="Verified publisher"
-                    />
-                  )}
-                </p>
+                {data.publisher.type === 'organization' ? (
+                  <Link
+                    to={`/businesses/${data.publisher.slug}`}
+                    className="mt-2 flex items-center gap-3 rounded-lg p-1 -mx-1 hover:bg-sand-100"
+                  >
+                    {data.publisher.logoUrl ? (
+                      <img
+                        src={data.publisher.logoUrl}
+                        alt=""
+                        className="size-10 shrink-0 rounded-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <span className="grid size-10 shrink-0 place-items-center rounded-full bg-sand-200">
+                        <Building2 className="size-5 text-sand-500" aria-hidden />
+                      </span>
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate text-sm font-medium text-sand-900">
+                          {data.publisher.name}
+                        </span>
+                        {data.publisher.verificationStatus === 'verified' && (
+                          <BadgeCheck
+                            className="size-4 shrink-0 text-brand-600"
+                            aria-label="Verified"
+                          />
+                        )}
+                      </span>
+                      <span className="block text-xs text-sand-500">
+                        {data.publisher.businessTypeLabel ?? 'Business'} · see everything
+                        they have posted
+                      </span>
+                    </span>
+                  </Link>
+                ) : (
+                  <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-sand-800">
+                    {data.publisher.name}
+                    {data.publisher.verificationStatus === 'verified' && (
+                      <BadgeCheck
+                        className="size-4 text-brand-600"
+                        aria-label="Verified publisher"
+                      />
+                    )}
+                  </p>
+                )}
               </div>
             )}
 

@@ -20,6 +20,9 @@ import {
   User,
 } from 'lucide-react'
 import { useSession } from '@/app/hooks'
+import { useQuery } from '@tanstack/react-query'
+
+import { api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
 import { ConciergeLauncher, ConciergePanel } from '@/features/concierge/ConciergePanel'
 import { NotificationBell } from '@/features/notifications/NotificationBell'
@@ -48,6 +51,22 @@ export function AppShell() {
   useSession()
   const user = useAppStore((s) => s.user)
   const signOut = useAppStore((s) => s.signOut)
+
+  // Which name this account goes by. Fetched rather than read off `/me`,
+  // because the business lives in the publisher domain and identity does not
+  // reference it - `/me/account-type` is the endpoint that joins the two.
+  // Cached hard: it changes at most once in an account's life.
+  const { data: accountType } = useQuery({
+    queryKey: ['account-type'],
+    queryFn: () => api.accountType(),
+    enabled: Boolean(user),
+    staleTime: 60 * 60_000,
+  })
+
+  const accountName =
+    accountType?.accountType === 'business' && accountType.business
+      ? accountType.business.name
+      : user?.profile.displayName
   const location = useLocation()
   const { t } = useLanguage()
   const online = useIsOnline()
@@ -160,8 +179,12 @@ export function AppShell() {
                 >
                   <Settings className="size-4.5" aria-hidden />
                 </NavLink>
+                {/* A business account *is* the business, so the header names
+                    the business rather than the person who signed in. Showing
+                    "Test Person" above a profile belonging to a cafe is the
+                    dual identity the account model exists to avoid. */}
                 <span className="hidden pl-1 text-sm text-sand-600 sm:inline">
-                  {user.profile.displayName}
+                  {accountName}
                 </span>
                 <button
                   type="button"

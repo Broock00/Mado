@@ -40,7 +40,13 @@ export function SignInPage() {
       // Saved state and personalization differ once signed in, so drop the
       // anonymous caches rather than showing stale unsaved cards.
       queryClient.clear()
-      navigate('/')
+      // A new account is asked what kind it is before it reaches anything else.
+      // It is asked once, here, because that is the only moment the answer is
+      // genuinely needed and the only moment somebody is expecting to be set
+      // up - a prompt on the discovery page later reads as an interruption.
+      // Signing in never asks: the account already answered, or is old enough
+      // to have been created before the question existed.
+      navigate(mode === 'register' ? '/welcome' : '/')
     },
     onError: (err) => {
       setError(
