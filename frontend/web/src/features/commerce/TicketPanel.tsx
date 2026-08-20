@@ -96,36 +96,38 @@ function TierRow({
   const ceiling = Math.min(10, tier.remaining ?? 10)
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+    <div className="flex flex-wrap items-center justify-between gap-3 py-3.5">
       <div className="min-w-0">
         <p className="font-medium text-sand-900">{tier.name}</p>
-        {tier.description && <p className="text-sm text-sand-600">{tier.description}</p>}
-        <p className="mt-0.5 text-sm text-sand-700">
+        {tier.description && <p className="mt-0.5 text-sm text-sand-600">{tier.description}</p>}
+        <p className="mt-1 text-sm font-medium text-sand-800">
           {tier.priceMinor === 0 ? 'Free' : money(tier.priceMinor, tier.currency)}
           {tier.remaining != null && tier.remaining <= 5 && tier.onSale && (
-            <span className="ml-2 text-danger">{tier.remaining} left</span>
+            <span className="ml-2 font-normal text-danger">{tier.remaining} left</span>
           )}
         </p>
       </div>
 
       {tier.onSale ? (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 rounded-xl border border-sand-200 bg-sand-50 p-1">
           <Button
             variant="ghost"
             size="sm"
             aria-label={`One fewer ${tier.name}`}
             disabled={quantity === 0}
             onClick={() => onChange(quantity - 1)}
+            className="size-9 !px-0"
           >
             <Minus className="size-4" />
           </Button>
-          <span className="w-6 text-center tabular-nums">{quantity}</span>
+          <span className="w-7 text-center text-sm font-medium tabular-nums">{quantity}</span>
           <Button
             variant="ghost"
             size="sm"
             aria-label={`One more ${tier.name}`}
             disabled={quantity >= ceiling}
             onClick={() => onChange(quantity + 1)}
+            className="size-9 !px-0"
           >
             <Plus className="size-4" />
           </Button>
@@ -142,9 +144,12 @@ function TierRow({
 export function TicketPanel({
   experienceId,
   occurrence,
+  /** Drop the outer card when the parent already frames the panel. */
+  embedded = false,
 }: {
   experienceId: string
   occurrence: EventInstance
+  embedded?: boolean
 }) {
   const user = useAppStore((s) => s.user)
   const [chosen, setChosen] = useState<Record<string, number>>({})
@@ -194,8 +199,8 @@ export function TicketPanel({
     } catch {
       host = 'the organiser’s website'
     }
-    return (
-      <Card className="mt-3 p-4">
+    const body = (
+      <>
         {price && <p className="text-sm text-sand-700">{price}</p>}
         <a
           className="mt-2 inline-flex items-center gap-2 font-medium text-brand-700 hover:underline"
@@ -211,8 +216,10 @@ export function TicketPanel({
           You’ll continue to {host}. Mado doesn’t handle this booking, so your ticket
           won’t appear here.
         </p>
-      </Card>
+      </>
     )
+    if (embedded) return <div>{body}</div>
+    return <Card className="mt-3 p-4">{body}</Card>
   }
 
   if (data.cta === 'reserve') {
@@ -223,7 +230,7 @@ export function TicketPanel({
   if (data.cta === 'directions' || data.cta === 'find_similar' || data.cta === 'none') {
     if (!label) return null
     return (
-      <div className="mt-3 flex items-center gap-2">
+      <div className={embedded ? 'flex items-center gap-2' : 'mt-3 flex items-center gap-2'}>
         <Badge tone={AVAILABILITY_TONE[data.availability] ?? 'neutral'}>{label}</Badge>
         {price && <span className="text-sm text-sand-700">{price}</span>}
       </div>
@@ -232,14 +239,14 @@ export function TicketPanel({
 
   const buying = data.cta === 'get_tickets'
 
-  return (
-    <Card className="mt-3 p-4">
+  const body = (
+    <>
       <div className="flex flex-wrap items-center justify-between gap-2">
         {label && <Badge tone={AVAILABILITY_TONE[data.availability] ?? 'neutral'}>{label}</Badge>}
         {price && <span className="text-sm font-medium text-sand-800">{price}</span>}
       </div>
 
-      <div className="mt-2 divide-y divide-sand-200">
+      <div className="mt-1 divide-y divide-sand-200">
         {data.ticketTypes.map((tier) => (
           <TierRow
             key={tier.id}
@@ -254,7 +261,8 @@ export function TicketPanel({
 
       {user ? (
         <Button
-          className="mt-3 w-full"
+          className="mt-4 w-full"
+          size="lg"
           disabled={total === 0 || buy.isPending}
           loading={buy.isPending}
           onClick={() => buy.mutate()}
@@ -264,12 +272,15 @@ export function TicketPanel({
           {total > 0 && ` · ${total}`}
         </Button>
       ) : (
-        <Link className="mt-3 block" to="/signin">
-          <Button className="w-full" variant="secondary">
+        <Link className="mt-4 block" to="/signin">
+          <Button className="w-full" size="lg" variant="secondary">
             Sign in to {buying ? 'buy tickets' : 'register'}
           </Button>
         </Link>
       )}
-    </Card>
+    </>
   )
+
+  if (embedded) return <div>{body}</div>
+  return <Card className="mt-3 p-4">{body}</Card>
 }

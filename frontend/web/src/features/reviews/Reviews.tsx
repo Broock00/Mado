@@ -1,19 +1,9 @@
 /**
  * Reviews on an experience.
  *
- * The third content inflow (spec BUSINESS-03): the people who turned up saying
- * whether it was worth it. Until this existed explorers could only consume -
- * and every rating in the system was seeded fiction feeding a live ranking
- * signal.
- *
- * Two things the design is careful about:
- *
- * - **The spread is shown, not just the average.** Five 1s and five 5s average
- *   to the same 3 as ten 3s, and they describe completely different places. An
- *   average alone hides exactly the thing worth knowing.
- * - **A withheld review is explained to its author.** Someone whose words are
- *   not appearing should be told why, rather than left to conclude the platform
- *   lost them.
+ * Minimal mode keeps the summary to one line, hides the write form until
+ * the explorer taps the stars, and lists reviews as compact rows rather
+ * than cards — suited to the booking rail beside the detail page.
  */
 
 import { useState } from 'react'
@@ -24,21 +14,19 @@ import { Star, TriangleAlert } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
 import type { ReviewEntry } from '@/lib/types'
-import { Button, Card, SectionHeading } from '@/design-system/primitives'
+import { Button } from '@/design-system/primitives'
 import { cn } from '@/lib/utils'
 
 const SCALE = [1, 2, 3, 4, 5] as const
 
-function Stars({ value, size = 'sm' }: { value: number; size?: 'sm' | 'lg' }) {
+function Stars({ value, size = 'sm' }: { value: number; size?: 'sm' | 'md' }) {
+  const dim = size === 'md' ? 'size-4' : 'size-3.5'
   return (
     <span className="inline-flex items-center gap-0.5" aria-label={`${value} out of 5`}>
       {SCALE.map((n) => (
         <Star
           key={n}
-          className={cn(
-            size === 'lg' ? 'size-5' : 'size-3.5',
-            n <= value ? 'fill-amber-400 text-amber-400' : 'text-sand-300',
-          )}
+          className={cn(dim, n <= value ? 'fill-accent-500 text-accent-500' : 'text-sand-300')}
           aria-hidden
         />
       ))}
@@ -46,18 +34,11 @@ function Stars({ value, size = 'sm' }: { value: number; size?: 'sm' | 'lg' }) {
   )
 }
 
-function RatingPicker({
-  value,
-  onChange,
-}: {
-  value: number
-  onChange: (next: number) => void
-}) {
+function RatingPicker({ value, onChange }: { value: number; onChange: (n: number) => void }) {
   const [hovered, setHovered] = useState<number | null>(null)
   const shown = hovered ?? value
-
   return (
-    <div className="flex items-center gap-1" onMouseLeave={() => setHovered(null)}>
+    <div className="flex items-center gap-0.5" onMouseLeave={() => setHovered(null)}>
       {SCALE.map((n) => (
         <button
           key={n}
@@ -69,7 +50,7 @@ function RatingPicker({
           className="rounded p-0.5 transition-transform hover:scale-110"
         >
           <Star
-            className={cn('size-7', n <= shown ? 'fill-amber-400 text-amber-400' : 'text-sand-300')}
+            className={cn('size-6', n <= shown ? 'fill-accent-500 text-accent-500' : 'text-sand-300')}
             aria-hidden
           />
         </button>
@@ -78,60 +59,46 @@ function RatingPicker({
   )
 }
 
-/** The spread behind the average - what an average on its own conceals. */
-function Distribution({
-  distribution,
-  count,
-}: {
-  distribution: Record<number, number>
-  count: number
-}) {
-  return (
-    <div className="space-y-1">
-      {[5, 4, 3, 2, 1].map((n) => {
-        const share = count > 0 ? ((distribution[n] ?? 0) / count) * 100 : 0
-        return (
-          <div key={n} className="flex items-center gap-2 text-xs text-sand-600">
-            <span className="w-3 tabular-nums">{n}</span>
-            <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-sand-200">
-              <span
-                className="block h-full rounded-full bg-amber-400"
-                style={{ width: `${share}%` }}
-              />
-            </span>
-            <span className="w-6 tabular-nums text-right">{distribution[n] ?? 0}</span>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
 function ReviewRow({ review }: { review: ReviewEntry }) {
   return (
-    <li className="border-t border-sand-200 py-3 first:border-t-0">
-      <div className="flex flex-wrap items-center gap-2">
-        <Stars value={review.rating} />
-        <span className="text-sm font-medium text-sand-900">{review.authorName}</span>
-        {review.verifiedAttendance && (
-          <span className="rounded-full bg-brand-100 px-2 py-0.5 text-[0.7rem] font-medium text-brand-800">
-            went
-          </span>
-        )}
-        <span className="text-xs text-sand-500">
+    <li className="border-b border-sand-100 py-3 last:border-0">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-sand-900">{review.authorName}</span>
+            {review.verifiedAttendance && (
+              <span className="text-[0.65rem] font-medium uppercase tracking-wide text-brand-700">
+                Went
+              </span>
+            )}
+          </div>
+          <Stars value={review.rating} size="sm" />
+        </div>
+        <span className="shrink-0 text-xs text-sand-400">
           {new Date(review.createdAt).toLocaleDateString([], {
             day: 'numeric',
             month: 'short',
-            year: 'numeric',
           })}
         </span>
       </div>
-      {review.comment && <p className="mt-1 text-sm text-sand-700">{review.comment}</p>}
+      {review.comment && (
+        <p className="mt-1.5 text-sm leading-relaxed text-sand-600">{review.comment}</p>
+      )}
     </li>
   )
 }
 
-export function Reviews({ experienceId }: { experienceId: string }) {
+export function Reviews({
+  experienceId,
+  bare = false,
+  minimal = false,
+}: {
+  experienceId: string
+  /** Omit the section heading when the parent already labels the block. */
+  bare?: boolean
+  /** Compact layout for the booking rail — form opens on star click. */
+  minimal?: boolean
+}) {
   const user = useAppStore((s) => s.user)
   const queryClient = useQueryClient()
 
@@ -142,17 +109,35 @@ export function Reviews({ experienceId }: { experienceId: string }) {
 
   const [rating, setRating] = useState(0)
   const [comment, setComment] = useState('')
-  const [editing, setEditing] = useState(false)
+  const [formOpen, setFormOpen] = useState(false)
 
   const mine = data?.mine
-  const showForm = editing || !mine
+  const summary = data?.summary
+
+  const openForm = (initialRating = 0) => {
+    if (mine) {
+      setRating(mine.rating)
+      setComment(mine.comment ?? '')
+    } else {
+      setRating(initialRating)
+      setComment('')
+    }
+    setFormOpen(true)
+  }
+
+  const closeForm = () => {
+    setFormOpen(false)
+    if (!mine) {
+      setRating(0)
+      setComment('')
+    }
+  }
 
   const submit = useMutation({
     mutationFn: () => api.leaveReview(experienceId, rating, comment.trim() || undefined),
     onSuccess: () => {
-      setEditing(false)
+      closeForm()
       void queryClient.invalidateQueries({ queryKey: ['reviews', experienceId] })
-      // The rating feeds the quality ranking signal, so the card is now stale.
       void queryClient.invalidateQueries({ queryKey: ['experience', experienceId] })
     },
   })
@@ -162,107 +147,97 @@ export function Reviews({ experienceId }: { experienceId: string }) {
     onSuccess: () => {
       setRating(0)
       setComment('')
+      setFormOpen(false)
       void queryClient.invalidateQueries({ queryKey: ['reviews', experienceId] })
       void queryClient.invalidateQueries({ queryKey: ['experience', experienceId] })
     },
   })
 
-  const summary = data?.summary
+  if (minimal) {
+    return (
+      <section id="reviews" className="scroll-mt-28">
+        <h2 className="text-sm font-semibold text-sand-950">Reviews</h2>
 
-  return (
-    <section className="mt-10">
-      <SectionHeading
-        title="What people said"
-        subtitle={
-          summary?.count
-            ? `${summary.average} average from ${summary.count} ${
-                summary.count === 1 ? 'review' : 'reviews'
-              }`
-            : 'No reviews yet'
-        }
-      />
-
-      {summary && summary.count > 0 && (
-        <Card className="mb-4 flex flex-wrap items-center gap-6 p-4">
-          <div className="text-center">
-            <p className="text-3xl font-semibold tabular-nums text-sand-900">{summary.average}</p>
-            <Stars value={Math.round(summary.average ?? 0)} size="lg" />
-          </div>
-          <div className="min-w-[12rem] flex-1">
-            <Distribution distribution={summary.distribution} count={summary.count} />
-          </div>
-        </Card>
-      )}
-
-      {/* The author's own, whatever its status. */}
-      {mine && !editing && (
-        <Card className="mb-4 p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-sand-500">Your review</p>
-          <div className="mt-1.5 flex flex-wrap items-center gap-2">
-            <Stars value={mine.rating} />
-            <span className="text-xs text-sand-500">
-              {new Date(mine.createdAt).toLocaleDateString()}
-            </span>
-          </div>
-          {mine.comment && <p className="mt-1 text-sm text-sand-700">{mine.comment}</p>}
-
-          {/* Withheld reviews are explained rather than silently disappearing. */}
-          {mine.status && mine.status !== 'approved' && (
-            <p className="mt-2 flex items-start gap-1.5 rounded-lg bg-sand-100 px-3 py-2 text-xs text-sand-700">
-              <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-              <span>
-                This is waiting on a moderator, so it is not shown to others yet.
-                {mine.moderationNotes && ` ${mine.moderationNotes}`}
+        {/* Summary + tap-to-rate */}
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+          {summary && summary.count > 0 ? (
+            <>
+              <span className="text-sm font-semibold tabular-nums text-sand-950">
+                {summary.average?.toFixed(1)}
               </span>
-            </p>
+              <Stars value={Math.round(summary.average ?? 0)} size="sm" />
+              <span className="text-xs text-sand-500">
+                {summary.count} {summary.count === 1 ? 'review' : 'reviews'}
+              </span>
+            </>
+          ) : (
+            <span className="text-xs text-sand-500">No reviews yet</span>
           )}
+        </div>
 
-          <div className="mt-3 flex gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => {
-                setRating(mine.rating)
-                setComment(mine.comment ?? '')
-                setEditing(true)
-              }}
-            >
-              Edit
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => withdraw.mutate()}
-              disabled={withdraw.isPending}
-            >
-              Withdraw
-            </Button>
-          </div>
-        </Card>
-      )}
+        {/* Clickable stars to open the form */}
+        {user ? (
+          mine && !formOpen ? (
+            <div className="mt-3 rounded-lg border border-sand-100 bg-sand-50/50 px-3 py-2.5">
+              <p className="text-[0.65rem] font-medium uppercase tracking-wide text-sand-400">
+                Your review
+              </p>
+              <button
+                type="button"
+                onClick={() => openForm()}
+                className="mt-1 flex w-full items-center gap-2 text-left"
+              >
+                <Stars value={mine.rating} size="sm" />
+                <span className="text-xs text-brand-700">Edit</span>
+              </button>
+              {mine.comment && (
+                <p className="mt-1.5 text-sm text-sand-600">{mine.comment}</p>
+              )}
+              {mine.status && mine.status !== 'approved' && (
+                <p className="mt-2 flex items-start gap-1.5 text-xs text-sand-600">
+                  <TriangleAlert className="mt-0.5 size-3 shrink-0 text-warning" aria-hidden />
+                  Waiting on a moderator.
+                </p>
+              )}
+            </div>
+          ) : !formOpen ? (
+            <div className="mt-3 flex items-center gap-2 rounded-lg border border-dashed border-sand-200 px-3 py-2.5">
+              <div className="flex items-center gap-0.5">
+                {SCALE.map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => openForm(n)}
+                    aria-label={`Rate ${n} star${n > 1 ? 's' : ''}`}
+                    className="rounded p-0.5 transition-transform hover:scale-110"
+                  >
+                    <Star className="size-4 text-sand-300 hover:text-accent-400" aria-hidden />
+                  </button>
+                ))}
+              </div>
+              <span className="text-xs text-sand-500">Tap to rate</span>
+            </div>
+          ) : null
+        ) : (
+          <p className="mt-3 text-xs text-sand-500">
+            <Link to="/signin" className="font-semibold text-brand-700 hover:underline">
+              Sign in
+            </Link>{' '}
+            to leave a review
+          </p>
+        )}
 
-      {!user ? (
-        <Card className="mb-4 p-4 text-sm text-sand-600">
-          <Link to="/signin" className="underline">
-            Sign in
-          </Link>{' '}
-          to leave a review.
-        </Card>
-      ) : (
-        showForm && (
-          <Card className="mb-4 space-y-3 p-4">
-            <p className="text-sm font-medium text-sand-700">
-              {mine ? 'Update your review' : 'Been here? Say how it was.'}
-            </p>
+        {formOpen && user && (
+          <div className="mt-3 space-y-3 rounded-lg border border-sand-200 bg-white p-3">
             <RatingPicker value={rating} onChange={setRating} />
             <textarea
               value={comment}
-              onChange={(event) => setComment(event.target.value)}
-              rows={3}
+              onChange={(e) => setComment(e.target.value)}
+              rows={2}
               maxLength={2000}
-              placeholder="What should someone know before going? (optional)"
+              placeholder="Optional comment"
               aria-label="Your review"
-              className="w-full rounded-lg border border-sand-300 bg-white px-3 py-2 text-sm text-sand-900 placeholder:text-sand-400 focus:border-brand-500 focus:outline-none"
+              className="w-full resize-none rounded-lg border border-sand-200 bg-sand-50/50 px-3 py-2 text-sm text-sand-900 placeholder:text-sand-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-600/15"
             />
             <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -271,31 +246,131 @@ export function Reviews({ experienceId }: { experienceId: string }) {
                 loading={submit.isPending}
                 disabled={rating === 0}
               >
-                {mine ? 'Update' : 'Post review'}
+                {mine ? 'Update' : 'Post'}
               </Button>
-              {editing && (
-                <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
-                  Cancel
+              <Button variant="ghost" size="sm" onClick={closeForm}>
+                Cancel
+              </Button>
+              {mine && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => withdraw.mutate()}
+                  disabled={withdraw.isPending}
+                  className="ml-auto text-sand-500"
+                >
+                  Remove
                 </Button>
               )}
               {submit.isError && (
-                <span className="text-sm text-red-700" role="alert">
+                <span className="text-xs text-danger" role="alert">
                   {(submit.error as Error).message}
                 </span>
               )}
             </div>
-          </Card>
-        )
-      )}
+          </div>
+        )}
 
-      {data && data.reviews.length > 0 && (
-        <Card className="px-4 py-1">
-          <ul>
-            {data.reviews.map((review) => (
+        {data && data.reviews.length > 0 && (
+          <ul className="mt-3">
+            {data.reviews.slice(0, 5).map((review) => (
               <ReviewRow key={review.id} review={review} />
             ))}
           </ul>
-        </Card>
+        )}
+      </section>
+    )
+  }
+
+  /* ── Full layout (used elsewhere) ── */
+  return (
+    <section id="reviews" className="scroll-mt-28">
+      {!bare && (
+        <h2 className="text-xl font-semibold tracking-tight text-sand-950">What people said</h2>
+      )}
+
+      {summary && summary.count > 0 ? (
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <span className="text-3xl font-bold tabular-nums text-sand-950">{summary.average}</span>
+          <div>
+            <Stars value={Math.round(summary.average ?? 0)} size="md" />
+            <p className="mt-1 text-xs text-sand-500">
+              {summary.count} {summary.count === 1 ? 'review' : 'reviews'}
+            </p>
+          </div>
+        </div>
+      ) : (
+        !bare && <p className="mt-1.5 text-sm text-sand-500">No reviews yet — be the first.</p>
+      )}
+
+      {user ? (
+        mine && !formOpen ? (
+          <div className="mt-4 rounded-xl border border-brand-100 bg-brand-50/40 p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-brand-700">Your review</p>
+            <button type="button" onClick={() => openForm()} className="mt-2 flex items-center gap-2">
+              <Stars value={mine.rating} size="md" />
+              <span className="text-sm text-brand-700">Edit</span>
+            </button>
+            {mine.comment && <p className="mt-2 text-sm text-sand-700">{mine.comment}</p>}
+          </div>
+        ) : !formOpen ? (
+          <button
+            type="button"
+            onClick={() => openForm()}
+            className="mt-4 flex items-center gap-2 rounded-xl border border-dashed border-sand-200 px-4 py-3 hover:border-brand-200 hover:bg-brand-50/30"
+          >
+            <Stars value={0} size="md" />
+            <span className="text-sm font-medium text-sand-700">Rate this experience</span>
+          </button>
+        ) : null
+      ) : (
+        <p className="mt-4 text-sm text-sand-600">
+          <Link to="/signin" className="font-semibold text-brand-700 hover:underline">
+            Sign in
+          </Link>{' '}
+          to leave a review.
+        </p>
+      )}
+
+      {formOpen && user && (
+        <div className="mt-4 space-y-3 rounded-xl border border-sand-200 bg-white p-4">
+          <RatingPicker value={rating} onChange={setRating} />
+          <textarea
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            rows={3}
+            maxLength={2000}
+            placeholder="What should someone know before going? (optional)"
+            aria-label="Your review"
+            className="w-full resize-none rounded-xl border border-sand-200 bg-sand-50/50 px-4 py-3 text-sm text-sand-900 placeholder:text-sand-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-600/15"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              onClick={() => submit.mutate()}
+              loading={submit.isPending}
+              disabled={rating === 0}
+            >
+              {mine ? 'Update review' : 'Post review'}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={closeForm}>
+              Cancel
+            </Button>
+            {submit.isError && (
+              <span className="text-sm text-danger" role="alert">
+                {(submit.error as Error).message}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {data && data.reviews.length > 0 && (
+        <ul className="mt-4 space-y-1">
+          {data.reviews.map((review) => (
+            <ReviewRow key={review.id} review={review} />
+          ))}
+        </ul>
       )}
     </section>
   )

@@ -1,38 +1,96 @@
 /**
  * Experience detail (spec 57.03).
  *
- * The information hierarchy follows the spec: identity and hero, then time and
- * status, then price and action, then location, then trust/provenance, then the
- * long description. A visitor deciding whether to go needs the first four before
- * they need prose.
+ * Layout philosophy: one strong first impression, then a clear two-column
+ * reading path. Photography sets the scene; the title lands on it. Booking
+ * lives permanently in the right rail — no hunting for a CTA. Each content
+ * section has a single visual role and is given enough room to breathe.
+ *
+ * No embedded map; "View on map" is an explicit external action.
  */
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   Accessibility,
   ArrowLeft,
+  Baby,
   BadgeCheck,
   Bookmark,
   Building2,
-  Calendar,
+  Car,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock,
+  CreditCard,
+  ExternalLink,
   Flag,
+  Flame,
+  Heart,
+  Home,
+  Leaf,
   MapPin,
+  Moon,
+  Share2,
   Star,
-  Users,
+  Sun,
+  Wifi,
+  Wind,
 } from 'lucide-react'
+
+import type { LucideIcon } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useDiscoveryParams, useToggleSave } from '@/app/hooks'
 import { AddToCollection } from '@/features/collections/AddToCollection'
-import { Badge, Button, Card, EmptyState, SectionHeading, Skeleton } from '@/design-system/primitives'
+import { Button, EmptyState, Skeleton } from '@/design-system/primitives'
 import { ExperienceCard } from './ExperienceCard'
 import { Reviews } from '@/features/reviews/Reviews'
-import { RepostButton } from '@/features/social/RepostButton'
 import { TicketPanel } from '@/features/commerce/TicketPanel'
 import { ReportDialog } from '@/features/trust/ReportDialog'
-import { formatDistance, formatPrice, formatWhen } from '@/lib/utils'
+import { SUITABILITY_LABELS } from '@/lib/suitability'
+import type { EventInstance, ExperienceDetail } from '@/lib/types'
+import { cn, formatDistance, formatPrice, formatWhen } from '@/lib/utils'
+
+/* Map common suitability slugs to an icon. Unknown slugs fall back to a
+   generic checkmark. The icon is purely decorative — the label is always
+   present beside it. */
+const SUITABILITY_ICONS: Partial<Record<string, LucideIcon>> = {
+  vegan: Leaf,
+  vegetarian: Leaf,
+  halal: CheckCircle2,
+  kosher: CheckCircle2,
+  gluten_free: Heart,
+  nut_free: Heart,
+  dairy_free: Heart,
+  fasting_menu: Moon,
+  alcohol_free: CheckCircle2,
+  serves_late: Moon,
+  childrens_play_area: Baby,
+  child_menu: Baby,
+  high_chairs: Baby,
+  baby_changing: Baby,
+  child_friendly: Baby,
+  pushchair_access: Baby,
+  step_free_access: Accessibility,
+  accessible_toilet: Accessibility,
+  accessible_parking: Accessibility,
+  hearing_loop: Accessibility,
+  sign_language: Accessibility,
+  quiet_space: Home,
+  indoor_seating: Home,
+  outdoor_seating: Sun,
+  shaded_seating: Sun,
+  heated: Flame,
+  air_conditioned: Wind,
+  covered: Home,
+  parking: Car,
+  wifi: Wifi,
+  prayer_room: Moon,
+  pet_friendly: Heart,
+  card_accepted: CreditCard,
+}
 
 export function ExperienceDetailPage() {
   const { experienceId = '' } = useParams()
@@ -46,12 +104,25 @@ export function ExperienceDetailPage() {
   })
 
   const [reporting, setReporting] = useState(false)
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null)
+  const [photoIndex, setPhotoIndex] = useState(0)
 
   const { data: similar } = useQuery({
     queryKey: ['similar', experienceId],
     queryFn: () => api.similar(experienceId),
     enabled: Boolean(experienceId),
   })
+
+  useEffect(() => {
+    if (!data?.upcomingEvents.length) {
+      setSelectedEventId(null)
+      return
+    }
+    setSelectedEventId((prev) => {
+      if (prev && data.upcomingEvents.some((e) => e.id === prev)) return prev
+      return data.upcomingEvents[0].id
+    })
+  }, [data])
 
   if (isLoading) return <DetailSkeleton />
 
@@ -63,299 +134,323 @@ export function ExperienceDetailPage() {
           title="We could not find that experience"
           description="It may have been unpublished or archived."
           action={
-            <Link to="/">
-              <Button>Back to discovery</Button>
-            </Link>
+            <Link to="/"><Button>Back to discovery</Button></Link>
           }
         />
       </div>
     )
   }
 
-  const hero = data.media[0]
-  const accessibility = data.accessibility as { wheelchairAccessible?: boolean; notes?: string }
+  const selectedEvent =
+    data.upcomingEvents.find((e) => e.id === selectedEventId) ??
+    data.upcomingEvents[0] ??
+    null
+
   const distance = formatDistance(data.distanceKm)
+  const durationLabel = data.durationMinutes
+    ? `${Math.round((data.durationMinutes / 60) * 10) / 10} hrs`
+    : null
+  const photos = data.media.filter((m) => m.type !== 'video')
+  const mapUrl = data.venue
+    ? `https://www.openstreetmap.org/?mlat=${data.venue.latitude}&mlon=${data.venue.longitude}#map=17/${data.venue.latitude}/${data.venue.longitude}`
+    : null
+
+  const share = async () => {
+    const url = window.location.href
+    try {
+      if (navigator.share) { await navigator.share({ title: data.title, url }); return }
+    } catch { /* cancelled */ }
+    try { await navigator.clipboard.writeText(url) } catch { /* ignore */ }
+  }
 
   return (
-    <article className="pb-24">
-      <div className="relative h-[38vh] min-h-64 w-full overflow-hidden bg-sand-200 sm:h-[46vh]">
-        {hero && (
+    <article className="pb-40 sm:pb-28 lg:pb-12">
+      {/* ── Hero ─────────────────────────────────────────────────────────── */}
+      <div className="relative h-[62vh] min-h-[22rem] w-full overflow-hidden bg-sand-950 sm:h-[68vh]">
+        {photos[photoIndex] ? (
           <img
-            src={hero.url}
-            alt={hero.altText ?? data.title}
+            key={photos[photoIndex].id}
+            src={photos[photoIndex].url}
+            alt={photos[photoIndex].altText ?? data.title}
             className="size-full object-cover"
           />
+        ) : (
+          <div className="flex size-full items-center justify-center">
+            <MapPin className="size-16 text-sand-700" aria-hidden />
+          </div>
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/10 to-transparent" />
 
-        <Link
-          to="/"
-          className="absolute left-4 top-4 inline-flex items-center gap-1.5 rounded-pill bg-white/90 px-3 py-1.5 text-sm font-medium text-sand-800 backdrop-blur transition-colors hover:bg-white"
-        >
-          <ArrowLeft className="size-4" aria-hidden />
-          Back
-        </Link>
+        {/* Two-layer gradient: top for controls, bottom for title legibility */}
+        <div className="absolute inset-0 bg-gradient-to-b from-black/45 via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
 
-        <div className="absolute inset-x-0 bottom-0 mx-auto w-full max-w-5xl px-4 pb-6 sm:px-6">
-          <div className="mb-2 flex flex-wrap gap-2">
-            {data.category && <Badge tone="brand">{data.category.name}</Badge>}
-            {data.price.type === 'free' && <Badge tone="success">Free</Badge>}
-            {data.nextEvent?.status === 'cancelled' && <Badge tone="danger">Cancelled</Badge>}
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight text-white drop-shadow sm:text-4xl">
-            {data.title}
-          </h1>
-          {data.summary && (
-            <p className="mt-2 max-w-2xl text-sm text-white/90 sm:text-base">{data.summary}</p>
-          )}
-        </div>
-      </div>
-
-      <div className="mx-auto grid w-full max-w-5xl gap-8 px-4 pt-6 sm:px-6 lg:grid-cols-[1fr_20rem]">
-        <div className="space-y-8">
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-sand-600">
-            {data.ratingAverage != null && (
-              <span className="flex items-center gap-1.5">
-                <Star className="size-4 fill-accent-500 text-accent-500" aria-hidden />
-                <span className="font-medium text-sand-800">{data.ratingAverage.toFixed(1)}</span>
-                <span>({data.ratingCount} reviews)</span>
-              </span>
-            )}
-            {data.durationMinutes && (
-              <span className="flex items-center gap-1.5">
-                <Clock className="size-4" aria-hidden />
-                About {Math.round(data.durationMinutes / 60 * 10) / 10} hrs
-              </span>
-            )}
-            {data.venue?.neighborhood && (
-              <span className="flex items-center gap-1.5">
-                <MapPin className="size-4" aria-hidden />
-                {data.venue.neighborhood.name}
-                {distance && <span className="text-sand-400">· {distance}</span>}
-              </span>
-            )}
-          </div>
-
-          {/* Above the description rather than at the bottom of the page: the
-              count is part of judging whether this is worth reading, not an
-              afterthought once you have. */}
-          <RepostButton experience={data} className="border-y border-sand-200 py-1" />
-
-          <section>
-            <h2 className="mb-2 text-lg font-semibold text-sand-900">About</h2>
-            <p className="whitespace-pre-line leading-relaxed text-sand-700">{data.description}</p>
-          </section>
-
-          {data.tags.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {data.tags.map((tag) => (
-                <Badge key={tag.id}>{tag.name}</Badge>
-              ))}
-            </div>
-          )}
-
-          {data.upcomingEvents.length > 0 && (
-            <section>
-              <h2 className="mb-3 text-lg font-semibold text-sand-900">Upcoming dates</h2>
-              <ul className="divide-y divide-sand-200 overflow-hidden rounded-card border border-sand-200 bg-white">
-                {data.upcomingEvents.slice(0, 6).map((event) => (
-                  <li key={event.id} className="px-4 py-3">
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-3">
-                        <Calendar className="size-4 shrink-0 text-sand-400" aria-hidden />
-                        <div>
-                          <p className="text-sm font-medium text-sand-800">
-                            {new Date(event.startTime).toLocaleString(undefined, {
-                              weekday: 'short',
-                              day: 'numeric',
-                              month: 'short',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </p>
-                          <p className="text-xs text-sand-500">{formatWhen(event.startTime)}</p>
-                        </div>
-                      </div>
-                      {event.remaining != null && (
-                        <span className="flex items-center gap-1 text-xs text-sand-500">
-                          <Users className="size-3.5" aria-hidden />
-                          {event.remaining} left
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Per date, not per listing. A place at next Tuesday's
-                        supper club is not a place at the one after. The panel
-                        decides between buying, registering, reserving and
-                        leaving for the organiser's own site - the server says
-                        which, because it is the one that can see the stock. */}
-                    <TicketPanel experienceId={data.id} occurrence={event} />
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          {/* Above "you might also like": what people said about *this* matters
-              more than what else there is.
-
-*/}
-          <Reviews experienceId={data.id} />
-
-          {similar && similar.length > 0 && (
-            <section>
-              <SectionHeading title="You might also like" />
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {similar.slice(0, 3).map((item) => (
-                  <ExperienceCard key={item.id} experience={item} />
-                ))}
-              </div>
-            </section>
-          )}
-        </div>
-
-        {/* Sticky action rail: price and the primary action stay reachable while
-            reading, which is the decision the page exists to support. */}
-        <aside className="lg:sticky lg:top-20 lg:self-start">
-          <Card className="p-5">
-            <p className="text-2xl font-semibold text-sand-900">{formatPrice(data.price)}</p>
-            {data.nextEvent && (
-              <p className="mt-1 text-sm text-sand-500">
-                Next: {formatWhen(data.nextEvent.startTime)}
-              </p>
-            )}
-
-            <Button
-              className="mt-4 w-full"
-              size="lg"
+        {/* Top bar */}
+        <div className="absolute inset-x-0 top-0 flex items-center justify-between px-4 pt-5 sm:px-6">
+          <Link
+            to="/"
+            className="inline-flex items-center gap-1.5 rounded-full bg-black/30 px-3.5 py-2 text-sm font-medium text-white backdrop-blur-md ring-1 ring-white/15 transition hover:bg-black/45"
+          >
+            <ArrowLeft className="size-4" aria-hidden />
+            Back
+          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={share}
+              aria-label="Share"
+              className="grid size-10 place-items-center rounded-full bg-black/30 text-white backdrop-blur-md ring-1 ring-white/15 transition hover:bg-black/45"
+            >
+              <Share2 className="size-4" aria-hidden />
+            </button>
+            <button
+              type="button"
               onClick={() => toggle(data)}
               disabled={requiresAuth}
+              aria-pressed={data.isSaved}
+              aria-label={data.isSaved ? 'Saved' : 'Save'}
+              className={cn(
+                'grid size-10 place-items-center rounded-full bg-black/30 backdrop-blur-md ring-1 ring-white/15 transition hover:bg-black/45 disabled:opacity-50',
+                data.isSaved ? 'text-accent-300' : 'text-white',
+              )}
             >
-              <Bookmark
-                className="size-4"
-                fill={data.isSaved ? 'currentColor' : 'none'}
-                aria-hidden
-              />
-              {data.isSaved ? 'Saved' : 'Save this'}
-            </Button>
-            {requiresAuth && (
-              <p className="mt-2 text-center text-xs text-sand-500">
-                <Link to="/signin" className="font-medium text-brand-700 hover:underline">
-                  Sign in
-                </Link>{' '}
-                to save experiences
+              <Bookmark className="size-4" fill={data.isSaved ? 'currentColor' : 'none'} aria-hidden />
+            </button>
+          </div>
+        </div>
+
+        {/* Photo counter */}
+        {photos.length > 1 && (
+          <div className="absolute right-4 top-[4.5rem] sm:right-6">
+            <span className="rounded-full bg-black/35 px-2.5 py-1 text-xs font-medium text-white/90 backdrop-blur-sm ring-1 ring-white/10">
+              {photoIndex + 1} / {photos.length}
+            </span>
+          </div>
+        )}
+
+        {/* Title block — lives on the hero */}
+        <div className="absolute inset-x-0 bottom-0 px-4 pb-8 sm:px-8 sm:pb-10">
+          <div className="mx-auto max-w-6xl">
+            {data.category && (
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-white/70">
+                {data.category.name}
+              </p>
+            )}
+            <h1 className="max-w-3xl text-3xl font-semibold leading-[1.1] tracking-tight text-white drop-shadow-sm sm:text-5xl sm:leading-[1.08]">
+              {data.title}
+            </h1>
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+              {data.ratingAverage != null && (
+                <a
+                  href="#reviews"
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-white/90 hover:text-white"
+                >
+                  <Star className="size-4 fill-accent-400 text-accent-400" aria-hidden />
+                  {data.ratingAverage.toFixed(1)}
+                  <span className="font-normal text-white/65">
+                    · {data.ratingCount} {data.ratingCount === 1 ? 'review' : 'reviews'}
+                  </span>
+                </a>
+              )}
+              {durationLabel && (
+                <span className="inline-flex items-center gap-1.5 text-sm text-white/75">
+                  <Clock className="size-3.5" aria-hidden />
+                  {durationLabel}
+                </span>
+              )}
+              {data.venue && (
+                <span className="inline-flex items-center gap-1.5 text-sm text-white/75">
+                  <MapPin className="size-3.5" aria-hidden />
+                  {data.venue.neighborhood?.name ?? data.venue.name}
+                  {distance ? ` · ${distance}` : ''}
+                </span>
+              )}
+              <div className="flex gap-1.5">
+                {data.price.type === 'free' && (
+                  <span className="rounded-full bg-brand-600/80 px-2.5 py-0.5 text-xs font-semibold text-white backdrop-blur-sm">Free</span>
+                )}
+                {data.nextEvent?.status === 'cancelled' && (
+                  <span className="rounded-full bg-danger/80 px-2.5 py-0.5 text-xs font-semibold text-white backdrop-blur-sm">Cancelled</span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Photo nav arrows */}
+        {photos.length > 1 && (
+          <>
+            <button
+              type="button"
+              aria-label="Previous photo"
+              onClick={() => setPhotoIndex((i) => (i - 1 + photos.length) % photos.length)}
+              className="absolute bottom-8 right-16 grid size-9 place-items-center rounded-full bg-black/35 text-white backdrop-blur-sm ring-1 ring-white/15 transition hover:bg-black/55 sm:bottom-10 sm:right-20"
+            >
+              <ChevronLeft className="size-4" aria-hidden />
+            </button>
+            <button
+              type="button"
+              aria-label="Next photo"
+              onClick={() => setPhotoIndex((i) => (i + 1) % photos.length)}
+              className="absolute bottom-8 right-4 grid size-9 place-items-center rounded-full bg-black/35 text-white backdrop-blur-sm ring-1 ring-white/15 transition hover:bg-black/55 sm:bottom-10 sm:right-6"
+            >
+              <ChevronRight className="size-4" aria-hidden />
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* ── Main content ─────────────────────────────────────────────────── */}
+      <div className="mx-auto max-w-6xl px-4 pt-8 sm:px-6 lg:pt-10">
+        <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_21rem] lg:gap-12">
+
+          {/* ── Left column ── */}
+          <div className="min-w-0 space-y-10">
+
+            {data.summary && (
+              <p className="text-base leading-[1.75] text-sand-600">
+                {data.summary}
               </p>
             )}
 
-            {/* Beside Save rather than inside it. Saving is a reflex and
-                curating is a decision; collapsing them would put a menu in
-                front of the one-tap action. */}
-            <div className="mt-2 flex justify-center">
-              <AddToCollection experienceId={data.id} citySlug={data.citySlug} />
-            </div>
-
-            {data.venue && (
-              <div className="mt-5 border-t border-sand-200 pt-4">
-                <h3 className="text-sm font-medium text-sand-800">{data.venue.name}</h3>
-                <p className="mt-1 text-sm text-sand-500">{data.venue.address}</p>
-                <a
-                  href={`https://www.openstreetmap.org/?mlat=${data.venue.latitude}&mlon=${data.venue.longitude}#map=17/${data.venue.latitude}/${data.venue.longitude}`}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="mt-2 inline-block text-sm font-medium text-brand-700 hover:underline"
-                >
-                  View on map
-                </a>
-              </div>
-            )}
-
-            {accessibility?.wheelchairAccessible != null && (
-              <div className="mt-4 flex items-start gap-2 border-t border-sand-200 pt-4 text-sm">
-                <Accessibility className="mt-0.5 size-4 shrink-0 text-sand-500" aria-hidden />
-                <div>
-                  <p className="text-sand-700">
-                    {accessibility.wheelchairAccessible
-                      ? 'Wheelchair accessible'
-                      : 'Not wheelchair accessible'}
-                  </p>
-                  {accessibility.notes && (
-                    <p className="text-xs text-sand-500">{accessibility.notes}</p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Provenance. Spec 57.03 s32-35 requires the explorer to see who
-                published this and how trusted they are.
-
-                A business is a link to everything else it has posted; a person
-                is not. There is no profile page for an individual publisher to
-                go to, and a link that opens nothing is worse than plain text. */}
-            {data.publisher && (
-              <div className="mt-4 border-t border-sand-200 pt-4">
-                <p className="text-xs uppercase tracking-wide text-sand-400">Published by</p>
-                {data.publisher.type === 'organization' ? (
-                  <Link
-                    to={`/businesses/${data.publisher.slug}`}
-                    className="mt-2 flex items-center gap-3 rounded-lg p-1 -mx-1 hover:bg-sand-100"
-                  >
-                    {data.publisher.logoUrl ? (
-                      <img
-                        src={data.publisher.logoUrl}
-                        alt=""
-                        className="size-10 shrink-0 rounded-full object-cover"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <span className="grid size-10 shrink-0 place-items-center rounded-full bg-sand-200">
-                        <Building2 className="size-5 text-sand-500" aria-hidden />
-                      </span>
-                    )}
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1.5">
-                        <span className="truncate text-sm font-medium text-sand-900">
-                          {data.publisher.name}
-                        </span>
-                        {data.publisher.verificationStatus === 'verified' && (
-                          <BadgeCheck
-                            className="size-4 shrink-0 text-brand-600"
-                            aria-label="Verified"
-                          />
-                        )}
-                      </span>
-                      <span className="block text-xs text-sand-500">
-                        {data.publisher.businessTypeLabel ?? 'Business'} · see everything
-                        they have posted
-                      </span>
+            {/* About */}
+            <Section title="About this experience">
+              <p className="mt-3 whitespace-pre-line text-[0.9375rem] leading-[1.8] text-sand-700">
+                {data.description}
+              </p>
+              {(data.tags.length > 0 || data.suitability.length > 0) && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {data.tags.map((tag) => (
+                    <span
+                      key={tag.id}
+                      className="rounded-full border border-sand-200 bg-white px-3 py-1 text-xs font-medium text-sand-700"
+                    >
+                      {tag.name}
                     </span>
-                  </Link>
-                ) : (
-                  <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-sand-800">
-                    {data.publisher.name}
-                    {data.publisher.verificationStatus === 'verified' && (
-                      <BadgeCheck
-                        className="size-4 text-brand-600"
-                        aria-label="Verified publisher"
-                      />
-                    )}
-                  </p>
+                  ))}
+                  {data.suitability.map((slug) => (
+                    <span
+                      key={slug}
+                      className="rounded-full border border-brand-100 bg-brand-50 px-3 py-1 text-xs font-medium capitalize text-brand-800"
+                    >
+                      {SUITABILITY_LABELS[slug] ?? slug.replace(/_/g, ' ')}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </Section>
+
+            {/* Good to know — only shown if there are suitability items worth calling out */}
+            {data.suitability.length > 0 && (
+              <Section title="Good to know">
+                <ul className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {data.suitability.map((slug) => {
+                    const Icon = SUITABILITY_ICONS[slug] ?? CheckCircle2
+                    const label = SUITABILITY_LABELS[slug] ?? slug.replace(/_/g, ' ')
+                    return (
+                      <li
+                        key={slug}
+                        className="flex items-center gap-2.5 rounded-xl border border-brand-100 bg-brand-50/60 px-3 py-2.5"
+                      >
+                        <span className="grid size-6 shrink-0 place-items-center rounded-lg bg-brand-100 text-brand-700">
+                          <Icon className="size-3" aria-hidden />
+                        </span>
+                        <span className="text-xs font-medium capitalize text-brand-900">{label}</span>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </Section>
+            )}
+
+            {/* Choose a date */}
+            {data.upcomingEvents.length > 0 && (
+              <Section id="reserve" title="Choose a date">
+                <DateList
+                  events={data.upcomingEvents.slice(0, 10)}
+                  selectedId={selectedEvent?.id ?? null}
+                  onSelect={setSelectedEventId}
+                />
+                {/* Ticket panel: mobile only — desktop lives in the booking widget */}
+                {selectedEvent && (
+                  <>
+                    <div className="mt-3 overflow-hidden rounded-xl border border-sand-200 bg-white lg:hidden">
+                      <div className="border-b border-sand-100 px-4 py-2.5">
+                        <p className="text-sm font-medium text-sand-900">
+                          {formatLongDate(selectedEvent.startTime)}
+                        </p>
+                        {selectedEvent.remaining != null && (
+                          <p className="mt-0.5 text-xs text-sand-500">
+                            {selectedEvent.remaining} left
+                          </p>
+                        )}
+                      </div>
+                      <div className="p-4">
+                        <TicketPanel experienceId={data.id} occurrence={selectedEvent} embedded />
+                      </div>
+                    </div>
+                    <div className="mt-4 rounded-xl border border-sand-200 bg-white px-4 py-4 lg:hidden">
+                      <Reviews experienceId={data.id} minimal />
+                    </div>
+                  </>
                 )}
+              </Section>
+            )}
+
+            {/* Reviews on mobile when there is no ticket flow */}
+            {data.upcomingEvents.length === 0 && (
+              <div className="lg:hidden">
+                <Reviews experienceId={data.id} minimal />
               </div>
             )}
 
-            {/* Anyone can post, so anyone must be able to flag what is wrong
-                (spec BUSINESS-07). Quiet, but always findable. */}
+            {/* More like this */}
+            {similar && similar.length > 0 && (
+              <Section title="More like this">
+                <HorizontalScrollRow>
+                  {similar.slice(0, 6).map((item) => (
+                    <ExperienceCard key={item.id} experience={item} fixedWidth />
+                  ))}
+                </HorizontalScrollRow>
+              </Section>
+            )}
+
             <button
               type="button"
               onClick={() => setReporting(true)}
-              className="mt-4 flex w-full items-center justify-center gap-1.5 border-t border-sand-200 pt-4 text-xs text-sand-500 transition-colors hover:text-sand-800"
+              className="inline-flex items-center gap-1.5 text-xs text-sand-400 transition-colors hover:text-sand-700"
             >
               <Flag className="size-3.5" aria-hidden />
               Report a problem with this listing
             </button>
-          </Card>
-        </aside>
+          </div>
+
+          {/* ── Right column: booking widget + reviews ── */}
+          <aside className="hidden lg:block">
+            <div className="sticky top-24 space-y-5">
+              <BookingWidget
+                data={data}
+                selectedEvent={selectedEvent}
+                requiresAuth={requiresAuth}
+                onToggleSave={() => toggle(data)}
+                onReport={() => setReporting(true)}
+                mapUrl={mapUrl}
+                distance={distance}
+              />
+              <div className="rounded-2xl border border-sand-200/80 bg-white px-5 py-4 shadow-card">
+                <Reviews experienceId={data.id} minimal />
+              </div>
+            </div>
+          </aside>
+        </div>
       </div>
+
+      {/* ── Mobile dock ── */}
+      <MobileDock
+        data={data}
+        selectedEvent={selectedEvent}
+        requiresAuth={requiresAuth}
+        onToggleSave={() => toggle(data)}
+      />
 
       {reporting && (
         <ReportDialog
@@ -368,14 +463,378 @@ export function ExperienceDetailPage() {
   )
 }
 
+/* ────────────────────────────────────── Shared section wrapper */
+
+function Section({
+  id,
+  title,
+  children,
+}: {
+  id?: string
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <section id={id} className="scroll-mt-28">
+      <h2 className="flex items-center gap-3 text-xl font-semibold tracking-tight text-sand-950">
+        <span className="block h-5 w-1 shrink-0 rounded-full bg-brand-600" aria-hidden />
+        {title}
+      </h2>
+      {children}
+    </section>
+  )
+}
+
+/* ────────────────────────────────────── Publisher card */
+
+function PublisherCard({ publisher }: { publisher: ExperienceDetail['publisher'] }) {
+  if (!publisher) return null
+
+  const avatar = publisher.logoUrl ? (
+    <img
+      src={publisher.logoUrl}
+      alt=""
+      className="size-12 shrink-0 rounded-full object-cover ring-2 ring-sand-100"
+      loading="lazy"
+    />
+  ) : (
+    <span className="grid size-12 shrink-0 place-items-center rounded-full bg-brand-100 ring-2 ring-brand-50">
+      <Building2 className="size-5 text-brand-700" aria-hidden />
+    </span>
+  )
+
+  const inner = (
+    <div className="flex items-center gap-3">
+      {avatar}
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className="truncate text-sm font-semibold text-sand-950">{publisher.name}</span>
+          {publisher.verificationStatus === 'verified' && (
+            <BadgeCheck className="size-4 shrink-0 text-brand-600" aria-label="Verified" />
+          )}
+        </div>
+        <p className="mt-0.5 text-xs text-sand-500">
+          {publisher.type === 'organization'
+            ? (publisher.businessTypeLabel ?? 'Business')
+            : 'Individual host'}
+        </p>
+      </div>
+    </div>
+  )
+
+  if (publisher.type === 'organization') {
+    return (
+      <Link
+        to={`/businesses/${publisher.slug}`}
+        className="group flex items-center gap-1 hover:opacity-80"
+      >
+        {inner}
+        <ExternalLink className="ml-1 size-3.5 shrink-0 text-sand-400 opacity-0 transition group-hover:opacity-100" aria-hidden />
+      </Link>
+    )
+  }
+
+  return inner
+}
+
+/* ────────────────────────────────────── Horizontal scroll row */
+
+function HorizontalScrollRow({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  const scroll = (direction: -1 | 1) => {
+    const el = ref.current
+    if (!el) return
+    el.scrollBy({ left: direction * Math.max(el.clientWidth * 0.75, 240), behavior: 'smooth' })
+  }
+
+  return (
+    <div className="relative mt-4">
+      <button
+        type="button"
+        onClick={() => scroll(-1)}
+        aria-label="Scroll left"
+        className="absolute -left-3 top-1/2 z-10 grid size-9 -translate-y-1/2 place-items-center rounded-full border border-sand-200 bg-white text-sand-700 shadow-card transition hover:bg-sand-50"
+      >
+        <ChevronLeft className="size-4" aria-hidden />
+      </button>
+      <div
+        ref={ref}
+        className="scrollbar-none flex gap-4 overflow-x-auto scroll-smooth px-1 pb-1"
+      >
+        {children}
+      </div>
+      <button
+        type="button"
+        onClick={() => scroll(1)}
+        aria-label="Scroll right"
+        className="absolute -right-3 top-1/2 z-10 grid size-9 -translate-y-1/2 place-items-center rounded-full border border-sand-200 bg-white text-sand-700 shadow-card transition hover:bg-sand-50"
+      >
+        <ChevronRight className="size-4" aria-hidden />
+      </button>
+    </div>
+  )
+}
+
+/* ────────────────────────────────────── Date list */
+
+function DateList({
+  events,
+  selectedId,
+  onSelect,
+}: {
+  events: EventInstance[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+}) {
+  return (
+    <ul className="scrollbar-none mt-3 flex gap-2 overflow-x-auto pb-1">
+      {events.map((event) => {
+        const selected = event.id === selectedId
+        const start = new Date(event.startTime)
+        const cancelled = event.status === 'cancelled'
+        const almostGone = event.remaining != null && event.remaining <= 5
+
+        return (
+          <li key={event.id} className="shrink-0">
+            <button
+              type="button"
+              disabled={cancelled}
+              aria-pressed={selected}
+              onClick={() => onSelect(event.id)}
+              className={cn(
+                'whitespace-nowrap rounded-lg border px-3 py-2 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600',
+                selected
+                  ? 'border-brand-600 bg-brand-50 font-medium text-brand-900'
+                  : 'border-sand-200 bg-white text-sand-700 hover:border-brand-200 hover:bg-brand-50/40',
+                cancelled && 'cursor-not-allowed opacity-40',
+              )}
+            >
+              <span className="block font-medium">
+                {start.toLocaleDateString(undefined, {
+                  weekday: 'short',
+                  day: 'numeric',
+                  month: 'short',
+                })}
+              </span>
+              <span className={cn('mt-0.5 block tabular-nums', selected ? 'text-brand-700' : 'text-sand-500')}>
+                {start.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                {almostGone && !cancelled && (
+                  <span className="ml-1.5 font-medium text-accent-600">{event.remaining} left</span>
+                )}
+              </span>
+            </button>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function formatLongDate(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+/* ────────────────────────────────────── Booking widget (desktop rail) */
+
+function BookingWidget({
+  data,
+  selectedEvent,
+  requiresAuth,
+  onToggleSave,
+  onReport,
+  mapUrl,
+  distance,
+}: {
+  data: ExperienceDetail
+  selectedEvent: EventInstance | null
+  requiresAuth: boolean
+  onToggleSave: () => void
+  onReport: () => void
+  mapUrl: string | null
+  distance: string | null
+}) {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-sand-200/80 bg-white shadow-lifted">
+      {/* Price header */}
+      <div className="bg-gradient-to-br from-brand-700 to-brand-800 px-5 py-4">
+        <p className="text-2xl font-bold tracking-tight text-white">
+          {formatPrice(data.price)}
+        </p>
+        {selectedEvent ? (
+          <p className="mt-1 text-sm text-white/70">
+            {formatLongDate(selectedEvent.startTime)}
+          </p>
+        ) : data.nextEvent ? (
+          <p className="mt-1 text-sm text-white/70">
+            Next · {formatWhen(data.nextEvent.startTime)}
+          </p>
+        ) : (
+          <p className="mt-1 text-sm text-white/55">No upcoming dates</p>
+        )}
+      </div>
+
+      {/* Ticket panel or prompt */}
+      <div className="px-5 pt-4 pb-4">
+        {selectedEvent ? (
+          <TicketPanel experienceId={data.id} occurrence={selectedEvent} embedded />
+        ) : (
+          <a href="#reserve">
+            <Button className="w-full" size="lg">See available dates</Button>
+          </a>
+        )}
+
+        <div className="mt-3 flex gap-2">
+          <Button
+            className="flex-1"
+            variant="secondary"
+            size="sm"
+            onClick={onToggleSave}
+            disabled={requiresAuth}
+          >
+            <Bookmark
+              className="size-3.5 shrink-0"
+              fill={data.isSaved ? 'currentColor' : 'none'}
+              aria-hidden
+            />
+            {data.isSaved ? 'Saved' : 'Save'}
+          </Button>
+          <AddToCollection experienceId={data.id} citySlug={data.citySlug} />
+        </div>
+
+        {requiresAuth && (
+          <p className="mt-2 text-center text-xs text-sand-500">
+            <Link to="/signin" className="font-semibold text-brand-700 hover:underline">Sign in</Link>{' '}
+            to save
+          </p>
+        )}
+      </div>
+
+      {/* Venue */}
+      {data.venue && (
+        <div className="border-t border-sand-100 px-5 py-4">
+          <p className="text-[0.6rem] font-bold uppercase tracking-[0.14em] text-sand-400">Venue</p>
+          <p className="mt-1.5 text-sm font-semibold text-sand-950">{data.venue.name}</p>
+          <p className="mt-0.5 text-sm leading-snug text-sand-500">{data.venue.address}</p>
+          {distance && <p className="mt-1 text-xs text-sand-400">{distance} away</p>}
+          {mapUrl && (
+            <a
+              href={mapUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="mt-2.5 inline-flex items-center gap-1.5 text-sm font-medium text-brand-700 hover:underline"
+            >
+              <MapPin className="size-3.5" aria-hidden />
+              View on map
+              <ExternalLink className="size-3 text-brand-500" aria-hidden />
+            </a>
+          )}
+          {/* Accessibility note beside the venue */}
+          {(data.accessibility as { wheelchairAccessible?: boolean })?.wheelchairAccessible != null && (
+            <p className="mt-2 flex items-center gap-1.5 text-xs text-sand-500">
+              <Accessibility className="size-3.5 shrink-0" aria-hidden />
+              {(data.accessibility as { wheelchairAccessible?: boolean }).wheelchairAccessible
+                ? 'Wheelchair accessible'
+                : 'Not wheelchair accessible'}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Publisher */}
+      {data.publisher && (
+        <div className="border-t border-sand-100 px-5 py-4">
+          <p className="text-[0.6rem] font-bold uppercase tracking-[0.14em] text-sand-400">Published by</p>
+          <div className="mt-2">
+            <PublisherCard publisher={data.publisher} />
+          </div>
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={onReport}
+        className="flex w-full items-center justify-center gap-1.5 border-t border-sand-100 py-3 text-xs text-sand-400 transition-colors hover:bg-sand-50 hover:text-sand-700"
+      >
+        <Flag className="size-3.5" aria-hidden />
+        Report a problem
+      </button>
+    </div>
+  )
+}
+
+/* ────────────────────────────────────── Mobile dock */
+
+function MobileDock({
+  data,
+  selectedEvent,
+  requiresAuth,
+  onToggleSave,
+}: {
+  data: ExperienceDetail
+  selectedEvent: EventInstance | null
+  requiresAuth: boolean
+  onToggleSave: () => void
+}) {
+  return (
+    <div className="fixed inset-x-0 bottom-16 z-40 border-t border-sand-100 bg-white/95 shadow-[0_-1px_0_0_rgb(0_0_0/0.04),0_-8px_24px_rgb(0_0_0/0.07)] backdrop-blur-xl sm:bottom-0 lg:hidden">
+      <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-lg font-bold text-sand-950">{formatPrice(data.price)}</p>
+          {selectedEvent && (
+            <p className="truncate text-xs text-sand-500">
+              {formatWhen(selectedEvent.startTime) ?? formatLongDate(selectedEvent.startTime)}
+            </p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onToggleSave}
+          disabled={requiresAuth}
+          aria-label={data.isSaved ? 'Saved' : 'Save'}
+          className={cn(
+            'grid size-11 shrink-0 place-items-center rounded-xl border border-sand-200 transition-colors hover:bg-sand-50 disabled:opacity-40',
+            data.isSaved ? 'border-brand-200 bg-brand-50 text-brand-700' : 'text-sand-600',
+          )}
+        >
+          <Bookmark className="size-5" fill={data.isSaved ? 'currentColor' : 'none'} aria-hidden />
+        </button>
+        {data.upcomingEvents.length > 0 ? (
+          <a href="#reserve" className="shrink-0">
+            <Button size="lg" className="shrink-0 px-6">Reserve</Button>
+          </a>
+        ) : (
+          <Button size="lg" onClick={onToggleSave} disabled={requiresAuth} className="shrink-0">
+            Save
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ────────────────────────────────────── Loading skeleton */
+
 function DetailSkeleton() {
   return (
     <div>
-      <Skeleton className="h-[38vh] min-h-64 w-full rounded-none" />
-      <div className="mx-auto max-w-5xl space-y-4 px-4 pt-6 sm:px-6">
-        <Skeleton className="h-8 w-2/3" />
-        <Skeleton className="h-4 w-1/3" />
-        <Skeleton className="h-32 w-full" />
+      <Skeleton className="h-[62vh] min-h-[22rem] w-full rounded-none" />
+      <div className="mx-auto max-w-6xl space-y-6 px-4 pt-10 sm:px-6">
+        <div className="grid gap-10 lg:grid-cols-[1fr_21rem]">
+          <div className="space-y-6">
+            <Skeleton className="h-6 w-3/4" />
+            <Skeleton className="h-20 w-full rounded-2xl" />
+            <Skeleton className="h-32 w-full rounded-2xl" />
+            <Skeleton className="h-40 w-full rounded-2xl" />
+          </div>
+          <Skeleton className="hidden h-80 w-full rounded-2xl lg:block" />
+        </div>
       </div>
     </div>
   )

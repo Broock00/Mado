@@ -10,7 +10,6 @@
  */
 
 import { Link } from 'react-router-dom'
-import { RepostButton } from '@/features/social/RepostButton'
 import { BadgeCheck, Bookmark, Building2, Clock, MapPin, Sparkles, Star } from 'lucide-react'
 import type { ExperienceSummary } from '@/lib/types'
 import { Badge } from '@/design-system/primitives'
@@ -161,13 +160,6 @@ export function ExperienceCard({ experience, onToggleSave, className, fixedWidth
               />
             )}
           </div>
-        </div>
-
-        {/* Outside the link that wraps the rest of the card: this is a button,
-            and nesting an interactive element inside an anchor makes the whole
-            card fire on every tap. */}
-        <div className="-mx-1 -mb-1 border-t border-sand-200 pt-1">
-          <RepostButton experience={experience} />
         </div>
       </div>
     </article>

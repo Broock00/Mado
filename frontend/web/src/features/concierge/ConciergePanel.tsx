@@ -16,7 +16,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
-import { RepostButton } from '@/features/social/RepostButton'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { MapPin, Send, Sparkles, X } from 'lucide-react'
 import { api } from '@/lib/api'
@@ -300,17 +299,6 @@ export function ConciergePanel() {
                               <p className="mt-1 text-xs text-brand-800">{result.reason}</p>
                             )}
                           </Link>
-                          {/* Outside the link, like on a card: this is a
-                              button, and nesting one inside an anchor makes the
-                              whole row navigate on every tap. */}
-                          <RepostButton
-                            experience={{
-                              id: result.id,
-                              repostCount: result.repostCount,
-                              isReposted: result.isReposted,
-                            }}
-                            className="px-1"
-                          />
                         </li>
                       ))}
                     </ul>
