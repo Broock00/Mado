@@ -268,7 +268,27 @@ export function ComposePage() {
     new Set([effectiveCurrency, ...(cities ?? []).map((c) => c.currency)]),
   ).sort()
 
-  const canSave = form.title.trim().length >= 4 && form.description.trim().length > 0
+  /**
+   * Whether the location is in a state that can actually become a venue.
+   *
+   * One condition, used by both buttons and by the outstanding list, because
+   * the three disagreeing is what produced the bug this replaces: the list
+   * accepted a bare pin, the commit required a typed name, and `canSave`
+   * required neither - so Save on a pin with no name sent no venue at all and
+   * the server refused the post for having no city.
+   */
+  const hasUsableLocation = Boolean(
+    venueId || (picked && (venue.name.trim() || picked.label?.trim())),
+  )
+
+  // A location is needed even to save a draft. `experiences.city_id` is NOT
+  // NULL and the city is derived from the pin, so a post with no location is a
+  // row the database will not accept - and letting Save try anyway produced a
+  // refusal naming a city field the composer deliberately does not have.
+  const canSave =
+    form.title.trim().length >= 4 &&
+    form.description.trim().length > 0 &&
+    hasUsableLocation
 
   /**
    * What is still missing, judged from the screen rather than from the last
@@ -290,12 +310,16 @@ export function ComposePage() {
       missing.push('Add a description of at least 40 characters.')
     if (!form.categorySlug) missing.push('Choose a category so people can find it.')
     if (!venueId && !picked) missing.push('Add a location.')
+    // A pin with nothing to call it cannot become a venue, and a post with no
+    // venue has no city - which the server refuses. Asked for here, where the
+    // field is, rather than surfaced later as a refusal about a city.
+    else if (!hasUsableLocation) missing.push('Give the place a name.')
     if (form.type === 'event' && dates.length === 0)
       missing.push('Add at least one date and time.')
     if (form.priceType !== 'free' && form.priceAmount == null)
       missing.push('Set a price, or mark it as free.')
     return missing
-  }, [form, venueId, picked, dates])
+  }, [form, venueId, picked, hasUsableLocation, dates])
 
   /**
    * Write everything down, in the order the server needs it.
@@ -451,8 +475,16 @@ export function ComposePage() {
 
   // Read at commit time rather than closed over, so a name typed a moment ago
   // is the one that gets used.
+  //
+  // Falls back to whatever the pin already knows itself as. A location chosen
+  // from the place search arrives with a label - "Piassa Roasters" - and making
+  // somebody retype that is friction for no gain. It also closes a hole: the
+  // readiness check accepted a bare pin as a location while this required a
+  // typed name, so a pin with an empty name field sent no venue at all and the
+  // server refused the post for having no city, naming a field the composer
+  // deliberately does not have.
   function venue_name() {
-    return venue.name.trim()
+    return venue.name.trim() || picked?.label?.trim() || ''
   }
 
   if (!user) {
