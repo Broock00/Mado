@@ -86,6 +86,54 @@ class Review(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     author: Mapped[User] = relationship(lazy="selectin")
 
 
+# --- Reposts ------------------------------------------------------------------
+#
+# Sharing somebody else's listing with your own audience.
+#
+# Likes and comments lived here too and were removed: Mado already has reviews,
+# which are a rating and a written opinion, one per person per listing. A like
+# is a weaker version of the rating and a comment is a weaker version of the
+# opinion, and carrying both meant two places to say the same thing, two things
+# to moderate, and a reader having to look in two places to learn what people
+# thought.
+#
+# A repost is not a weaker review. It says "other people should see this", which
+# a review does not say and cannot, so it stays.
+#
+# It hangs off an experience rather than off a "post". Mado has no separate post
+# entity - an experience *is* what a publisher posted - and inventing one so the
+# social layer had something familiar to attach to would duplicate the catalogue.
+
+
+class Repost(Base, UUIDPrimaryKey, Timestamps):
+    """Somebody putting a listing in front of their own audience.
+
+    The optional note is a caption, not a verdict - "the coffee here is the
+    reason to go". Anything longer or more considered belongs in a review, which
+    carries a rating and counts towards the listing's average; this does not.
+    """
+
+    __tablename__ = "reposts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "experience_id", name="uq_repost_user_experience"),
+        Index("ix_reposts_experience", "experience_id"),
+        Index("ix_reposts_user_created", "user_id", "created_at"),
+        {"schema": SCHEMA},
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="CASCADE"), index=True
+    )
+    experience_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("catalog.experiences.id", ondelete="CASCADE"),
+        index=True,
+    )
+    note: Mapped[str | None] = mapped_column(Text, default=None)
+
+    author: Mapped[User] = relationship(lazy="selectin")
+
+
 class ContentReport(Base, UUIDPrimaryKey, Timestamps):
     """A community report against published content (spec BUSINESS-07).
 

@@ -102,6 +102,11 @@ VERIFICATION_LIMIT = Limit(times=5, seconds=86400, scope="verification")
 # handful of places they actually went - not thirty an hour.
 REVIEW_LIMIT = Limit(times=30, seconds=3600, scope="review")
 
+# Reposting. Free to serve and deliberately generous: this is the cheapest
+# thing anybody does, and a limit that bites during normal browsing would be a
+# bug rather than a protection. High enough that only automation reaches it.
+INTERACTION_LIMIT = Limit(times=600, seconds=3600, scope="interaction")
+
 # Image uploads are decoded and re-encoded server-side, which is CPU-bound. This
 # is the one limit protecting a synchronous compute path rather than a spend path.
 UPLOAD_LIMIT = Limit(times=40, seconds=3600, scope="upload")
@@ -112,6 +117,14 @@ UPLOAD_LIMIT = Limit(times=40, seconds=3600, scope="upload")
 # because every miss costs a request to somebody else's service, and
 # OpenStreetMap's operators allow one a second across the whole deployment.
 PLACES_LIMIT = Limit(times=120, seconds=3600, scope="places")
+
+# Autocomplete, which is called while somebody is still typing. Its own limit
+# because it is a different shape of traffic: one search is several requests
+# even after debouncing, so sharing PLACES_LIMIT would let a handful of searches
+# exhaust the allowance for resolving where anybody is. Higher per request and
+# cheaper per request too - Google bills an autocomplete session as one lookup
+# however many keystrokes it took, provided the session token is passed through.
+PLACES_AUTOCOMPLETE_LIMIT = Limit(times=600, seconds=3600, scope="places_autocomplete")
 
 # Geocoding calls a third party that rate limits us in turn - OpenStreetMap asks
 # for roughly one request a second across all of our traffic, so this protects

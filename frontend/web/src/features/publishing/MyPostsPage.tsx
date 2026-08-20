@@ -1,4 +1,4 @@
-/**
+﻿/**
  * "Your posts" — the author's own view.
  *
  * Shows editorial state the public payload deliberately omits: whether something
@@ -17,6 +17,7 @@ import {
   EyeOff,
   PencilLine,
   Plus,
+  Repeat2,
   ShieldAlert,
   Ticket,
   Trash2,
@@ -239,6 +240,16 @@ function PostRow({
             </>
           )}
         </p>
+
+        {/* How it is doing. Read-only here on purpose: a repost button under
+            your own post is an invitation to repost your own work, and the
+            number is the part a publisher actually wants. */}
+        {post.status === 'published' && (
+          <p className="mt-2 flex items-center gap-1 text-xs text-sand-500">
+            <Repeat2 className="size-3.5" aria-hidden />
+            {post.repostCount}
+          </p>
+        )}
 
         {/* The author is told why, not just that. */}
         {withheld && (

@@ -15,6 +15,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+
+import { RepostButton } from '@/features/social/RepostButton'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { MapPin, Send, Sparkles, X } from 'lucide-react'
 import { api } from '@/lib/api'
@@ -285,10 +287,30 @@ export function ConciergePanel() {
                               {result.when && <span>· {result.when}</span>}
                               {result.price && <span>· {result.price}</span>}
                             </div>
+                            {result.publisherType === 'organization' &&
+                              result.publisherName && (
+                                <p className="mt-1 flex items-center gap-1.5 text-xs text-sand-600">
+                                  <span className="line-clamp-1">{result.publisherName}</span>
+                                  <span className="shrink-0 rounded-full bg-sand-200 px-1.5 py-0.5 text-[0.625rem] font-medium uppercase tracking-wide text-sand-600">
+                                    Business
+                                  </span>
+                                </p>
+                              )}
                             {result.reason && (
                               <p className="mt-1 text-xs text-brand-800">{result.reason}</p>
                             )}
                           </Link>
+                          {/* Outside the link, like on a card: this is a
+                              button, and nesting one inside an anchor makes the
+                              whole row navigate on every tap. */}
+                          <RepostButton
+                            experience={{
+                              id: result.id,
+                              repostCount: result.repostCount,
+                              isReposted: result.isReposted,
+                            }}
+                            className="px-1"
+                          />
                         </li>
                       ))}
                     </ul>
