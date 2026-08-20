@@ -54,6 +54,55 @@ export interface PinMapProps {
 /** Addis Ababa. Used only when there is nothing to fit the view to. */
 export const FALLBACK_CENTRE = { latitude: 9.0192, longitude: 38.7525 }
 
+/**
+ * Kinds of place that are an area rather than somewhere you can stand outside.
+ *
+ * Two vocabularies in one set because the providers name things differently -
+ * OpenStreetMap says "city" and "suburb", Google says "locality" and
+ * "sublocality" - and no caller should have to know which one answered.
+ */
+const AREA_KINDS = new Set([
+  'city',
+  'town',
+  'village',
+  'municipality',
+  'hamlet',
+  'suburb',
+  'quarter',
+  'district',
+  'county',
+  'state',
+  'country',
+  'administrative',
+  'locality',
+  'postal_town',
+  'sublocality',
+  'sublocality_level_1',
+  'neighborhood',
+  'neighbourhood',
+  'postal_code',
+  'political',
+  'administrative_area_level_1',
+  'administrative_area_level_2',
+  'administrative_area_level_3',
+])
+
+/**
+ * Whether a pin of this kind stands for a whole area rather than one place.
+ *
+ * What it changes is whether the pin's own label can serve as a venue's name.
+ * For a cafe it can, and asking somebody to retype the name they picked a
+ * second ago is friction for nothing. For a city it cannot: a venue called
+ * "Nairobi" tells an explorer standing in Nairobi nothing at all.
+ *
+ * Takes the kind rather than the pin so this module stays free of a dependency
+ * on `LocationPicker`, which is lazily loaded - importing it here to read one
+ * string would pull the whole map bundle into every page that asks.
+ */
+export function isAreaPick(kind: string | null | undefined): boolean {
+  return Boolean(kind && AREA_KINDS.has(kind.toLowerCase()))
+}
+
 /** Close enough to read street names, which is what confirms a pin is right. */
 export const PLACE_ZOOM = 17
 export const CITY_ZOOM = 13

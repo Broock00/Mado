@@ -231,6 +231,8 @@ async def search(
         "Predictions for a partial query - a country, a city, a neighbourhood, "
         "an address, a landmark, a venue. Returns identifiers and names, never "
         "coordinates: call /places/details for the one that is chosen.\n\n"
+        "Set `citiesOnly` when the question is which city rather than where "
+        "exactly, and a street is not an answer.\n\n"
         "Pass the same `sessionToken` on every keystroke of one search and on "
         "the /places/details call that ends it. Doing so bills the whole search "
         "as a single lookup instead of one per keystroke. Mint a fresh token "
@@ -250,6 +252,11 @@ async def autocomplete(
         alias="sessionToken",
         description="Groups the keystrokes of one search with its details call.",
     ),
+    cities_only: bool = Query(
+        default=False,
+        alias="citiesOnly",
+        description="Narrow the predictions to inhabited places.",
+    ),
 ) -> CollectionEnvelope[SuggestionOut]:
     await rate_limit.check(
         rate_limit.identify(request, None), rate_limit.PLACES_AUTOCOMPLETE_LIMIT
@@ -257,7 +264,11 @@ async def autocomplete(
 
     near = (lat, lng) if lat is not None and lng is not None else None
     found = await places_module.get_provider().autocomplete(
-        q, near=near, limit=limit, session_token=session_token
+        q,
+        near=near,
+        limit=limit,
+        session_token=session_token,
+        cities_only=cities_only,
     )
     return CollectionEnvelope(data=[_suggestion_out(item) for item in found])
 

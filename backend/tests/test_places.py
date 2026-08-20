@@ -90,6 +90,36 @@ BROOKLYN = {
 }
 
 
+# A city and the county sharing its name, which is what the composer's city box
+# has to tell apart. OpenStreetMap tags both `administrative` at the boundary
+# level, so the kind alone does not separate them.
+NAIROBI = {
+    "lat": "-1.2832533",
+    "lon": "36.8172449",
+    "display_name": "Nairobi, Kenya",
+    "name": "Nairobi",
+    "addresstype": "city",
+    "osm_type": "relation",
+    "osm_id": 3492707,
+    "address": {"city": "Nairobi", "country": "Kenya", "country_code": "ke"},
+}
+
+NAIROBI_COUNTY = {
+    "lat": "-1.3031",
+    "lon": "36.8261",
+    "display_name": "Nairobi County, Kenya",
+    "name": "Nairobi County",
+    "addresstype": "administrative",
+    "osm_type": "relation",
+    "osm_id": 3492708,
+    "address": {
+        "county": "Nairobi County",
+        "country": "Kenya",
+        "country_code": "ke",
+    },
+}
+
+
 class TestReadingWhatTheProviderSent:
     def test_the_administrative_chain_is_unpacked(self):
         place = _place_from_nominatim(MANHATTAN)
@@ -412,6 +442,12 @@ class _Recorder:
                 )
                 return Response()
 
+            # Nominatim reaches for the shorthand where Google builds a
+            # request. Recording both means one fixture covers both providers,
+            # rather than a second recorder that could drift from this one.
+            async def get(self, url, *, params=None, headers=None):
+                return await self.request("GET", url, params=params, headers=headers)
+
         return Client()
 
     @property
@@ -654,13 +690,24 @@ class TestReverseGeocodingIsADifferentService:
         assert "locationBias" in calls.last["json"]
         assert "locationRestriction" not in calls.last["json"]
 
-    async def test_autocomplete_restricts_no_type(self, recorder):
+    async def test_autocomplete_restricts_no_type_by_default(self, recorder):
         """The box has to find countries, cities, neighbourhoods, streets,
         landmarks and venues alike. Every restriction is a category somebody
         cannot find."""
         calls = recorder(GOOGLE_AUTOCOMPLETE)
         await GooglePlaces("k").autocomplete("brook")
         assert "includedPrimaryTypes" not in calls.last["json"]
+
+    async def test_cities_only_asks_for_the_collection_not_a_list_of_types(
+        self, recorder
+    ):
+        """What a city is called differs by country - a locality in most of the
+        world, an administrative_area_level_3 in others. A hand-written list is
+        wrong in whichever country nobody tested; `(cities)` is Google's own
+        answer to the same question."""
+        calls = recorder(GOOGLE_AUTOCOMPLETE)
+        await GooglePlaces("k").autocomplete("nair", cities_only=True)
+        assert calls.last["json"]["includedPrimaryTypes"] == ["(cities)"]
 
 
 class TestSuggestions:
@@ -695,6 +742,58 @@ class TestSuggestions:
         provider = GooglePlaces("k")
         await provider.autocomplete("brook", session_token="one")
         await provider.autocomplete("brook", session_token="two")
+        assert len(calls.calls) == 2
+
+
+class TestAskingOnlyForCities:
+    """The composer's city box, where a street is not an answer.
+
+    Off by default everywhere else: a general location box that cannot find a
+    landmark has a category missing. These check the narrowing is real, because
+    a filter that quietly passes everything looks identical to one that works
+    until somebody picks "Nairobi County" and every post files under a name no
+    explorer will search for.
+    """
+
+    async def test_nominatim_asks_its_own_narrowing_first(self, recorder):
+        """Cheaper and better than discarding rows afterwards - it changes what
+        gets ranked, not just what survives."""
+        calls = recorder([NAIROBI])
+        await NominatimPlaces("mado-test", "https://nominatim.test").autocomplete(
+            "nairobi", cities_only=True
+        )
+        assert calls.last["params"]["featureType"] == "settlement"
+
+    async def test_nominatim_asks_for_nothing_when_not_narrowing(self, recorder):
+        calls = recorder([BROOKLYN])
+        await NominatimPlaces("mado-test", "https://nominatim.test").autocomplete("brook")
+        assert "featureType" not in calls.last["params"]
+
+    async def test_a_county_is_dropped_and_the_city_kept(self, recorder):
+        """`featureType` is documented as a hint, and a county comes back
+        through it. Both are called Nairobi and only one is a city."""
+        recorder([NAIROBI_COUNTY, NAIROBI])
+        found = await NominatimPlaces("mado-test", "https://nominatim.test").autocomplete(
+            "nairobi", cities_only=True
+        )
+        assert [item.primary for item in found] == ["Nairobi"]
+
+    async def test_the_same_query_unnarrowed_keeps_both(self, recorder):
+        """The proof that the filter above is the thing doing the work, rather
+        than the fixture happening to contain one row."""
+        recorder([NAIROBI_COUNTY, NAIROBI])
+        found = await NominatimPlaces("mado-test", "https://nominatim.test").autocomplete(
+            "nairobi"
+        )
+        assert len(found) == 2
+
+    async def test_a_narrowed_search_is_cached_apart(self, recorder):
+        """Same query, two different answers. Sharing a cache key would serve
+        the city box whatever the venue box asked for a moment earlier."""
+        calls = recorder([NAIROBI])
+        provider = NominatimPlaces("mado-test", "https://nominatim.test")
+        await provider.autocomplete("nairobi", cities_only=True)
+        await provider.autocomplete("nairobi")
         assert len(calls.calls) == 2
 
 
@@ -789,7 +888,13 @@ class TestNoGeographyIsStored:
         expected = {
             "describe": ["latitude", "longitude"],
             "search": ["query", "near", "limit"],
-            "autocomplete": ["query", "near", "limit", "session_token"],
+            "autocomplete": [
+                "query",
+                "near",
+                "limit",
+                "session_token",
+                "cities_only",
+            ],
             "details": ["place_id", "session_token"],
         }
         for provider in (NominatimPlaces, GooglePlaces, StubPlaces):

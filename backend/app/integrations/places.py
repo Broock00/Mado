@@ -253,6 +253,7 @@ class PlaceProvider(Protocol):
         near: tuple[float, float] | None = None,
         limit: int = 5,
         session_token: str | None = None,
+        cities_only: bool = False,
     ) -> list[Suggestion]:
         """Things somebody might have meant, from a partial query.
 
@@ -260,6 +261,12 @@ class PlaceProvider(Protocol):
         call that ends it. Google bills the group as a single lookup instead of
         one per keystroke, so passing it through is worth roughly an order of
         magnitude on the bill. Providers that do not bill this way ignore it.
+
+        `cities_only` narrows the predictions to inhabited places. Off by
+        default and deliberately so - a general location box that cannot find a
+        street or a landmark is a box with a category missing. It exists for the
+        one question that is genuinely about cities and nothing else: which city
+        a post is filed under, where "Bole Road" is not an answer.
         """
         ...
 
@@ -388,6 +395,32 @@ def _nominatim_place_id(body: dict[str, Any]) -> str | None:
     return f"osm:{osm_type[:1].upper()}{osm_id}"
 
 
+# What OpenStreetMap calls the kinds of place a post can be filed under. Which
+# of these a given settlement is called varies by country and by how the local
+# mappers tagged it, so all of them count - a "town" in one country is a "city"
+# in another with the same population, and picking only "city" would mean whole
+# countries where the box finds nothing.
+_SETTLEMENT_KINDS = frozenset({"city", "town", "village", "municipality", "hamlet"})
+
+
+def _is_settlement(place: Place) -> bool:
+    """Whether this is somewhere people live, rather than an area containing it.
+
+    Read from the kind where OpenStreetMap gave one, and from the address
+    otherwise: a result tagged only `administrative` is still a city if its own
+    address names it as the locality.
+    """
+    kind = (place.kind or "").lower()
+    if kind in _SETTLEMENT_KINDS:
+        return True
+    # Plenty of places carry only the generic `administrative` boundary type,
+    # which a county has too. What separates them is whether the thing is its
+    # own locality: Nairobi is tagged administrative and its address says the
+    # locality is Nairobi, while Nairobi County's address does not.
+    locality = (place.locality or "").strip().lower()
+    return bool(locality) and locality == (place.name or "").strip().lower()
+
+
 class NominatimPlaces:
     """OpenStreetMap. Keyless, and rate limited by its operators."""
 
@@ -426,11 +459,21 @@ class NominatimPlaces:
     async def search(
         self, query: str, *, near: tuple[float, float] | None = None, limit: int = 5
     ) -> list[Place]:
+        return await self._search(query, near=near, limit=limit)
+
+    async def _search(
+        self,
+        query: str,
+        *,
+        near: tuple[float, float] | None = None,
+        limit: int = 5,
+        feature_type: str | None = None,
+    ) -> list[Place]:
         query = query.strip()
         if not query:
             return []
 
-        key = f"s:{query.lower()}:{near}:{limit}"
+        key = f"s:{query.lower()}:{near}:{limit}:{feature_type}"
         cached = _cache.get(key)
         if cached is not None:
             return list(cached)
@@ -441,6 +484,12 @@ class NominatimPlaces:
             "addressdetails": 1,
             "limit": max(1, min(limit, 10)),
         }
+        if feature_type is not None:
+            # Nominatim's own narrowing, which is cheaper and better than
+            # discarding rows after the fact - it changes what is ranked, not
+            # just what survives. Documented as approximate, though, so the
+            # caller filters what comes back as well.
+            params["featureType"] = feature_type
         if near is not None:
             # Bias towards the explorer without excluding anywhere else: someone
             # typing "Brooklyn" in Manhattan means the one next door, and someone
@@ -468,6 +517,7 @@ class NominatimPlaces:
         near: tuple[float, float] | None = None,
         limit: int = 5,
         session_token: str | None = None,
+        cities_only: bool = False,
     ) -> list[Suggestion]:
         """Search results, presented as suggestions.
 
@@ -481,7 +531,19 @@ class NominatimPlaces:
         `session_token` is accepted and ignored: nothing here is billed, so
         there is no session to group.
         """
-        found = await self.search(query, near=near, limit=limit)
+        found = await self._search(
+            query,
+            near=near,
+            limit=limit,
+            feature_type="settlement" if cities_only else None,
+        )
+        if cities_only:
+            # `featureType` is documented as a hint rather than a filter, and a
+            # county or a region does come back through it. Dropping those here
+            # matters more than it looks: the box asks which city, and a row
+            # that answers "Nairobi County" files every post in it under a name
+            # no explorer will ever search for.
+            found = [place for place in found if _is_settlement(place)]
         return [
             Suggestion(
                 place_id=place.place_id or "",
@@ -780,6 +842,7 @@ class GooglePlaces:
         near: tuple[float, float] | None = None,
         limit: int = 5,
         session_token: str | None = None,
+        cities_only: bool = False,
     ) -> list[Suggestion]:
         query = query.strip()
         if not query:
@@ -794,9 +857,22 @@ class GooglePlaces:
             "places:autocomplete",
             {
                 "input": query,
-                # No `includedPrimaryTypes`: the box is meant to find countries,
-                # cities, neighbourhoods, streets, landmarks and venues alike,
-                # and every restriction here is a category somebody cannot find.
+                # No `includedPrimaryTypes` by default: the box is meant to find
+                # countries, cities, neighbourhoods, streets, landmarks and
+                # venues alike, and every restriction here is a category
+                # somebody cannot find.
+                #
+                # `cities_only` is the one caller that wants the opposite - the
+                # box asking which city a post is filed under, where a street is
+                # not an answer. It asks for `(cities)`, Google's own
+                # collection, rather than a list of types: what a city is called
+                # differs by country - a locality in most of the world, an
+                # administrative_area_level_3 in others - and a hand-written
+                # list is wrong in whichever country nobody tested. Somewhere
+                # Google does not class as a city is still reachable through the
+                # unrestricted search under the map, which is the field that
+                # actually decides where the post is.
+                **({"includedPrimaryTypes": ["(cities)"]} if cities_only else {}),
                 "languageCode": self._language,
                 **self._bias(near),
                 **({"sessionToken": session_token} if session_token else {}),
@@ -1157,6 +1233,7 @@ class StubPlaces:
         near: tuple[float, float] | None = None,
         limit: int = 5,
         session_token: str | None = None,
+        cities_only: bool = False,
     ) -> list[Suggestion]:
         return []
 

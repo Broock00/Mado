@@ -28,11 +28,12 @@ import {
 import { ApiError, api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
 import type { PickedLocation } from '@/features/map/LocationPicker'
-import { FALLBACK_CENTRE } from '@/features/map/types'
+import { CityPicker } from '@/features/map/CityPicker'
+import { FALLBACK_CENTRE, isAreaPick } from '@/features/map/types'
 import { Badge, Button, Card, Input } from '@/design-system/primitives'
 import { toMajorInput, toMinor } from '@/lib/money'
 import { cn } from '@/lib/utils'
-import type { CreatePostInput, OwnPost, SuitabilitySlug } from '@/lib/types'
+import type { CreatePostInput, OwnPost, Place, SuitabilitySlug } from '@/lib/types'
 import { SUITABILITY_GROUPS, suitabilityLabel } from '@/lib/suitability'
 import { TicketPlanEditor } from '@/features/commerce/TicketPlanEditor'
 import type { DraftTicket } from '@/features/commerce/TicketPlanEditor'
@@ -269,6 +270,15 @@ export function ComposePage() {
   ).sort()
 
   /**
+   * Whether the pin stands for a whole city rather than one address.
+   *
+   * True right after a city is chosen above and false again the moment the pin
+   * is moved to a building. The only thing it changes is whether the pin can
+   * name the venue for us.
+   */
+  const cityOnly = isAreaPick(picked?.kind)
+
+  /**
    * Whether the location is in a state that can actually become a venue.
    *
    * One condition, used by both buttons and by the outstanding list, because
@@ -278,7 +288,7 @@ export function ComposePage() {
    * the server refused the post for having no city.
    */
   const hasUsableLocation = Boolean(
-    venueId || (picked && (venue.name.trim() || picked.label?.trim())),
+    venueId || (picked && (venue.name.trim() || (!cityOnly && picked.label?.trim()))),
   )
 
   // A location is needed even to save a draft. `experiences.city_id` is NOT
@@ -483,8 +493,38 @@ export function ComposePage() {
   // typed name, so a pin with an empty name field sent no venue at all and the
   // server refused the post for having no city, naming a field the composer
   // deliberately does not have.
+  /**
+   * A city chosen from the place list becomes the pin.
+   *
+   * Deliberately the same state a tap on the map produces, rather than a second
+   * field holding a city name of its own. A client-named city would let two
+   * venues on the same street file under different ones, so the server works the
+   * city out by reverse-geocoding whatever coordinates arrive - and the way to
+   * tell it a city is therefore to put the pin in that city. Moving the pin
+   * afterwards refines the answer; the city follows it.
+   */
+  function chooseCity(place: Place) {
+    setPicked({
+      latitude: place.latitude,
+      longitude: place.longitude,
+      label: place.label,
+      // The identifier of a city, which is not the identifier of the venue this
+      // is about to become. Saving it would record the wrong place against the
+      // row and make two venues in the same city look like the same address.
+      placeId: null,
+      area: place.area || place.label,
+      currency: place.currency ?? null,
+      kind: place.kind ?? null,
+      attributions: place.attributions ?? [],
+    })
+  }
+
   function venue_name() {
-    return venue.name.trim() || picked?.label?.trim() || ''
+    if (venue.name.trim()) return venue.name.trim()
+    // Never for a city: "Nairobi" is where the venue is, not what it is called,
+    // and a venue row named after its own city is useless to everybody who
+    // reads it afterwards.
+    return cityOnly ? '' : picked?.label?.trim() || ''
   }
 
   if (!user) {
@@ -640,11 +680,11 @@ export function ComposePage() {
             onApply={(patch) => setForm((current) => ({ ...current, ...patch }))}
           />
 
-          {/* No city field. It used to be a dropdown of the ten cities somebody
-              had typed into a table, which was both a question the publisher
-              should not have had to answer and a ceiling on where the platform
-              could be used at all. The city is now worked out from where the pin
-              is, and shown back under the map as confirmation. */}
+          {/* The city is asked under "Where is it?", next to the map that
+              answers it, rather than up here among the words. It used to be a
+              dropdown of the ten cities somebody had typed into a table, which
+              was a ceiling on where the platform could be used; it is now the
+              place provider's list, so every city on earth is in it. */}
           <div>
             <div>
               <label htmlFor="category" className="mb-1.5 block text-sm font-medium text-sand-700">
@@ -680,6 +720,18 @@ export function ComposePage() {
             </p>
           ) : (
             <>
+              {/* Above the map, because it is the coarse answer somebody
+                  already knows and the map is the fine one they are about to
+                  give. Choosing a city moves the pin there, so the map opens on
+                  the right place instead of wherever the explorer happens to
+                  be - which is what a publisher adding a venue in another city
+                  had to pan across a continent to fix. */}
+              <CityPicker
+                value={picked?.area ?? null}
+                centre={mapCentre}
+                onChange={chooseCity}
+              />
+
               <Input
                 value={venue.name}
                 onChange={(e) => setVenue({ ...venue, name: e.target.value })}

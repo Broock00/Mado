@@ -166,10 +166,25 @@ scoping key, and anything that reintroduces it as one is a regression.
 **A city is a consequence, never a precondition.** `app/domains/catalog/cities.py`
 materialises the row from wherever a pin was dropped: the venue's coordinates are
 reverse-geocoded server-side, and the city is found-or-created from the result.
-`city_slug` is therefore optional on venue and experience creation, and the
-composer no longer asks — it used to offer a dropdown of the ten cities somebody
-had typed in, which was both a question the publisher should not have had to
-answer and a ceiling on where the platform could be used at all.
+`city_slug` is therefore optional on venue and experience creation.
+
+The composer's city field is a **place search, not a dropdown**. The dropdown it
+replaced listed the ten cities somebody had typed into a table, which was a
+ceiling on where the platform could be used at all; the field asks
+`/places/autocomplete?citiesOnly=true`, so every inhabited place on earth is in
+it and none of them needs a row first. `cities_only` is the only caller that
+narrows those predictions — everywhere else a restriction is a category somebody
+cannot find, which is why it is a parameter and not the default. Google gets
+`includedPrimaryTypes: ["(cities)"]`, its own collection rather than a
+hand-written list of types, because what a city is called differs by country;
+Nominatim gets `featureType=settlement` and its results filtered again, since
+that parameter is a hint and a county comes back through it.
+
+Choosing a city **sets the pin to it** rather than sending a city name — the
+coordinates still decide, and the map moves there so the publisher can refine.
+A pin standing for a city is marked as such (`isAreaPick` in
+`features/map/types.ts`) and cannot name the venue: falling back to its label
+would create a venue called "Nairobi".
 
 Three rules that path depends on:
 

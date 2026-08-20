@@ -1016,11 +1016,15 @@ export const api = {
    *
    * Pass the same `sessionToken` on every keystroke of one search and on the
    * `placeDetails` call that ends it - see `newPlaceSessionToken`.
+   *
+   * `citiesOnly` narrows the predictions to inhabited places, for a box asking
+   * which city rather than where exactly. Leave it off everywhere else: a
+   * location box that cannot find a landmark has a category missing.
    */
   autocompletePlaces: (
     q: string,
     near?: { lat: number; lng: number } | null,
-    options: { limit?: number; sessionToken?: string } = {},
+    options: { limit?: number; sessionToken?: string; citiesOnly?: boolean } = {},
   ) =>
     request<CollectionEnvelope<PlaceSuggestion>>(
       `/api/v1/places/autocomplete${query({
@@ -1029,6 +1033,9 @@ export const api = {
         lng: near?.lng,
         limit: options.limit ?? 6,
         sessionToken: options.sessionToken,
+        // Omitted rather than sent as false, so the default query string stays
+        // the one every other caller already produces.
+        citiesOnly: options.citiesOnly ? true : undefined,
       })}`,
     ).then((r) => r.data),
 

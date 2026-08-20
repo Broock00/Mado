@@ -60,6 +60,13 @@ export interface PickedLocation {
    */
   area?: string | null
   /**
+   * What the provider says this is - "locality", "restaurant", "route". Carried
+   * because a pin standing for a whole city is not the same thing as a pin on a
+   * building, and only one of them has a name that could be a venue's: falling
+   * back to the label of a city pick would create a venue called "Nairobi".
+   */
+  kind?: string | null
+  /**
    * The currency in official use where this is, so a post is priced in the money
    * of wherever it actually is rather than of whichever city a developer had
    * typed in.
@@ -121,6 +128,7 @@ export function LocationPicker({
         placeId: string
         area: string | null
         currency: string | null
+        kind: string | null
         attributions: string[]
       },
     ) => {
@@ -135,6 +143,7 @@ export function LocationPicker({
         placeId: known?.placeId ?? null,
         area: known?.area ?? null,
         currency: known?.currency ?? null,
+        kind: known?.kind ?? null,
         attributions: known?.attributions ?? [],
       })
       // The map follows `value`, so reporting the coordinates has already moved
@@ -162,6 +171,9 @@ export function LocationPicker({
           placeId: null,
           area: found?.area ?? null,
           currency: found?.currency ?? null,
+          // A tap is a point on a building, whatever the geocoder called the
+          // feature it landed in - so it is never treated as an area pick.
+          kind: null,
           attributions: found?.attributions ?? [],
         })
       } catch {
@@ -259,6 +271,7 @@ export function LocationPicker({
         placeId: found.placeId ?? suggestion.placeId,
         area: found.area || null,
         currency: found.currency || null,
+        kind: found.kind ?? null,
         attributions: found.attributions ?? [],
       })
     } catch {
