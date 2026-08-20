@@ -7,9 +7,18 @@
  */
 
 import type {
+  AccountTypeState,
   ApiErrorBody,
+  Business,
+  BusinessInvitation,
+  BusinessMember,
+  BusinessRole,
+  CreateBusinessInput,
   CreatePostInput,
   CreateVenueInput,
+  PublicBusiness,
+  PublishingIdentity,
+  Reaction,
   OwnPost,
   Publisher,
   ReportReason,
@@ -67,6 +76,7 @@ import type {
   PlanRequestInput,
   PrivacySettings,
   Place,
+  PlaceSuggestion,
   LocationContext,
   Sdk,
   Ticketing,
@@ -271,6 +281,26 @@ export interface DiscoveryParams {
   limit?: number
 }
 
+/**
+ * A token that groups one search.
+ *
+ * Google bills autocomplete per request and place details per lookup, but a
+ * session token passed through the keystrokes *and* the details call collapses
+ * the whole search into one billed lookup. So: mint one when a location box
+ * opens, pass it to every `autocompletePlaces` call, pass it to the
+ * `placeDetails` call for whatever is chosen, then throw it away. Reusing one
+ * afterwards silently loses the grouping rather than failing, which is why this
+ * returns a fresh value every time and there is nowhere to cache one.
+ *
+ * `randomUUID` needs a secure context, which every deployment of this app is
+ * and a bare-IP development server is not - hence the fallback. The value only
+ * has to be unique, not unguessable: it groups billing, it authorises nothing.
+ */
+export function newPlaceSessionToken(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+}
+
 export const api = {
   // ------------------------------------------------------------- discovery
   canvas: (params: DiscoveryParams) =>
@@ -461,6 +491,116 @@ export const api = {
 
   revokeSession: (sessionId: string) =>
     request<void>(`/api/v1/auth/sessions/${sessionId}`, { method: 'DELETE' }),
+
+  // --------------------------------------------------------------- social
+  //
+  // Repost is a toggle: the same call adds or removes, and returns the settled
+  // state plus the new count so the button never has to guess.
+  //
+  // Likes and comments were here and were removed - reviews already carry a
+  // rating and a written opinion.
+  toggleRepost: (experienceId: string, note?: string | null) =>
+    request<Envelope<Reaction>>(`/api/v1/experiences/${experienceId}/repost`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note: note ?? null }),
+    }).then((r) => r.data),
+
+  // ----------------------------------------------------------- businesses
+  //
+  // A business is an organization publisher the account owns. Creating one does
+  // not replace the personal profile - `myPublisher` keeps answering afterwards.
+  businessRoles: () =>
+    request<CollectionEnvelope<BusinessRole>>('/api/v1/businesses/roles').then((r) => r.data),
+
+  accountType: () =>
+    request<Envelope<AccountTypeState>>('/api/v1/me/account-type').then((r) => r.data),
+
+  chooseIndividual: () =>
+    request<Envelope<AccountTypeState>>('/api/v1/me/account-type/individual', {
+      method: 'POST',
+    }).then((r) => r.data),
+
+  /** One way, and once. The account becomes the business. */
+  becomeBusiness: (input: CreateBusinessInput) =>
+    request<Envelope<AccountTypeState>>('/api/v1/me/account-type/business', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }).then((r) => r.data),
+
+  publishingIdentities: () =>
+    request<CollectionEnvelope<PublishingIdentity>>('/api/v1/me/publishing-identities').then(
+      (r) => r.data,
+    ),
+
+  business: (businessId: string) =>
+    request<Envelope<Business>>(`/api/v1/businesses/${businessId}`).then((r) => r.data),
+
+  /** Public: a shared link has to work for somebody who has never signed in. */
+  businessBySlug: (slug: string) =>
+    request<Envelope<PublicBusiness>>(`/api/v1/businesses/by-slug/${slug}`).then(
+      (r) => r.data,
+    ),
+
+  updateBusiness: (businessId: string, changes: Partial<CreateBusinessInput>) =>
+    request<Envelope<Business>>(`/api/v1/businesses/${businessId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(changes),
+    }).then((r) => r.data),
+
+  /**
+   * What the caller may do here, so the interface can hide what they cannot.
+   * A convenience only — every action is checked again server-side.
+   */
+  businessPermissions: (businessId: string) =>
+    request<Envelope<string[]>>(`/api/v1/businesses/${businessId}/permissions`).then(
+      (r) => r.data,
+    ),
+
+  businessMembers: (businessId: string) =>
+    request<CollectionEnvelope<BusinessMember>>(
+      `/api/v1/businesses/${businessId}/members`,
+    ).then((r) => r.data),
+
+  inviteBusinessMember: (businessId: string, email: string, role: string) =>
+    request<Envelope<BusinessMember>>(`/api/v1/businesses/${businessId}/members`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, role }),
+    }).then((r) => r.data),
+
+  changeBusinessMemberRole: (businessId: string, memberId: string, role: string) =>
+    request<Envelope<BusinessMember>>(
+      `/api/v1/businesses/${businessId}/members/${memberId}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role }),
+      },
+    ).then((r) => r.data),
+
+  removeBusinessMember: (businessId: string, memberId: string) =>
+    request<void>(`/api/v1/businesses/${businessId}/members/${memberId}`, {
+      method: 'DELETE',
+    }),
+
+  myBusinessInvitations: () =>
+    request<CollectionEnvelope<BusinessInvitation>>('/api/v1/me/business-invitations').then(
+      (r) => r.data,
+    ),
+
+  acceptBusinessInvitation: (memberId: string) =>
+    request<Envelope<BusinessMember>>(
+      `/api/v1/me/business-invitations/${memberId}/accept`,
+      { method: 'POST' },
+    ).then((r) => r.data),
+
+  declineBusinessInvitation: (memberId: string) =>
+    request<void>(`/api/v1/me/business-invitations/${memberId}/decline`, {
+      method: 'POST',
+    }),
 
   // --------------------------------------------------------- publishing
   myPublisher: () =>
@@ -869,6 +1009,33 @@ export const api = {
   searchPlaces: (q: string, near?: { lat: number; lng: number } | null, limit = 6) =>
     request<CollectionEnvelope<Place>>(
       `/api/v1/places/search${query({ q, lat: near?.lat, lng: near?.lng, limit })}`,
+    ).then((r) => r.data),
+
+  /**
+   * What somebody might be typing.
+   *
+   * Pass the same `sessionToken` on every keystroke of one search and on the
+   * `placeDetails` call that ends it - see `newPlaceSessionToken`.
+   */
+  autocompletePlaces: (
+    q: string,
+    near?: { lat: number; lng: number } | null,
+    options: { limit?: number; sessionToken?: string } = {},
+  ) =>
+    request<CollectionEnvelope<PlaceSuggestion>>(
+      `/api/v1/places/autocomplete${query({
+        q,
+        lat: near?.lat,
+        lng: near?.lng,
+        limit: options.limit ?? 6,
+        sessionToken: options.sessionToken,
+      })}`,
+    ).then((r) => r.data),
+
+  /** Resolve a chosen suggestion into a place with coordinates. */
+  placeDetails: (placeId: string, sessionToken?: string) =>
+    request<Envelope<LocationContext>>(
+      `/api/v1/places/details${query({ placeId, sessionToken })}`,
     ).then((r) => r.data),
 
   // -------------------------------------------------------------- commerce

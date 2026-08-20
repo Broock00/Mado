@@ -20,7 +20,15 @@ from app.domains.catalog import repository as catalog_repo
 from app.domains.catalog.repository import Area
 from app.domains.discovery.ranking import RankingContext
 from app.domains.explorer.models import Itinerary, ItineraryStop
-from app.domains.explorer.planning import Plan, PlanRequest, build_plan
+from app.domains.explorer.planning import (
+    Plan,
+    PlanRequest,
+    Trip,
+    TripRequest,
+    build_plan,
+    build_trip,
+)
+from app.integrations import weather
 
 logger = get_logger("mado.planning.service")
 
@@ -43,6 +51,7 @@ class PlanningService:
         candidates = await catalog_repo.query_experiences(
             self.session,
             area=Area(city_slug=request.city_slug) if request.city_slug else None,
+            required_suitability=request.required_suitability,
             limit=PLANNING_POOL,
         )
         plan = build_plan(candidates, request, ctx)
@@ -55,6 +64,47 @@ class PlanningService:
             unmet=len(plan.unmet),
         )
         return plan
+
+    async def plan_trip(self, request: TripRequest, ctx: RankingContext) -> Trip:
+        """Build a multi-day trip without saving it.
+
+        The forecast is fetched once for the whole stay rather than per day: it
+        is one request that returns every day the provider can see, and asking
+        per day would be five calls for the same response. Days past the horizon
+        are simply absent from the map, which is what lets the planner tell the
+        difference between "dry" and "not knowable yet".
+        """
+        candidates = await catalog_repo.query_experiences(
+            self.session,
+            area=Area(city_slug=request.city_slug) if request.city_slug else None,
+            required_suitability=request.required_suitability,
+            # A whole stay draws from this pool for every day, so it has to be
+            # deeper than a single evening's - otherwise day four is planned from
+            # whatever three days of de-duplication left behind.
+            limit=PLANNING_POOL * 2,
+        )
+
+        forecast = await weather.forecast_covering(
+            request.latitude,
+            request.longitude,
+            start=request.start,
+            end=request.end,
+        )
+        weather_by_day = (
+            {day.day: day for day in forecast.days} if forecast is not None else {}
+        )
+
+        trip = build_trip(candidates, request, ctx, weather_by_day=weather_by_day)
+        logger.info(
+            "trip_built",
+            city=request.city_slug,
+            days=len(trip.days),
+            planned_days=trip.planned_days,
+            candidates=len(candidates),
+            forecast_days=len(weather_by_day),
+            unmet=len(trip.unmet),
+        )
+        return trip
 
     async def save(
         self,

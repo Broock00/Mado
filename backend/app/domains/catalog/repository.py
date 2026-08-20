@@ -14,8 +14,9 @@ from datetime import datetime
 from geoalchemy2 import Geography
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
+from app.domains.catalog import suitability
 from app.domains.catalog.models import (
     MODERATION_APPROVED,
     MODERATION_PENDING,
@@ -369,6 +370,51 @@ def scope_to_area(stmt: Select, area: Area | None) -> Select:
     return stmt.join(City, Experience.city_id == City.id).where(City.slug == area.city_slug)
 
 
+def require_suitability(stmt: Select, required: list[str] | None) -> Select:
+    """Keep only listings that have actually claimed everything in `required`.
+
+    Each requirement is satisfied by the experience's own claims **or** its
+    venue's, so "somewhere with a play area" finds a puppet show in a building
+    that has one. That is an OR across two columns per requirement, ANDed across
+    requirements - which is why this is built as a loop rather than one array
+    containment check.
+
+    The join to `Venue` is an outer join, and it has to be. An inner join would
+    silently drop every listing without a venue, so a requirement the experience
+    itself satisfies would exclude it for having no building - and a walking tour
+    has no building.
+
+    **Unknown is excluded here, deliberately.** A listing that has claimed
+    nothing is not returned for a requirement, because this function is only ever
+    called for constraints the explorer stated as requirements rather than
+    preferences. Somewhere that might be step-free is not an answer to somebody
+    who cannot use stairs; ranking them lower is not enough, because the top of a
+    thin result is still the top.
+    """
+    wanted = suitability.normalise(required)
+    if not wanted:
+        return stmt
+
+    # Aliased so this composes with a caller that has already joined Venue for
+    # geography - `scope_to_area` does exactly that for a box or a radius, and a
+    # second unaliased join to the same table is a SQL error.
+    venue = aliased(Venue)
+    stmt = stmt.outerjoin(venue, Experience.venue_id == venue.id)
+
+    for slug in wanted:
+        # Anything that implies the requirement satisfies it: a vegan kitchen
+        # answers a request for vegetarian food, and a query that did not know
+        # this would discard the best match it had.
+        satisfying = sorted(suitability.expand([slug]))
+        stmt = stmt.where(
+            or_(
+                Experience.suitability.overlap(satisfying),
+                venue.facilities.overlap(satisfying),
+            )
+        )
+    return stmt
+
+
 async def query_experiences(
     session: AsyncSession,
     *,
@@ -378,6 +424,7 @@ async def query_experiences(
     experience_type: str | None = None,
     free_only: bool = False,
     indoor: bool | None = None,
+    required_suitability: list[str] | None = None,
     starts_between: tuple[datetime, datetime] | None = None,
     limit: int = 60,
 ) -> list[Experience]:
@@ -396,6 +443,8 @@ async def query_experiences(
         stmt = stmt.where(Experience.price_type == "free")
     if indoor is not None:
         stmt = stmt.where(Experience.is_indoor.is_(indoor))
+
+    stmt = require_suitability(stmt, required_suitability)
 
     if starts_between is not None:
         start, end = starts_between

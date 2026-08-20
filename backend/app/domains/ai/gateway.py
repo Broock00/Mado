@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +28,7 @@ from app.core.config import get_settings
 from app.core.errors import NotFoundError
 from app.core.logging import get_logger
 from app.domains.ai import intents, refinement, tools
+from app.domains.ai import memory as ai_memory
 from app.domains.ai.memory import MemoryService, render_for_prompt
 from app.domains.ai.models import Conversation, Message, UserMemory
 from app.domains.ai.prompts import (
@@ -35,10 +37,12 @@ from app.domains.ai.prompts import (
     build_context_notes,
 )
 from app.domains.ai.understanding import understand
+from app.domains.catalog import localisation, locate
 from app.domains.catalog import repository as catalog_repo
 from app.domains.catalog.repository import Area
 from app.domains.discovery.ranking import RankingContext
 from app.domains.explorer.planning import PlanRequest
+from app.integrations import timezones, weather
 from app.integrations.ai_provider import GenerationRequest, get_provider
 
 logger = get_logger("mado.ai.gateway")
@@ -50,6 +54,91 @@ settings = get_settings()
 HISTORY_TURNS = 6
 
 MAX_RESULTS_IN_CONTEXT = 8
+
+# How far ahead the forecast is offered when the explorer named no time. Enough
+# to cover "this weekend" and "in a few days", short enough that the prompt does
+# not carry a fortnight of weather nobody asked about.
+DEFAULT_FORECAST_DAYS = 7
+
+
+@dataclass(slots=True)
+class ConversationPlace:
+    """Somewhere the conversation is about, held across turns.
+
+    Persisted on `conversation.state` so a follow-up inherits it. Without that,
+    "we are going to New York next week, any music nights?" followed by "how is
+    the weather there this weekend?" answers the second question about the
+    explorer's own city - which is exactly what it did, and reads as the
+    assistant having forgotten the only thing that mattered.
+
+    Stored as plain values rather than an `Area`, because it goes through JSON
+    and a tuple comes back as a list.
+    """
+
+    label: str
+    latitude: float
+    longitude: float
+    timezone: str
+    currency: str
+    city_slug: str | None = None
+    country_code: str | None = None
+    kind: str | None = None
+    radius_km: float | None = None
+    bounding_box: tuple[float, float, float, float] | None = None
+    # The country code *as a scoping key*, set only when the explorer named a
+    # whole country. Distinct from `country_code`, which says which country the
+    # place is in - Brooklyn is in US and is not scoped by it.
+    area_country_code: str | None = None
+
+    @property
+    def area(self) -> Area:
+        return Area(
+            latitude=self.latitude,
+            longitude=self.longitude,
+            radius_km=self.radius_km,
+            bounding_box=self.bounding_box,
+            country_code=self.area_country_code,
+            city_slug=self.city_slug,
+        )
+
+    @property
+    def scope(self) -> tuple[Area, str | None, str, str, str]:
+        """`(area, city_slug, label, timezone, currency)` in one go."""
+        return self.area, self.city_slug, self.label, self.timezone, self.currency
+
+    def as_state(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "timezone": self.timezone,
+            "currency": self.currency,
+            "citySlug": self.city_slug,
+            "countryCode": self.country_code,
+            "kind": self.kind,
+            "radiusKm": self.radius_km,
+            "boundingBox": list(self.bounding_box) if self.bounding_box else None,
+            "areaCountryCode": self.area_country_code,
+        }
+
+    @classmethod
+    def from_state(cls, state: dict[str, Any]) -> ConversationPlace:
+        box = state.get("boundingBox")
+        return cls(
+            label=state.get("label") or "there",
+            latitude=float(state["latitude"]),
+            longitude=float(state["longitude"]),
+            timezone=state.get("timezone") or "UTC",
+            currency=state.get("currency") or "",
+            city_slug=state.get("citySlug"),
+            country_code=state.get("countryCode"),
+            kind=state.get("kind"),
+            radius_km=state.get("radiusKm"),
+            # Back to a tuple: `Area` is a frozen slots dataclass compared by
+            # value, and a list here would make two identical areas unequal.
+            bounding_box=tuple(box) if box and len(box) == 4 else None,
+            area_country_code=state.get("areaCountryCode"),
+        )
 
 
 @dataclass(slots=True)
@@ -232,6 +321,10 @@ class AIGateway:
         area: Area | None,
         city_name: str,
         timezone: str,
+        currency: str = "",
+        # Set when the explorer picked a place in the interface, which outranks a
+        # destination they mentioned earlier in the conversation.
+        place_label: str | None = None,
         preferences: dict | None = None,
         user_id: uuid.UUID | None = None,
         privacy: dict | None = None,
@@ -259,6 +352,38 @@ class AIGateway:
         )
         classification = reading.as_classification()
 
+        # 1b. Work out where the question is about, which is not always where the
+        # explorer is standing.
+        #
+        # Before this, the area came only from the client - the device's position
+        # or the place picker - so a message could not move it. "Next week we are
+        # going to New York, is there any music night there" was answered with
+        # Azmari Night in Kazanchis, and the substitution guard then said so out
+        # loud: honest about the failure, and still a failure, because the
+        # question was perfectly answerable.
+        place = await self._locate(
+            reading=reading,
+            conversation=conversation,
+            ctx=ctx,
+            chosen_label=place_label,
+        )
+        if place is not None:
+            area, city_slug, city_name, timezone, currency = place.scope
+            ctx = replace(
+                ctx,
+                # The destination's coordinates, not the explorer's. Weather,
+                # proximity ordering and "what is near" all read these, and all
+                # three are about the place being asked about.
+                latitude=place.latitude,
+                longitude=place.longitude,
+                # ...but they are not standing there, so the reply must not offer
+                # distances "from you". Without this the assistant cheerfully
+                # told somebody in Addis that a bar was 1.6 km away from them.
+                located_remotely=True,
+                timezone=timezone,
+                currency=currency or ctx.currency,
+            )
+
         # 2. Recall before retrieval. What we know about this explorer can change
         # which results are worth fetching, so it has to be available to the tools
         # and not only to the phrasing step.
@@ -266,6 +391,17 @@ class AIGateway:
         if user_id is not None:
             memory_service = MemoryService(self.session)
             memories = await memory_service.recall(user_id, text, privacy=privacy)
+
+        # 2b. Fold this turn's reading and what we remember into the context the
+        # tools will run against.
+        #
+        # It has to happen here, between comprehension and retrieval, because the
+        # requirements are not knowable before the message is read and are useless
+        # after the search has run. This is the step whose absence made the whole
+        # feature decorative: constraints were extracted, described to the model in
+        # prose, and never reached a query - so the concierge would recommend a
+        # steakhouse and add that it was a shame about the vegan thing.
+        ctx = await self._contextualise(ctx, reading=reading, memories=memories)
 
         # 3-5. Plan and execute tools. Facts are gathered before generation.
         plan_diff = None
@@ -538,6 +674,173 @@ class AIGateway:
         )
         return tool_calls, results, plan, diff
 
+    async def _locate(
+        self,
+        *,
+        reading,
+        conversation: Conversation,
+        ctx: RankingContext,
+        chosen_label: str | None,
+    ) -> ConversationPlace | None:
+        """Where this turn is about, when it is not where the explorer is.
+
+        Precedence, and each step earns its place:
+
+        1. **A destination named in this message.** The most explicit thing
+           anybody can do is say where they mean.
+        2. **A place chosen in the interface.** Someone who moved the picker has
+           acted deliberately, and that should beat something they said three
+           turns ago.
+        3. **A destination named earlier in this conversation.** "Any music
+           nights?" after "we are going to New York" is still about New York, and
+           making people restate the city every message is what makes an
+           assistant feel like a search box.
+        4. Nothing - the caller's own area stands, which is the ordinary case.
+
+        Returns None for 4, so the caller leaves everything as it was.
+        """
+        named = (reading.entities or {}).get("destination")
+        remembered = (conversation.state or {}).get("place")
+
+        if not named:
+            # A deliberate pick in the interface outranks a remembered mention.
+            if chosen_label:
+                return None
+            if not remembered:
+                return None
+            # Rehydrated rather than re-resolved: the same conversation asking a
+            # second question about New York should not spend a second place
+            # lookup, and the answer cannot have changed.
+            return ConversationPlace.from_state(remembered)
+
+        near = (
+            (ctx.latitude, ctx.longitude)
+            if ctx.latitude is not None and ctx.longitude is not None
+            else None
+        )
+        # `near` biases and never restricts, which is what lets "Bole" find the
+        # neighbourhood in the explorer's own city while "New York" still reaches
+        # another continent.
+        resolved = await locate.resolve_place(named, near=near)
+        if resolved is None:
+            logger.info("destination_unresolved", destination=named)
+            return None
+
+        zone = await timezones.get_provider().zone_for(
+            resolved.latitude, resolved.longitude, country_code=resolved.country_code
+        )
+        currency = localisation.currency_for_country(resolved.country_code)
+
+        # A city row, only if one already exists. Planning needs a slug, and
+        # `city_slug` is what stored itineraries key on - but a question about
+        # somewhere must never *create* a city. A city is a consequence of
+        # somebody publishing there, never of somebody asking about it.
+        city_slug, _ = await catalog_repo.resolve_city_slug(
+            self.session, city=None, latitude=resolved.latitude, longitude=resolved.longitude
+        )
+
+        place = ConversationPlace(
+            label=resolved.label,
+            latitude=resolved.latitude,
+            longitude=resolved.longitude,
+            timezone=zone or "UTC",
+            currency=currency,
+            city_slug=city_slug,
+            country_code=resolved.country_code,
+            kind=resolved.kind,
+            radius_km=resolved.area.radius_km,
+            bounding_box=resolved.area.bounding_box,
+            area_country_code=resolved.area.country_code,
+        )
+
+        state = dict(conversation.state or {})
+        state["place"] = place.as_state()
+        conversation.state = state
+
+        logger.info(
+            "destination_resolved",
+            asked=named,
+            resolved=place.label,
+            timezone=place.timezone,
+            city_slug=place.city_slug,
+        )
+        return place
+
+    async def _contextualise(
+        self,
+        ctx: RankingContext,
+        *,
+        reading,
+        memories: list[UserMemory],
+    ) -> RankingContext:
+        """Add this turn's constraints, remembered needs and the forecast.
+
+        Requirements come from two places and both matter. What the explorer just
+        said carries the group they are with today - "my father is vegan" - while
+        what the platform remembers carries their own standing needs, which they
+        should not have to restate every turn. They are unioned rather than
+        either winning: a nut allergy on file does not stop applying because this
+        message was about a play area.
+        """
+        constraints = reading.constraints or {}
+
+        required = set(constraints.get("required_suitability") or [])
+        required |= set(ai_memory.requirements_from(memories))
+        preferred = set(constraints.get("preferred_suitability") or [])
+
+        # A stated indoor preference is a weather-shaped request, so it is honoured
+        # the same way the forecast is rather than as a suitability claim - there
+        # is no slug for "somewhere warm", and the ranker already knows how to
+        # prefer indoors.
+        wants_indoors = bool(constraints.get("indoor_preferred"))
+
+        window = reading.time_window
+        start = (window.start if window else ctx.now).date()
+        end = (window.end if window else ctx.now).date()
+
+        # Without a stated window, show a few days rather than only today.
+        #
+        # "How is the weather in New York this weekend" does not always resolve
+        # to a window - it names no event and often reads as GENERAL_ASSISTANCE -
+        # and passing today alone made the assistant answer "the forecast doesn't
+        # reach as far as the weekend". That was false: the provider had ten days
+        # and nobody had asked it for them. An answer that declines is only
+        # honest when the thing genuinely is not known.
+        end = max(end, start + timedelta(days=DEFAULT_FORECAST_DAYS - 1))
+
+        forecast = await weather.forecast_for(ctx.latitude, ctx.longitude, days=10)
+        day = forecast.on(start) if forecast is not None else None
+        # The whole window, not only its first day. "How is the weather this
+        # weekend" is a question about two days, and answering it with Saturday
+        # alone is answering half of it - while `weather` stays single-day
+        # because ranking scores one listing against one day.
+        span = forecast.between(start, end) if forecast is not None else []
+
+        return replace(
+            ctx,
+            required_suitability=ctx.required_suitability | required,
+            preferred_suitability=ctx.preferred_suitability | preferred,
+            weather=day,
+            weather_window=span,
+            is_raining=ctx.is_raining or wants_indoors,
+        )
+
+    @staticmethod
+    def _spans_multiple_days(window, timezone: str) -> bool:
+        """Whether a window covers more than one local calendar day.
+
+        Local, not UTC: an evening in Addis runs past midnight UTC and would look
+        like two days, turning "plan my evening" into a two-day trip with one stop
+        on each side of midnight.
+        """
+        if window is None:
+            return False
+        try:
+            zone = ZoneInfo(timezone)
+        except Exception:  # noqa: BLE001 - an unknown zone must not break routing
+            return False
+        return window.start.astimezone(zone).date() != window.end.astimezone(zone).date()
+
     async def _execute_plan(
         self,
         classification: intents.Classification,
@@ -569,18 +872,38 @@ class AIGateway:
         # the order, the travel and whether it is even possible, which is the entire
         # job they delegated.
         if classification.intent == intents.PLAN_ACTIVITY:
-            plan.append(
-                (
-                    "plan_outing",
-                    {
-                        "starts_after": window.start.isoformat() if window else None,
-                        "starts_before": window.end.isoformat() if window else None,
-                        "categories": categories,
-                        "free_only": constraints.get("free_only", False),
-                        "budget": constraints.get("budget_amount"),
-                    },
+            # One outing or a whole stay, decided by how many days the window
+            # covers rather than by a separate intent the model has to get right.
+            # A span is already extracted reliably, and asking comprehension to
+            # also label the difference would be a second chance to disagree with
+            # itself about the same sentence.
+            if self._spans_multiple_days(window, ctx.timezone):
+                plan.append(
+                    (
+                        "plan_trip",
+                        {
+                            "starts_after": window.start.isoformat(),
+                            "starts_before": window.end.isoformat(),
+                            "categories": categories,
+                            "free_only": constraints.get("free_only", False),
+                            "budget": constraints.get("budget_amount"),
+                            "stops_per_day": constraints.get("max_stops") or 3,
+                        },
+                    )
                 )
-            )
+            else:
+                plan.append(
+                    (
+                        "plan_outing",
+                        {
+                            "starts_after": window.start.isoformat() if window else None,
+                            "starts_before": window.end.isoformat() if window else None,
+                            "categories": categories,
+                            "free_only": constraints.get("free_only", False),
+                            "budget": constraints.get("budget_amount"),
+                        },
+                    )
+                )
         # A stated time window is decisive, whatever the intent label. "What should
         # I do tonight?" classifies as RECOMMEND_ACTIVITY on its phrasing, but the
         # explorer plainly wants things happening tonight - answering it with an
@@ -719,6 +1042,10 @@ class AIGateway:
             preferences=preferences,
             time_label=classification.time_window.label if classification.time_window else None,
             constraints=classification.constraints,
+            weather=ctx.weather,
+            weather_window=ctx.weather_window,
+            required_suitability=ctx.required_suitability,
+            located_remotely=ctx.located_remotely,
         )
         recalled = render_for_prompt(memories or [])
         if recalled:
@@ -962,8 +1289,13 @@ async def resolve_city(
     *,
     latitude: float | None = None,
     longitude: float | None = None,
-) -> tuple[str | None, str, str]:
-    """Return ``(slug, name, timezone)`` for wherever this conversation is about.
+) -> tuple[str | None, str, str, str]:
+    """Return ``(slug, name, timezone, currency)`` for what this is about.
+
+    The currency travels with the city for the same reason the timezone does:
+    both are properties of the place, and a plan that renders a total has to use
+    the money spent there. Quoting it from a setting produced itineraries priced
+    in birr in every city Mado reached after the first.
 
     It used to fall back to a configured pilot city and, failing that, to a
     hardcoded Ethiopian timezone - so an explorer anywhere on earth was answered
@@ -977,10 +1309,14 @@ async def resolve_city(
     resolved, _ = await catalog_repo.resolve_city_slug(
         session, city=slug, latitude=latitude, longitude=longitude
     )
+    # No currency either when no city resolves. The empty string is deliberate:
+    # the alternative is naming one, and any name would be a guess about where
+    # somebody is that the rest of this function exists to stop making. A plan
+    # with no city renders bare numbers rather than confidently wrong money.
     if resolved is None:
-        return None, "your area", "UTC"
+        return None, "your area", "UTC", ""
 
     city = await catalog_repo.get_city_by_slug(session, resolved)
     if city is None:
-        return None, "your area", "UTC"
-    return city.slug, city.name, city.timezone
+        return None, "your area", "UTC", ""
+    return city.slug, city.name, city.timezone, city.currency

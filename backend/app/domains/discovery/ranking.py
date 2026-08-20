@@ -24,6 +24,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from app.domains.catalog import suitability as suitability_vocab
+from app.integrations.weather import DailyWeather
+
 if TYPE_CHECKING:
     from app.domains.catalog.models import Experience
 
@@ -35,13 +38,14 @@ EARTH_RADIUS_KM = 6371.0
 # Browsing: the explorer has stated no intent, so context carries the feed. This is
 # spec PRODUCT-00 principle 4 - what is near, open and fitting beats what is popular.
 BROWSE_WEIGHTS = {
-    "relevance": 0.26,
-    "proximity": 0.20,
-    "timing": 0.18,
-    "personalization": 0.14,
-    "quality": 0.12,
-    "popularity": 0.06,
-    "trust": 0.04,
+    "relevance": 0.24,
+    "proximity": 0.18,
+    "timing": 0.16,
+    "fit": 0.12,
+    "personalization": 0.12,
+    "quality": 0.10,
+    "popularity": 0.05,
+    "trust": 0.03,
 }
 
 # Searching: the explorer has typed their intent, which is the strongest context
@@ -50,16 +54,17 @@ BROWSE_WEIGHTS = {
 # could not outweigh a well-timed nearby item. That is correct for a feed and wrong
 # for a search box.
 #
-# Relevance is capped at exactly 0.50: the largest share that still cannot outweigh
+# Relevance is capped below 0.50: the largest share that still cannot outweigh
 # every other signal combined, which keeps spec 21 s8's "no single signal dominates"
 # literally true while letting the query lead.
 SEARCH_WEIGHTS = {
-    "relevance": 0.50,
-    "proximity": 0.13,
-    "timing": 0.12,
-    "personalization": 0.09,
-    "quality": 0.08,
-    "popularity": 0.05,
+    "relevance": 0.46,
+    "proximity": 0.11,
+    "timing": 0.10,
+    "fit": 0.11,
+    "personalization": 0.08,
+    "quality": 0.07,
+    "popularity": 0.04,
     "trust": 0.03,
 }
 
@@ -103,6 +108,16 @@ class RankingContext:
     # when something starts must be in the clock of the place it happens
     # (spec 56.02 s28).
     timezone: str = "Africa/Addis_Ababa"
+    # The city's currency, for the same reason: a total shown to somebody in
+    # Paris has to be in euros. Carried here rather than looked up wherever a
+    # number is rendered, which is how a plan came to quote birr in every city.
+    currency: str = "ETB"
+    # True when the coordinates above are somewhere the explorer is asking about
+    # rather than somewhere they are standing. Proximity still orders results -
+    # what is central to New York is a better answer than what is not - but the
+    # reply must not say "ten minutes from you" about a city on another
+    # continent, which it will happily do if nothing tells it otherwise.
+    located_remotely: bool = False
     preferred_categories: set[str] = field(default_factory=set)
     preferred_tags: set[str] = field(default_factory=set)
     disliked_categories: set[str] = field(default_factory=set)
@@ -116,11 +131,52 @@ class RankingContext:
     inference_confidence: float = 0.0
     budget: str | None = None
     is_raining: bool = False
+    # The forecast for the day being asked about, when one is available. Set by
+    # the caller from `integrations.weather`, and None whenever no provider is
+    # configured or the day is past the provider's horizon - which is a real
+    # answer and must stay distinguishable from "fine", not be defaulted away.
+    weather: DailyWeather | None = None
+    # Every day the question covers, when it covers more than one. Only the
+    # single `weather` above scores a listing - a listing is either a good idea
+    # on a given day or not - but a reply about "this weekend" has to be able to
+    # describe both days, and answering with Saturday's forecast alone answers
+    # half the question.
+    weather_window: list[DailyWeather] = field(default_factory=list)
+    # Claims the explorer said they need. Already applied as a hard filter in
+    # `catalog.repository.require_suitability`, and repeated here because ranking
+    # also runs over pools the database did not filter - the search index knows
+    # nothing about these columns - and because the explanation on the card is
+    # built from the same signals that produced the score.
+    required_suitability: set[str] = field(default_factory=set)
+    # Claims that would be nice. These never exclude anything; they sort.
+    preferred_suitability: set[str] = field(default_factory=set)
     saved_experience_ids: set[str] = field(default_factory=set)
+    # What this explorer has already reposted. Looked up once per request and
+    # handed in, for the same reason `saved_experience_ids` is: a feed renders
+    # dozens of cards and asking per card is an N+1 on the hottest query in
+    # the product.
+    reposted_experience_ids: set[str] = field(default_factory=set)
 
     @property
     def has_location(self) -> bool:
         return self.latitude is not None and self.longitude is not None
+
+    @property
+    def wants_indoors(self) -> bool:
+        """Whether the day argues for being under a roof.
+
+        `is_raining` is the older signal and stays authoritative when set: it is
+        an observation of right now, and an observation beats a forecast for the
+        same moment. The forecast answers for every other day, which is every day
+        a plan is actually made for.
+        """
+        if self.is_raining:
+            return True
+        return self.weather is not None and self.weather.favours_indoors
+
+    @property
+    def wanted_suitability(self) -> set[str]:
+        return self.required_suitability | self.preferred_suitability
 
 
 @dataclass(slots=True)
@@ -230,14 +286,95 @@ def _personalization_score(experience: Experience, ctx: RankingContext) -> float
     elif ctx.budget in {"budget", "moderate"} and experience.price_type == "free":
         score += 0.05
 
-    # Weather is transient context, not a preference, but it changes what is a
-    # good idea right now (spec DISC-004).
-    if ctx.is_raining and experience.is_indoor:
-        score += 0.12
-    elif ctx.is_raining and experience.is_indoor is False:
-        score -= 0.18
+    # Weather used to be scored here. It moved to `_fit_score`, because it is not
+    # a preference: it is a fact about the day that changes what is a good idea
+    # for everybody at once. Keeping it here also meant the forecast and the
+    # stated indoor/outdoor constraint were weighed in two different places that
+    # could disagree about the same listing.
+    return max(0.0, min(1.0, score))
+
+
+# How far a fully wrong weather call moves the fit signal, against a listing that
+# is a perfect match on everything asked for. Asymmetric on purpose: being sent
+# somewhere outdoors in a storm is a worse experience than being sent indoors on
+# a nice day, so the penalty is larger than the reward.
+WEATHER_REWARD = 0.2
+WEATHER_PENALTY = 0.35
+
+
+def _fit_score(experience: Experience, ctx: RankingContext) -> float:
+    """Whether this suits the people asking and the day they are asking about.
+
+    Two things the platform previously extracted and then dropped on the floor:
+    what somebody said they need (a vegan main, a play area, step-free access)
+    and what the weather will be doing. They share a signal because they answer
+    the same question - is this a good idea for *these* people on *that* day -
+    and because a listing can only be ordered once.
+
+    Neutral at 0.5 when nothing was asked and no forecast exists, so an
+    unconstrained feed in a city with no weather provider ranks exactly as it did
+    before this signal existed.
+    """
+    score = 0.5
+
+    wanted = ctx.wanted_suitability
+    if wanted:
+        assessment = suitability_vocab.assess(experience, wanted)
+        # Share of what was asked for that this listing actually claims. Centred
+        # so a listing claiming none of it is pushed below neutral rather than
+        # merely failing to gain.
+        score += 0.4 * (assessment.score(len(wanted)) - 0.5)
+
+        # A required claim nobody has verified is a stronger negative than a
+        # missing preference. The hard filter in the repository normally removes
+        # these before ranking sees them; this matters for the pools it does not
+        # filter, notably anything the search index returned.
+        unverified_requirements = assessment.missing & ctx.required_suitability
+        if unverified_requirements:
+            score -= 0.3
+
+    if ctx.wants_indoors:
+        if experience.is_indoor:
+            score += WEATHER_REWARD
+        elif experience.is_indoor is False:
+            score -= WEATHER_PENALTY
+            # Unless the venue has done something about it. A heated, covered
+            # terrace is not the same proposition as an open field, and treating
+            # them alike is how a city's whole outdoor half disappears from the
+            # results for one cold week.
+            claimed = set(suitability_vocab.effective(experience))
+            if claimed & _shelter_for(ctx):
+                score += WEATHER_PENALTY * 0.6
 
     return max(0.0, min(1.0, score))
+
+
+def _shelter_for(ctx: RankingContext) -> set[str]:
+    """Which shelter claims actually answer today's problem.
+
+    Shade does nothing about rain and a heater does nothing about heat, so the
+    mitigation has to match the reason the day is difficult. Answering with the
+    whole comfort vocabulary would have rated an air-conditioned rooftop as a
+    fine idea in a thunderstorm.
+    """
+    weather = ctx.weather
+    shelter: set[str] = set()
+
+    if ctx.is_raining or (weather is not None and weather.is_wet):
+        shelter |= {suitability_vocab.COVERED, suitability_vocab.INDOOR_SEATING}
+    if weather is not None and weather.is_cold:
+        shelter |= {
+            suitability_vocab.HEATED,
+            suitability_vocab.COVERED,
+            suitability_vocab.INDOOR_SEATING,
+        }
+    if weather is not None and weather.is_hot:
+        shelter |= {
+            suitability_vocab.SHADED_SEATING,
+            suitability_vocab.AIR_CONDITIONED,
+            suitability_vocab.INDOOR_SEATING,
+        }
+    return shelter
 
 
 def _quality_score(experience: Experience) -> float:
@@ -291,7 +428,19 @@ def _build_reason(
     """
     from app.domains.catalog.serializers import next_event_of
 
-    if distance_km is not None and distance_km <= WALKABLE_KM:
+    # Ahead of proximity: somebody who said they need step-free access or a vegan
+    # kitchen is asking a question that a five-minute walk does not answer, and
+    # the reason on the card should name the thing they actually asked about.
+    wanted = ctx.wanted_suitability
+    if wanted:
+        met = suitability_vocab.assess(experience, wanted).met
+        if met:
+            return "Has " + suitability_vocab.describe(sorted(met))
+
+    # "From you" only when they are actually there. Asked about New York from
+    # Addis, the coordinates are the destination's, and this cheerfully offered a
+    # nine-minute walk to a bar five thousand kilometres away.
+    if not ctx.located_remotely and distance_km is not None and distance_km <= WALKABLE_KM:
         minutes = max(1, round(distance_km / 0.08))  # ~4.8 km/h walking pace
         return f"About {minutes} min walk from you"
 
@@ -310,8 +459,18 @@ def _build_reason(
                     else "Coming up tomorrow"
                 )
 
-    if ctx.is_raining and experience.is_indoor:
-        return "Good rainy-day option"
+    if ctx.wants_indoors and experience.is_indoor:
+        # Named for the reason it is a good idea, which is not always rain. Being
+        # told "good rainy-day option" on a dry day at 38 degrees reads as a
+        # system that has not understood the question.
+        weather = ctx.weather
+        if ctx.is_raining or (weather is not None and weather.is_wet):
+            return "Good rainy-day option"
+        if weather is not None and weather.is_cold:
+            return "Warm indoors, and it will be cold"
+        if weather is not None and weather.is_hot:
+            return "Out of the heat"
+        return "Indoors, which suits the forecast"
 
     category_slug = experience.category.slug if experience.category else None
     if category_slug and category_slug in ctx.preferred_categories:
@@ -328,7 +487,7 @@ def _build_reason(
     if signals.get("quality", 0) >= 0.75 and experience.rating_count >= 5:
         return f"Highly rated by {experience.rating_count} explorers"
 
-    if distance_km is not None and distance_km <= 4:
+    if not ctx.located_remotely and distance_km is not None and distance_km <= 4:
         return f"{distance_km:.1f} km away"
 
     if signals.get("popularity", 0) >= 0.7:
@@ -351,6 +510,7 @@ def score_experience(
         "relevance": max(0.0, min(1.0, relevance)),
         "proximity": proximity,
         "timing": _timing_score(experience, ctx),
+        "fit": _fit_score(experience, ctx),
         "personalization": _personalization_score(experience, ctx),
         "quality": _quality_score(experience),
         "popularity": float(experience.popularity_score or 0.0),

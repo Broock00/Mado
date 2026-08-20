@@ -27,6 +27,7 @@ from app.domains.catalog.schemas import (
 from app.domains.catalog.serializers import to_detail, to_event
 from app.domains.discovery.service import DiscoveryService, build_context
 from app.domains.explorer.service import ExplorerService
+from app.domains.explorer.social import SocialService
 
 router = APIRouter(tags=["catalog"])
 
@@ -148,6 +149,13 @@ async def get_experience(
         entity_id=experience.id,
         weight=2,
     )
+    # Whether this explorer has already reposted it. Fetched here rather than
+    # in `to_detail`, which is a pure model-to-schema function and has no
+    # session - the same reason `is_saved` is passed in.
+    reposted = await SocialService(session).reposted_experience_ids(
+        user.id if user else None, [experience.id]
+    )
+
     await session.commit()
 
     return Envelope(
@@ -156,6 +164,7 @@ async def get_experience(
             upcoming_events=events,
             is_saved=str(experience.id) in saved_ids,
             distance_km=distance_km,
+            is_reposted=experience.id in reposted,
         )
     )
 

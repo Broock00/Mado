@@ -154,9 +154,12 @@ class TestPersonalization:
         assert preferred.signals["personalization"] > neutral.signals["personalization"]
 
     def test_rain_favours_indoor_over_outdoor(self):
+        # Weather scores under `fit` rather than `personalization`: it is a fact
+        # about the day, not something about this explorer, and it now shares a
+        # signal with the stated constraints it has to be weighed against.
         indoor = score_experience(FakeExperience(is_indoor=True), ctx_at(is_raining=True))
         outdoor = score_experience(FakeExperience(is_indoor=False), ctx_at(is_raining=True))
-        assert indoor.signals["personalization"] > outdoor.signals["personalization"]
+        assert indoor.signals["fit"] > outdoor.signals["fit"]
 
 
 class TestExplanations:

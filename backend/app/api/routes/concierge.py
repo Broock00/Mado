@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query, Request
@@ -30,6 +31,7 @@ from app.domains.discovery.service import build_context
 from app.domains.explorer.learning import infer_preferences
 from app.domains.explorer.planning_service import PlanningService
 from app.domains.explorer.service import ExplorerService
+from app.domains.explorer.social import SocialService
 
 router = APIRouter(prefix="/assistant", tags=["concierge"])
 
@@ -70,6 +72,14 @@ class ResultItem(CamelModel):
     reason: str | None = None
     distance_km: float | None = None
     rating: float | None = None
+    # A result in the chat is a post like any other, so it can be reposted from
+    # there. Defaulted rather than required because the plan tools build their
+    # items by hand and have no count to give.
+    repost_count: int = 0
+    is_reposted: bool = False
+    publisher_name: str | None = None
+    publisher_slug: str | None = None
+    publisher_type: str | None = None
 
 
 class SuggestedAction(CamelModel):
@@ -150,7 +160,7 @@ async def _reply(*, session, user, anonymous_id: str | None, payload: MessageReq
     if not payload.message.strip():
         raise BadRequestError("Message cannot be empty.", code="EMPTY_MESSAGE")
 
-    city_slug, city_name, timezone = await resolve_city(
+    city_slug, city_name, timezone, currency = await resolve_city(
         session,
         payload.city,
         latitude=payload.latitude,
@@ -193,6 +203,13 @@ async def _reply(*, session, user, anonymous_id: str | None, payload: MessageReq
 
     explorer = ExplorerService(session)
     saved_ids = await explorer.saved_experience_ids(user.id if user else None)
+    # Fetched up front, like saves, because the concierge only decides what to
+    # show once its tools have run - there is nothing to ask about until it is
+    # too late to ask. Empty for an anonymous explorer, which reads correctly as
+    # "not marked".
+    reposted_ids = await SocialService(session).all_reposted_ids(
+        user.id if user else None
+    )
     preferences = user.profile.preferences if user and user.profile else {}
     # None rather than {} for anonymous explorers: there is no consent on file for
     # someone we cannot identify, and memory treats "unknown" as "no".
@@ -205,9 +222,13 @@ async def _reply(*, session, user, anonymous_id: str | None, payload: MessageReq
         longitude=payload.longitude,
         preferences=preferences,
         saved_ids=saved_ids,
+        reposted_ids=reposted_ids,
         timezone=timezone,
         inferred=inferred,
     )
+    # The forecast and this turn's stated requirements are added inside the
+    # gateway, which is the only place that has read the message yet.
+    ctx = replace(ctx, currency=currency or ctx.currency)
 
     gateway = AIGateway(session)
     conversation = await gateway.get_or_create_conversation(
@@ -224,6 +245,11 @@ async def _reply(*, session, user, anonymous_id: str | None, payload: MessageReq
         area=area,
         city_name=city_name,
         timezone=timezone,
+        currency=currency,
+        # Only when they actually picked one. `city_name` is set from it above,
+        # so passing that instead would make every turn look like a deliberate
+        # choice and permanently outrank a destination mentioned in conversation.
+        place_label=payload.place_label,
         preferences=preferences,
         user_id=user.id if user else None,
         privacy=privacy,

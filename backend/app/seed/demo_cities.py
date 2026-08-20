@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.domains.catalog import suitability as suitability_vocab
 from app.domains.catalog.models import (
     MODERATION_APPROVED,
     STATUS_PUBLISHED,
@@ -68,6 +69,12 @@ class DemoVenue:
     latitude: float
     longitude: float
     neighbourhood: str
+    # What the building itself offers, over the vocabulary in
+    # `catalog/suitability.py`. Left empty on most venues on purpose: a demo
+    # catalogue where every venue claims everything would make a constrained
+    # search look like it was doing nothing, because nothing would ever be
+    # filtered out.
+    facilities: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -84,6 +91,9 @@ class DemoListing:
     is_indoor: bool | None = None
     rating: float | None = None
     rating_count: int = 0
+    # What this listing claims to be suitable for. Sparse deliberately - see the
+    # note on DemoVenue.facilities.
+    suitability: tuple[str, ...] = ()
     # Hours from now that occurrences start. Empty for a place, which is open
     # rather than scheduled.
     occurrences: tuple[int, ...] = ()
@@ -962,14 +972,85 @@ CITIES: list[DemoCity] = [
             ("Canal Saint-Martin", 48.8710, 2.3660),
             ("Le Marais", 48.8590, 2.3600),
             ("Butte-aux-Cailles", 48.8280, 2.3500),
+            ("Oberkampf", 48.8645, 2.3705),
+            ("Jardin des Plantes", 48.8425, 2.3560),
+            ("Bois de Boulogne", 48.8780, 2.2640),
         ],
         venues=[
-            DemoVenue("Belleville Terrasse", "Rue Denoyez", 48.8722, 2.3812, "Belleville"),
-            DemoVenue("Parc de Belleville", "47 Rue des Couronnes", 48.8705, 2.3835, "Belleville"),
+            DemoVenue(
+                "Belleville Terrasse",
+                "Rue Denoyez",
+                48.8722,
+                2.3812,
+                "Belleville",
+                facilities=("outdoor_seating", "heated", "covered", "card_accepted"),
+            ),
+            DemoVenue(
+                "Parc de Belleville",
+                "47 Rue des Couronnes",
+                48.8705,
+                2.3835,
+                "Belleville",
+                facilities=("childrens_play_area", "step_free_access", "pushchair_access"),
+            ),
             DemoVenue("Quai de Valmy", "Quai de Valmy", 48.8715, 2.3665, "Canal Saint-Martin"),
-            DemoVenue("Marais Atelier", "12 Rue de Turenne", 48.8585, 2.3625, "Le Marais"),
+            DemoVenue(
+                "Marais Atelier",
+                "12 Rue de Turenne",
+                48.8585,
+                2.3625,
+                "Le Marais",
+                facilities=("indoor_seating", "heated", "step_free_access", "accessible_toilet"),
+            ),
             DemoVenue(
                 "Cailles Cave", "Rue des Cinq-Diamants", 48.8275, 2.3495, "Butte-aux-Cailles"
+            ),
+            DemoVenue(
+                "Jardin d'Acclimatation Gate",
+                "Bois de Boulogne",
+                48.8778,
+                2.2635,
+                "Bois de Boulogne",
+                facilities=(
+                    "childrens_play_area",
+                    "child_menu",
+                    "high_chairs",
+                    "baby_changing",
+                    "step_free_access",
+                    "pushchair_access",
+                    "parking",
+                ),
+            ),
+            DemoVenue(
+                "Le Potager Vert",
+                "24 Rue Oberkampf",
+                48.8645,
+                2.3705,
+                "Oberkampf",
+                facilities=("indoor_seating", "heated", "step_free_access", "high_chairs"),
+            ),
+            DemoVenue(
+                "Grande Mosquée Tea Room",
+                "39 Rue Geoffroy-Saint-Hilaire",
+                48.8420,
+                2.3552,
+                "Jardin des Plantes",
+                facilities=("indoor_seating", "covered", "prayer_room", "shaded_seating"),
+            ),
+            DemoVenue(
+                "Muséum Grande Galerie",
+                "36 Rue Geoffroy-Saint-Hilaire",
+                48.8430,
+                2.3565,
+                "Jardin des Plantes",
+                facilities=(
+                    "indoor_seating",
+                    "heated",
+                    "step_free_access",
+                    "accessible_toilet",
+                    "pushchair_access",
+                    "baby_changing",
+                ),
             ),
         ],
         listings=[
@@ -987,6 +1068,7 @@ CITIES: list[DemoCity] = [
                 is_indoor=False,
                 rating=4.4,
                 rating_count=267,
+                suitability=("vegetarian", "outdoor_seating", "heated", "serves_late"),
             ),
             DemoListing(
                 title="Parc de Belleville Sunset",
@@ -1055,6 +1137,126 @@ CITIES: list[DemoCity] = [
                 rating=4.5,
                 rating_count=189,
                 occurrences=(4, 52, 220),
+            ),
+            # The five listings below exist so a constrained request has both
+            # answers and non-answers in the same city. A demo catalogue where
+            # everything satisfies every constraint cannot show a filter working,
+            # and one where nothing does cannot either.
+            DemoListing(
+                title="Jardin d'Acclimatation Afternoon",
+                venue="Jardin d'Acclimatation Gate",
+                category="outdoors",
+                summary="A children's garden with rides, goats and a lot of running.",
+                description=(
+                    "Old-fashioned in the best way. The little train loops the whole park, "
+                    "and the playground at the north end is where everyone under ten ends "
+                    "up. Buy the ride tickets in a book rather than singly."
+                ),
+                price_type="range",
+                price_amount=7,
+                duration_minutes=210,
+                is_indoor=False,
+                rating=4.3,
+                rating_count=1204,
+                suitability=(
+                    "childrens_play_area",
+                    "child_menu",
+                    "child_friendly",
+                    "pushchair_access",
+                    "high_chairs",
+                ),
+            ),
+            DemoListing(
+                title="Le Potager Vert Table d'Hôte",
+                venue="Le Potager Vert",
+                category="food-drink",
+                summary="One vegan menu a night, written on the wall at six.",
+                description=(
+                    "Everything is plant-based and nobody makes a thing of it. Four courses, "
+                    "no choice, and the kitchen will work around nuts and gluten if you say "
+                    "when you book rather than when you sit down."
+                ),
+                price_type="fixed",
+                price_amount=32,
+                duration_minutes=120,
+                is_indoor=True,
+                rating=4.7,
+                rating_count=311,
+                suitability=(
+                    "vegan",
+                    "vegetarian",
+                    "dairy_free",
+                    "nut_free",
+                    "gluten_free",
+                    "child_friendly",
+                ),
+            ),
+            DemoListing(
+                title="Mint Tea at the Grande Mosquée",
+                venue="Grande Mosquée Tea Room",
+                category="food-drink",
+                summary="Sweet mint tea and pastries under the fig trees.",
+                description=(
+                    "The courtyard is the reason to come and the tiled salon is where you go "
+                    "when it rains. Table service is slow by design. Cash is easier than "
+                    "card at the pastry counter."
+                ),
+                price_type="range",
+                price_amount=6,
+                duration_minutes=75,
+                is_indoor=True,
+                rating=4.4,
+                rating_count=892,
+                suitability=(
+                    "halal",
+                    "vegetarian",
+                    "alcohol_free",
+                    "serves_late",
+                    "child_friendly",
+                ),
+            ),
+            DemoListing(
+                title="Grande Galerie de l'Évolution",
+                venue="Muséum Grande Galerie",
+                category="arts-culture",
+                summary="The great procession of animals, four floors under one glass roof.",
+                description=(
+                    "Worth an hour even if museums are not usually the thing. The lighting "
+                    "shifts through a day cycle on the hour. Lifts reach every floor and the "
+                    "cloakroom will take a pushchair."
+                ),
+                price_type="fixed",
+                price_amount=13,
+                duration_minutes=120,
+                is_indoor=True,
+                rating=4.6,
+                rating_count=2140,
+                suitability=(
+                    "step_free_access",
+                    "accessible_toilet",
+                    "child_friendly",
+                    "pushchair_access",
+                    "baby_changing",
+                ),
+            ),
+            DemoListing(
+                title="Belleville Vegan Market Stall",
+                venue="Belleville Terrasse",
+                category="markets",
+                summary="A dozen producers, all plant-based, Saturday mornings only.",
+                description=(
+                    "Small and busy. The bread goes first and the cheese substitutes are "
+                    "better than they have any right to be. Covered when it rains, heated "
+                    "when it does not stop."
+                ),
+                kind=TYPE_EVENT,
+                price_type="free",
+                duration_minutes=150,
+                is_indoor=False,
+                rating=4.2,
+                rating_count=87,
+                suitability=("vegan", "vegetarian", "dairy_free", "covered", "heated"),
+                occurrences=(34, 202, 370),
             ),
         ],
     ),
@@ -1522,6 +1724,7 @@ async def seed_demo_cities(session: AsyncSession, *, now: datetime | None = None
             found.address = item.address
             found.latitude = item.latitude
             found.longitude = item.longitude
+            found.facilities = suitability_vocab.normalise(list(item.facilities))
             venues[item.name] = found
             counts["venues"] += 1
         await session.flush()
@@ -1550,6 +1753,7 @@ async def seed_demo_cities(session: AsyncSession, *, now: datetime | None = None
             found.currency = demo.currency
             found.duration_minutes = listing.duration_minutes
             found.is_indoor = listing.is_indoor
+            found.suitability = suitability_vocab.normalise(list(listing.suitability))
             found.rating_average = listing.rating
             found.rating_count = listing.rating_count
             # The mark that makes this findable and removable, and that stops it

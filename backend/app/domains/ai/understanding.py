@@ -46,6 +46,7 @@ from app.domains.ai.prompts import (
     UNDERSTANDING_RESPONSE_SCHEMA,
     UNDERSTANDING_SYSTEM_PROMPT,
 )
+from app.domains.catalog import suitability as suitability_vocab
 from app.integrations.ai_provider import GenerationRequest, get_provider
 
 logger = get_logger("mado.ai.understanding")
@@ -219,7 +220,16 @@ _CONSTRAINT_KEYS = {
     "accessibilityRequired": "accessibility_required",
     "maxStops": "max_stops",
     "categories": "categories",
+    "requiredSuitability": "required_suitability",
+    "preferredSuitability": "preferred_suitability",
 }
+
+# Constraints holding suitability slugs, which are normalised against the
+# vocabulary rather than trusted. The model is told the list and mostly obeys it;
+# "mostly" is not good enough for a value that becomes a database filter, and an
+# unrecognised slug as a *requirement* would return an empty answer that looks
+# like a city with nothing in it.
+_SUITABILITY_KEYS = ("required_suitability", "preferred_suitability")
 
 _VALID_ATTRIBUTES = frozenset(
     {"likes", "dislikes", "avoids", "restriction", "allergy", "companions", "budget"}
@@ -229,6 +239,11 @@ _VALID_ATTRIBUTES = frozenset(
 # occasionally returns a sentence; storing that would put a paragraph into every
 # future prompt.
 MAX_PREFERENCE_VALUE = 60
+
+# Longest a destination may be. Generous enough for "Stratford-upon-Avon,
+# Warwickshire" and short enough that a returned sentence is discarded rather
+# than sent to a place provider as a search.
+MAX_DESTINATION_LENGTH = 120
 
 
 def _from_payload(payload: dict, *, now: datetime, timezone: str) -> Understanding:
@@ -245,10 +260,39 @@ def _from_payload(payload: dict, *, now: datetime, timezone: str) -> Understandi
             continue
         constraints[target_key] = value
 
+    for key in _SUITABILITY_KEYS:
+        if key in constraints:
+            cleaned = suitability_vocab.normalise(constraints[key])
+            if cleaned:
+                constraints[key] = cleaned
+            else:
+                # Everything the model returned was outside the vocabulary. Drop
+                # the key entirely rather than leaving an empty list, so nothing
+                # downstream reads "they asked for nothing" as "they asked".
+                constraints.pop(key)
+
+    # An accessibility need stated as a boolean is the same need stated as a
+    # slug, and the retrieval can only act on the slug. Folding it here means the
+    # older constraint keeps working and stops being decorative - it was reaching
+    # the prompt as a sentence and the database not at all.
+    if constraints.get("accessibility_required"):
+        required = set(constraints.get("required_suitability") or [])
+        required.add(suitability_vocab.STEP_FREE_ACCESS)
+        constraints["required_suitability"] = sorted(required)
+
     entities: dict = {}
     query = (payload.get("searchQuery") or "").strip()
     if query:
         entities["query"] = query
+
+    # Somewhere the explorer named that is not where they are standing. Carried
+    # as free text and resolved by the gateway through the places provider -
+    # geography is not Mado's data, so there is nothing here to validate it
+    # against. Bounded only in length, because a model occasionally returns a
+    # sentence where a place name was asked for.
+    destination = " ".join((payload.get("destination") or "").split()).strip()
+    if destination and len(destination) <= MAX_DESTINATION_LENGTH:
+        entities["destination"] = destination
 
     # Carried as-is; the gateway validates it against the plan actually pending,
     # because the model can only report what it believed was on the table.

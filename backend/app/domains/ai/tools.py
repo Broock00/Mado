@@ -107,7 +107,7 @@ def describe_tools() -> list[dict[str, Any]]:
 # because no city resolved. Quieter than the old bug, which at least named the
 # city it was wrong about, and worse for it.
 NEEDS_A_PLACE = frozenset(
-    {"search_experiences", "find_events", "find_nearby", "plan_outing"}
+    {"search_experiences", "find_events", "find_nearby", "plan_outing", "plan_trip"}
 )
 
 # The refusal above, as a code. The gateway turns this one into a question back
@@ -200,6 +200,15 @@ def _to_item(summary, *, timezone: str = "Africa/Addis_Ababa") -> dict[str, Any]
         "reason": summary.reason,
         "distance_km": summary.distance_km,
         "rating": summary.rating_average,
+        # Carried so a card in the chat is the same card as everywhere else.
+        # Without it the concierge was the one surface where a listing could not
+        # be reposted - and a result there is a post like any other.
+        "repost_count": summary.repost_count,
+        "is_reposted": summary.is_reposted,
+        # Who published it, so the chat can show the business tag the feed does.
+        "publisher_name": summary.publisher.name if summary.publisher else None,
+        "publisher_slug": summary.publisher.slug if summary.publisher else None,
+        "publisher_type": summary.publisher.type if summary.publisher else None,
     }
 
 
@@ -485,8 +494,15 @@ async def _plan_outing(
         longitude=ctx.longitude,
         budget=budget,
         max_stops=max(1, min(6, max_stops)),
+        currency=ctx.currency,
         categories=categories or [],
         free_only=free_only,
+        # Taken from the context rather than the tool arguments. These come from
+        # what the explorer said about the people they are with and from what the
+        # platform remembers about them, neither of which the model should be
+        # able to drop by omitting an argument.
+        required_suitability=sorted(ctx.required_suitability),
+        preferred_suitability=sorted(ctx.preferred_suitability),
         # Refinement (spec AI-004). Stops the explorer already accepted, and
         # ones they turned down.
         keep_experience_ids=_as_uuids(keep),
@@ -517,7 +533,11 @@ async def _plan_outing(
                 # Pre-rendered in the city's clock so the model never formats or
                 # converts a time itself.
                 "when": f"{arrive:%H:%M} - {depart:%H:%M}",
-                "price": "Free" if stop.estimated_cost == 0 else f"{stop.estimated_cost:.0f} ETB",
+                "price": (
+                    "Free"
+                    if stop.estimated_cost == 0
+                    else f"{stop.estimated_cost:.0f} {plan.currency}"
+                ),
                 "reason": (
                     f"Stop {position}"
                     + (" - starts at a set time" if stop.is_fixed_time else "")
@@ -559,7 +579,7 @@ async def _plan_outing(
                 for stop in plan.stops
             ],
             "totalCost": plan.total_cost,
-            "currency": "ETB",
+            "currency": plan.currency,
             "totalTravelMinutes": plan.total_travel_minutes,
             "rationale": plan.rationale,
             "unmet": plan.unmet,
@@ -601,6 +621,204 @@ def _parse_time(value: str | None) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+async def _plan_trip(
+    *,
+    session: AsyncSession,
+    ctx: RankingContext,
+    area: Area | None,
+    starts_after: str | None = None,
+    starts_before: str | None = None,
+    budget: float | None = None,
+    stops_per_day: int = 3,
+    categories: list[str] | None = None,
+    free_only: bool = False,
+) -> ToolResult:
+    """Plan a stay of several days rather than one outing.
+
+    Separate from `plan_outing` because the two answer different questions. An
+    outing is a sequence inside one window; a trip is several of those, and the
+    parts that make it hard - not repeating a stop, spending one budget across
+    days, putting the outdoor day on the dry one - only exist at this level.
+    Routing a five-day request into `plan_outing` produced a single itinerary
+    running from Monday morning to Friday night, with a museum at 3am on the
+    Wednesday, because a window is a window as far as that planner is concerned.
+    """
+    from app.domains.explorer.planning import TripRequest
+    from app.domains.explorer.planning_service import PlanningService
+
+    start = _parse_time(starts_after) or ctx.now
+    end = _parse_time(starts_before) or (start + timedelta(days=2))
+    if end <= start:
+        end = start + timedelta(days=2)
+
+    request = TripRequest(
+        start=start,
+        end=end,
+        city_slug=area.city_slug if area else None,
+        timezone=ctx.timezone,
+        latitude=ctx.latitude,
+        longitude=ctx.longitude,
+        budget=budget,
+        currency=ctx.currency,
+        stops_per_day=max(1, min(6, stops_per_day)),
+        categories=categories or [],
+        free_only=free_only,
+        required_suitability=sorted(ctx.required_suitability),
+        preferred_suitability=sorted(ctx.preferred_suitability),
+    )
+
+    trip = await PlanningService(session).plan_trip(request, ctx)
+    if trip.is_empty:
+        return ToolResult(tool="plan_trip", ok=False, error=trip.rationale)
+
+    try:
+        zone = ZoneInfo(ctx.timezone)
+    except Exception:  # noqa: BLE001 - an unknown zone must not break a reply
+        zone = UTC
+
+    # Flattened to cards in day order, each labelled with its day, so a client
+    # that only knows how to render cards still shows something coherent. The
+    # structure a trip actually has lives in `payload` below.
+    items: list[dict[str, Any]] = []
+    days_payload: list[dict[str, Any]] = []
+
+    for day in trip.days:
+        stops_payload = []
+        for stop in day.plan.stops:
+            arrive = stop.arrive_at.astimezone(zone)
+            depart = stop.depart_at.astimezone(zone)
+            items.append(
+                {
+                    "id": str(stop.experience.id),
+                    "title": stop.experience.title,
+                    "summary": stop.experience.summary,
+                    "type": stop.experience.type,
+                    "category": (
+                        stop.experience.category.name if stop.experience.category else None
+                    ),
+                    "venueName": (
+                        stop.experience.venue.name if stop.experience.venue else None
+                    ),
+                    "when": f"{day.day:%a %d %b}, {arrive:%H:%M} - {depart:%H:%M}",
+                    "price": (
+                        "Free"
+                        if stop.estimated_cost == 0
+                        else f"{stop.estimated_cost:.0f} {trip.currency}"
+                    ),
+                    "reason": _day_reason(day),
+                }
+            )
+            stops_payload.append(
+                {
+                    "experienceId": str(stop.experience.id),
+                    "eventInstanceId": (
+                        str(stop.event_instance_id) if stop.event_instance_id else None
+                    ),
+                    "title": stop.experience.title,
+                    "arriveAt": stop.arrive_at.isoformat(),
+                    "departAt": stop.depart_at.isoformat(),
+                    "dwellMinutes": stop.dwell_minutes,
+                    "travelMinutes": stop.travel_minutes,
+                    "travelKm": stop.travel_km,
+                    "estimatedCost": stop.estimated_cost,
+                    "isFixedTime": stop.is_fixed_time,
+                    "note": stop.note,
+                }
+            )
+
+        days_payload.append(
+            {
+                "date": day.day.isoformat(),
+                "stops": stops_payload,
+                "totalCost": day.plan.total_cost,
+                "rationale": day.plan.rationale,
+                "unmet": day.plan.unmet,
+                # Null when the day is past the forecast horizon. The response
+                # layer must render that as "I cannot see that far yet" and never
+                # as settled weather - which is the entire reason the forecast is
+                # optional all the way down rather than defaulted somewhere.
+                "weather": (
+                    {
+                        "condition": day.weather.condition,
+                        "high": day.weather.temperature_max_c,
+                        "low": day.weather.temperature_min_c,
+                        "rainChance": day.weather.precipitation_probability,
+                        "summary": day.weather.describe(),
+                    }
+                    if day.weather is not None
+                    else None
+                ),
+            }
+        )
+
+    return ToolResult(
+        tool="plan_trip",
+        ok=True,
+        items=items,
+        entity_ids=[
+            str(stop.experience.id) for day in trip.days for stop in day.plan.stops
+        ],
+        # Schedules and forecasts both move.
+        freshness="volatile",
+        payload={
+            "days": days_payload,
+            "totalCost": trip.total_cost,
+            "currency": trip.currency,
+            "rationale": trip.rationale,
+            "unmet": trip.unmet,
+            "request": {
+                "startsAt": request.start.isoformat(),
+                "endsAt": request.end.isoformat(),
+                "city": request.city_slug,
+                "budget": request.budget,
+                "stopsPerDay": request.stops_per_day,
+                "categories": request.categories,
+                "freeOnly": request.free_only,
+                "requiredSuitability": request.required_suitability,
+                "preferredSuitability": request.preferred_suitability,
+            },
+        },
+    )
+
+
+def _day_reason(day) -> str:
+    """Why a stop sits on the day it does."""
+    label = day.day.strftime("%a %d %b")
+    weather = day.weather
+    if weather is None:
+        return label
+    return f"{label} - {weather.describe()}"
+
+
+register(
+    ToolDefinition(
+        name="plan_trip",
+        description=(
+            "Build a day-by-day itinerary for a stay of two or more days, without "
+            "repeating a stop, spending one budget across the whole trip, and "
+            "using each day's forecast to decide which day the outdoor plans go "
+            "on. Use this instead of plan_outing whenever the request spans more "
+            "than a single day."
+        ),
+        side_effect=SIDE_EFFECT_NONE,
+        risk=RISK_LOW,
+        requires_confirmation=False,
+        parameters={
+            "type": "object",
+            "properties": {
+                "starts_after": {"type": "string", "description": "ISO 8601 trip start."},
+                "starts_before": {"type": "string", "description": "ISO 8601 trip end."},
+                "budget": {"type": "number", "minimum": 0},
+                "stops_per_day": {"type": "integer", "minimum": 1, "maximum": 6},
+                "categories": {"type": "array", "items": {"type": "string"}},
+                "free_only": {"type": "boolean"},
+            },
+        },
+        handler=_plan_trip,
+    )
+)
 
 
 register(

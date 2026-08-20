@@ -76,6 +76,17 @@ class PublisherSummary(CamelModel):
     logo_url: str | None = None
     verification_status: str
     trust_level: int
+    # `individual` or `organization`. On a card this is what lets an explorer
+    # tell "the cafe posted this" from "somebody who went there posted this",
+    # which are different claims and were previously indistinguishable.
+    type: str = "individual"
+    # What kind of business, when it is one. Null for a person.
+    business_type: str | None = None
+    business_type_label: str | None = None
+
+    @property
+    def is_business(self) -> bool:
+        return self.type == "organization"
 
     @property
     def is_verified(self) -> bool:
@@ -91,6 +102,11 @@ class VenueSummary(CamelModel):
     longitude: float
     neighborhood: NeighborhoodOut | None = None
     accessibility: dict = Field(default_factory=dict)
+    # The building's own suitability claims, over the same vocabulary as an
+    # experience's. Sent separately from the experience's union so an editor can
+    # tell which record owns a claim - the composer must not offer to untick a
+    # facility that belongs to the venue.
+    facilities: list[str] = Field(default_factory=list)
     opening_hours: dict = Field(default_factory=dict)
 
 
@@ -136,11 +152,23 @@ class ExperienceSummary(CamelModel):
     next_event: EventInstanceOut | None = None
     duration_minutes: int | None = None
     is_indoor: bool | None = None
+    # What this listing claims to be suitable for - the union of the experience's
+    # own claims and its venue's, so a card can show the play area without the
+    # client needing to know which record it was recorded on.
+    suitability: list[str] = Field(default_factory=list)
+    # Of what the explorer asked for, what this listing has not claimed. Never
+    # "does not have": nobody said either way. Present so a card can hedge in the
+    # same words the concierge uses instead of implying a promise by silence.
+    unverified: list[str] = Field(default_factory=list)
     # Populated by the ranking layer; spec PRODUCT-00 principle 5 requires every
     # important recommendation to answer "why am I seeing this?".
     reason: str | None = None
     distance_km: float | None = None
     is_saved: bool = False
+    # The count comes off the experience row, so a card costs no extra query;
+    # `is_reposted` is filled in by the caller in one bulk lookup for the page.
+    repost_count: int = 0
+    is_reposted: bool = False
 
 
 class ExperienceDetail(ExperienceSummary):

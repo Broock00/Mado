@@ -61,14 +61,34 @@ class Settings(BaseSettings):
     geocoding_provider: Literal["auto", "google", "nominatim", "local"] = "auto"
     google_maps_api_key: str = ""
 
-    # Places: turning coordinates into a country/city/street, and a place name
-    # back into coordinates. The platform stores no geography of its own, so
-    # this is on the read path for every explorer who shares their location.
+    # Places: autocompleting a half-typed place name, resolving the chosen one,
+    # and turning coordinates back into a country/city/street. The platform
+    # stores no geography of its own, so this is on the read path for every
+    # explorer who shares their location.
+    #
+    # Google Places API (New) is the primary provider - it is what makes a
+    # location box find the neighbourhood somebody meant from three letters.
+    # OpenStreetMap is a fallback that keeps a keyless deployment working, not
+    # an equal: it matches whole names and predicts nothing.
     #   auto    Google when a key is set, OpenStreetMap otherwise (default)
-    #   google  Google Geocoding
+    #   google  Google Places API (New)
     #   osm     OpenStreetMap/Nominatim
     #   stub    resolves nothing; for tests and offline work
     places_provider: Literal["auto", "google", "osm", "stub"] = "auto"
+    # Language for place names and addresses. Google localises both, so this is
+    # what decides whether an explorer is told they are in "Addis Ababa" or
+    # "አዲስ አበባ". A per-request language would be better and needs the caller to
+    # carry a locale, which nothing does yet.
+    places_language: str = "en"
+    # Which time zone a point is in, needed whenever a city is first seen - the
+    # concierge answers "tonight" from it, so being wrong shifts every event.
+    #   auto      Google Time Zone API when a key is set, CLDR otherwise (default)
+    #   google    Google Time Zone API; exact, and the only thing that can be
+    #             right about a country with more than one zone
+    #   territory CLDR; answers only where a country has exactly one zone
+    #   stub      answers nothing; for tests
+    timezone_provider: Literal["auto", "google", "territory", "stub"] = "auto"
+
     # Nominatim's operators require an identifying User-Agent and block traffic
     # without one. Put a real contact address here before running in public.
     nominatim_user_agent: str = "Mado/1.0 (city discovery; contact: ops@mado.local)"
@@ -87,6 +107,17 @@ class Settings(BaseSettings):
     # server carries driving only, and asking it to walk returns a driving route
     # with a walking label - worse than an honest estimate.
     osrm_profiles: list[str] = ["drive"]
+
+    # Weather. Feeds ranking and planning, which prefer indoor listings when the
+    # forecast is against being outside:
+    #   auto        Google when a key is set, Open-Meteo otherwise (default)
+    #   google      Google Weather API
+    #   open-meteo  keyless, rate limited by its operators, 16-day horizon
+    #   none        answers nothing at all
+    # `none` is what the test suite runs on. With a real provider, an assertion
+    # about which listing ranks first would depend on the actual weather in the
+    # city the fixture invented, and would start failing when it rained there.
+    weather_provider: Literal["auto", "google", "open-meteo", "none"] = "auto"
 
     # Background maintenance. Popularity, trend and embedding backfill run on a
     # timer inside the API process (spec 70.02 keeps this a single deployable).

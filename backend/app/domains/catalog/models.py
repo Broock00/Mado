@@ -134,6 +134,11 @@ class Venue(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     __table_args__ = (
         # GiST over the generated geography column powers "near me" radius search.
         Index("ix_venues_geo", "geo", postgresql_using="gist"),
+        # `facilities` predates this and was written empty by every code path.
+        # It now carries the venue's half of the suitability vocabulary and is
+        # queried by containment alongside `experiences.suitability`, so it needs
+        # the same GIN index that column has.
+        Index("ix_venues_facilities", "facilities", postgresql_using="gin"),
         {"schema": SCHEMA},
     )
 
@@ -171,6 +176,22 @@ class Venue(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
         Computed("ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography", persisted=True),
         nullable=True,
     )
+
+    # The place provider's identifier for wherever this venue is - Google's
+    # `place_id`, or `osm:W123` from the keyless fallback.
+    #
+    # This is not a table of places and must not become one. Nothing reads it to
+    # find a venue and nothing renders from it; the coordinates above are the
+    # location, resolved once at publishing time. It is kept for two things: to
+    # recognise that two publishers have added the same address, and to re-resolve
+    # a venue if its coordinates are ever disputed. Google's terms single out
+    # `place_id` as the one field that may be stored indefinitely, which is
+    # exactly why it is the only one stored.
+    #
+    # Nullable and unindexed: most venues predate this, a venue whose pin was
+    # dropped on a map has no identifier at all, and an index would only serve a
+    # lookup path that deliberately does not exist.
+    place_id: Mapped[str | None] = mapped_column(String(512), default=None)
 
     capacity: Mapped[int | None] = mapped_column(Integer, default=None)
     facilities: Mapped[list[str]] = mapped_column(ARRAY(String(64)), default=list, nullable=False)
@@ -220,6 +241,12 @@ class Experience(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     __table_args__ = (
         Index("ix_experiences_city_status", "city_id", "status"),
         Index("ix_experiences_status_type", "status", "type"),
+        # GIN, because every constrained search asks `suitability @> ARRAY[...]`
+        # and btree cannot answer containment. Declared through SQLAlchemy rather
+        # than raw SQL so autogenerate keeps it - the HNSW and partial indexes in
+        # this schema are excluded by name in alembic/env.py precisely because
+        # they are not expressible here, and this one is.
+        Index("ix_experiences_suitability", "suitability", postgresql_using="gin"),
         {"schema": SCHEMA},
     )
 
@@ -295,6 +322,22 @@ class Experience(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     is_indoor: Mapped[bool | None] = mapped_column(Boolean, default=None)
     accessibility: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
     attributes: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    # What this listing claims to be suitable for, over the controlled vocabulary
+    # in `catalog/suitability.py` - a vegan menu, a play area, step-free access.
+    #
+    # Presence-only, and that is the whole semantics: a slug here is a claim the
+    # publisher made, and its absence means nobody has said, not that the answer
+    # is no. Storing a false would invent a fact and then be indistinguishable
+    # from a real refusal, which is how somebody with a nut allergy gets sent
+    # somewhere on the strength of a default.
+    #
+    # An array rather than JSONB because it is queried by containment on every
+    # constrained search and `ARRAY @> ARRAY` takes a GIN index cleanly. It
+    # mirrors `venues.facilities`, which already had this shape; the effective
+    # set for a listing is the union of the two.
+    suitability: Mapped[list[str]] = mapped_column(
+        ARRAY(String(64)), default=list, server_default="{}", nullable=False
+    )
 
     # --- Discovery signals (spec 54.03 s15) ---------------------------------
     # Owned by the platform, never by a publisher, and never accepted from input.
@@ -303,6 +346,20 @@ class Experience(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     trend_score: Mapped[float] = mapped_column(Numeric(5, 4), default=0.0, nullable=False)
     rating_average: Mapped[float | None] = mapped_column(Numeric(3, 2), default=None)
     rating_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # How many people have reposted this, kept here rather than counted on read.
+    #
+    # A feed renders dozens of cards and each shows it; counting per card is the
+    # N+1 that `with_card_relations` exists to prevent. Written by
+    # `explorer.social`, which owns the rows it counts, and never accepted from
+    # input - a publisher who could set their own numbers would have found the
+    # cheapest growth hack available.
+    #
+    # Like and comment counts sat beside this and were removed with the features
+    # they counted; ratings live on `rating_average` / `rating_count`.
+    repost_count: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     # Nullable so an experience is usable before the embedding worker reaches it.
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), default=None)
     # Which provider produced `embedding`. Vectors from different models occupy

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from app.domains.catalog import suitability
 from app.domains.catalog.models import EventInstance, Experience
 from app.domains.catalog.schemas import (
     CategoryOut,
@@ -50,6 +51,7 @@ def _venue(experience: Experience) -> VenueSummary | None:
         longitude=venue.longitude,
         neighborhood=neighborhood,
         accessibility=venue.accessibility or {},
+        facilities=suitability.normalise(venue.facilities),
         opening_hours=venue.opening_hours or {},
     )
 
@@ -63,6 +65,9 @@ def _publisher(experience: Experience) -> PublisherSummary | None:
     publisher = experience.publisher
     if publisher is None:
         return None
+    from app.domains.publisher import business as business_vocab
+
+    business_type = getattr(publisher, "business_type", None)
     return PublisherSummary(
         id=publisher.id,
         name=publisher.name,
@@ -70,6 +75,11 @@ def _publisher(experience: Experience) -> PublisherSummary | None:
         logo_url=publisher.logo_url,
         verification_status=publisher.verification_status,
         trust_level=publisher.trust_level,
+        type=publisher.type,
+        business_type=business_type,
+        business_type_label=(
+            business_vocab.label(business_type) if business_type else None
+        ),
     )
 
 
@@ -97,8 +107,18 @@ def to_summary(
     distance_km: float | None = None,
     is_saved: bool = False,
     include_next_event: bool = True,
+    wanted: list[str] | None = None,
+    is_reposted: bool = False,
 ) -> ExperienceSummary:
+    """Card payload.
+
+    `wanted` is what the explorer asked to be true of a listing. Passing it fills
+    `unverified` with the claims this one has not made, so the card can say so in
+    the same breath as showing it. Omitting it leaves that empty, which is right
+    for a feed nobody constrained.
+    """
     next_event = next_event_of(experience) if include_next_event else None
+    assessment = suitability.assess(experience, wanted)
     return ExperienceSummary(
         id=experience.id,
         title=experience.title,
@@ -119,9 +139,13 @@ def to_summary(
         next_event=EventInstanceOut.model_validate(next_event) if next_event else None,
         duration_minutes=experience.duration_minutes,
         is_indoor=experience.is_indoor,
+        suitability=suitability.effective(experience),
+        unverified=sorted(assessment.missing),
         reason=reason,
         distance_km=distance_km,
         is_saved=is_saved,
+        repost_count=experience.repost_count or 0,
+        is_reposted=is_reposted,
     )
 
 
@@ -131,9 +155,14 @@ def to_detail(
     upcoming_events: list[EventInstance] | None = None,
     is_saved: bool = False,
     distance_km: float | None = None,
+    is_reposted: bool = False,
 ) -> ExperienceDetail:
     summary = to_summary(
-        experience, is_saved=is_saved, distance_km=distance_km, include_next_event=False
+        experience,
+        is_saved=is_saved,
+        distance_km=distance_km,
+        include_next_event=False,
+        is_reposted=is_reposted,
     )
     events = upcoming_events or []
     # The caller has already ordered and filtered the occurrences, so the first is

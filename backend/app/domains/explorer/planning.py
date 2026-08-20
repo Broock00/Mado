@@ -40,12 +40,14 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from app.core.logging import get_logger
+from app.domains.catalog import suitability as suitability_vocab
 from app.domains.catalog.models import Experience
 from app.domains.discovery.ranking import RankingContext, haversine_km, rank
+from app.integrations.weather import DailyWeather
 
 logger = get_logger("mado.planning")
 
@@ -100,9 +102,22 @@ class PlanRequest:
     longitude: float | None = None
     budget: float | None = None
     max_stops: int = 4
+    # The city's currency, carried so the plan can state a total in the money the
+    # explorer will actually spend. It used to be the literal string "ETB"
+    # wherever a plan mentioned a number, which was correct in exactly one
+    # country and quietly wrong in every other - a Paris itinerary priced in birr.
+    currency: str = "ETB"
     # Category slugs the plan should be built around, if any were stated.
     categories: list[str] = field(default_factory=list)
     free_only: bool = False
+    # Claims every stop must have made - a vegan kitchen, step-free access. Hard,
+    # and applied to the candidate pool before anything is ordered: a plan is a
+    # promise about a whole evening, so one unusable stop ruins all of it rather
+    # than costing a place in a list.
+    required_suitability: list[str] = field(default_factory=list)
+    # Claims that sort rather than exclude. These reach the ranker through the
+    # context and need no handling here.
+    preferred_suitability: list[str] = field(default_factory=list)
     # Refinement (spec AI-004). Experiences the explorer already accepted and
     # ones they rejected.
     #
@@ -146,10 +161,76 @@ class Plan:
     # dropped. An explorer who asked for four stops and got two deserves to know
     # which limit bit (spec PRODUCT-00 principle 5).
     unmet: list[str] = field(default_factory=list)
+    currency: str = "ETB"
 
     @property
     def is_empty(self) -> bool:
         return not self.stops
+
+
+@dataclass(slots=True)
+class TripRequest:
+    """A stay of several days, rather than one evening.
+
+    The single-day planner answers "plan my evening". It cannot answer "we are in
+    Paris from the 14th to the 18th", and the difference is not just arithmetic:
+    across days you must not repeat a stop, the budget is spent over the whole
+    stay rather than per outing, and the weather is different on each day - which
+    is the fact that decides which day the outdoor thing belongs on.
+    """
+
+    start: datetime
+    end: datetime
+    city_slug: str
+    timezone: str = "UTC"
+    latitude: float | None = None
+    longitude: float | None = None
+    # For the whole stay, not per day. Divided as the trip is built, so an
+    # expensive first day genuinely leaves less for the rest instead of every day
+    # quietly getting the full allowance.
+    budget: float | None = None
+    currency: str = "ETB"
+    stops_per_day: int = 3
+    categories: list[str] = field(default_factory=list)
+    free_only: bool = False
+    required_suitability: list[str] = field(default_factory=list)
+    preferred_suitability: list[str] = field(default_factory=list)
+    avoid_experience_ids: list[uuid.UUID] = field(default_factory=list)
+
+    @property
+    def nights(self) -> int:
+        return max(0, (self.end.date() - self.start.date()).days)
+
+
+@dataclass(slots=True)
+class TripDay:
+    day: date
+    plan: Plan
+    # The forecast this day was planned against, or None when it is past the
+    # provider's horizon. Carried so the reply can say "planned for rain" or
+    # admit that it could not see that far, rather than quietly implying it knew.
+    weather: DailyWeather | None = None
+
+    @property
+    def is_empty(self) -> bool:
+        return self.plan.is_empty
+
+
+@dataclass(slots=True)
+class Trip:
+    days: list[TripDay]
+    total_cost: float
+    currency: str
+    rationale: str
+    unmet: list[str] = field(default_factory=list)
+
+    @property
+    def is_empty(self) -> bool:
+        return all(day.is_empty for day in self.days)
+
+    @property
+    def planned_days(self) -> int:
+        return sum(1 for day in self.days if not day.is_empty)
 
 
 # --- geometry and timing -----------------------------------------------------
@@ -231,7 +312,19 @@ def build_plan(
 
     if request.available_minutes < 45:
         return Plan([], 0.0, 0, "That window is too short to plan around.",
-                    unmet=["The time window was under 45 minutes."])
+                    unmet=["The time window was under 45 minutes."],
+                    currency=request.currency)
+
+    # Hard requirements are applied before ranking rather than after. A stop the
+    # explorer cannot use is not a low-scoring stop, it is not a candidate - and
+    # leaving it in the pool to be out-ranked means it still appears whenever the
+    # alternatives are thin, which is exactly when it does the most damage.
+    if request.required_suitability:
+        candidates = [
+            experience
+            for experience in candidates
+            if suitability_vocab.assess(experience, request.required_suitability).is_fully_met
+        ]
 
     scored = rank(candidates, ctx, diversify=False)
     value_by_id = {str(item.experience.id): item.score for item in scored}
@@ -276,6 +369,7 @@ def build_plan(
             [], 0.0, 0,
             "Nothing in the catalogue fits that window.",
             unmet=unmet or ["No candidate fitted the time window."],
+            currency=request.currency,
         )
 
     total_cost = sum(stop.estimated_cost for stop in stops)
@@ -285,7 +379,8 @@ def build_plan(
             return Plan(
                 [], 0.0, 0,
                 "Nothing in that budget fits the time you have.",
-                unmet=[f"Budget of {request.budget:.0f} could not be met."],
+                unmet=[f"Budget of {request.budget:.0f} {request.currency} could not be met."],
+                currency=request.currency,
             )
         unmet.append("Some stops were dropped to stay inside the budget.")
         stops = _retime(stops, request, origin)
@@ -302,7 +397,187 @@ def build_plan(
         total_travel_minutes=sum(stop.travel_minutes for stop in stops),
         rationale=_explain(stops, request),
         unmet=unmet,
+        currency=request.currency,
     )
+
+
+# The hours a day out is planned between, in the city's own clock. The start
+# matches ACTIVE_DAY_START_HOUR, which already existed for the same reason; the
+# end is late enough for dinner and a show and early enough that the planner does
+# not schedule breakfast for 23:40 on the theory that the day has not ended.
+ACTIVE_DAY_END_HOUR = 22
+
+
+def build_trip(
+    candidates: list[Experience],
+    request: TripRequest,
+    ctx: RankingContext,
+    *,
+    weather_by_day: dict[date, DailyWeather] | None = None,
+) -> Trip:
+    """Plan a stay of several days as a sequence of day plans.
+
+    Days are built in order, and each one is planned against **its own** weather
+    and against what the earlier days have already used up. Both matter:
+
+    * **No repeats.** A stop chosen on Tuesday is excluded from Wednesday. Without
+      this the same highest-ranked museum appears on all five days, because
+      nothing about ranking one day knows another day happened.
+    * **Its own forecast.** The ranker's `fit` signal reads `ctx.weather`, so
+      rebuilding the context per day is the whole mechanism by which the outdoor
+      market lands on the dry day and the gallery on the wet one. It is greedy
+      rather than a global assignment - each day takes the best thing available to
+      it - which is explainable and, when a five-day forecast has two wet days,
+      gets the same answer a search would.
+    * **One budget.** What a day spends is deducted before the next is planned.
+
+    Beyond the forecast horizon `weather_by_day` simply has no entry, the day is
+    planned with no weather signal, and :attr:`TripDay.weather` stays None so the
+    reply can say so instead of implying knowledge it does not have.
+    """
+    weather_by_day = weather_by_day or {}
+
+    try:
+        zone = ZoneInfo(request.timezone)
+    except Exception:  # noqa: BLE001 - an unknown zone must not break planning
+        zone = UTC
+
+    days: list[TripDay] = []
+    used: set[uuid.UUID] = set(request.avoid_experience_ids)
+    remaining_budget = request.budget
+    unmet: list[str] = []
+
+    for day in _dates_between(request.start, request.end, zone):
+        window = _day_window(day, request, zone)
+        if window is None:
+            continue
+        day_start, day_end = window
+
+        forecast = weather_by_day.get(day)
+        # A fresh context per day, because `weather` is the input that makes each
+        # day's ranking different from the others'.
+        day_ctx = replace(ctx, now=day_start, weather=forecast)
+
+        day_request = PlanRequest(
+            start=day_start,
+            end=day_end,
+            city_slug=request.city_slug,
+            latitude=request.latitude,
+            longitude=request.longitude,
+            budget=remaining_budget,
+            max_stops=request.stops_per_day,
+            currency=request.currency,
+            categories=request.categories,
+            free_only=request.free_only,
+            required_suitability=request.required_suitability,
+            preferred_suitability=request.preferred_suitability,
+            avoid_experience_ids=sorted(used, key=str),
+        )
+
+        plan = build_plan(candidates, day_request, day_ctx)
+        days.append(TripDay(day=day, plan=plan, weather=forecast))
+
+        for stop in plan.stops:
+            used.add(stop.experience.id)
+        if remaining_budget is not None:
+            remaining_budget = max(0.0, remaining_budget - plan.total_cost)
+
+    total_cost = round(sum(day.plan.total_cost for day in days), 2)
+    empty_days = [day for day in days if day.is_empty]
+    if empty_days and len(empty_days) < len(days):
+        # Named rather than hidden. A blank Thursday in the middle of a trip is
+        # something the explorer has to know about to do anything about.
+        unmet.append(
+            "Nothing in the catalogue fitted "
+            + ", ".join(day.day.strftime("%a %d %b") for day in empty_days)
+            + "."
+        )
+
+    return Trip(
+        days=days,
+        total_cost=total_cost,
+        currency=request.currency,
+        rationale=_explain_trip(days, request, total_cost),
+        unmet=unmet,
+    )
+
+
+def _dates_between(start: datetime, end: datetime, zone: ZoneInfo) -> list[date]:
+    """Every local calendar day the stay touches.
+
+    Computed in the city's zone, not UTC. A trip landing at 22:00 local on the
+    14th is on the 14th; in UTC it may already be the 15th, and a plan that
+    silently skipped the arrival evening would be wrong in a way nobody would
+    think to check.
+    """
+    first = start.astimezone(zone).date()
+    last = end.astimezone(zone).date()
+    if last < first:
+        return []
+    return [first + timedelta(days=offset) for offset in range((last - first).days + 1)]
+
+
+def _day_window(
+    day: date, request: TripRequest, zone: ZoneInfo
+) -> tuple[datetime, datetime] | None:
+    """The planning window for one day of the stay.
+
+    The active hours of that day, clipped to the trip itself, so the first day
+    does not start before the explorer arrives and the last does not run past
+    their flight. Returns None when the intersection is too short to plan in -
+    an arrival at 23:00 gets no plan rather than a frantic one.
+    """
+    opens = datetime.combine(day, time(hour=ACTIVE_DAY_START_HOUR), tzinfo=zone)
+    closes = datetime.combine(day, time(hour=ACTIVE_DAY_END_HOUR), tzinfo=zone)
+
+    start = max(opens.astimezone(UTC), request.start)
+    end = min(closes.astimezone(UTC), request.end)
+    if (end - start) < timedelta(minutes=45):
+        return None
+    return start, end
+
+
+def _explain_trip(days: list[TripDay], request: TripRequest, total_cost: float) -> str:
+    planned = [day for day in days if not day.is_empty]
+    if not planned:
+        return "Nothing in the catalogue fitted those dates."
+
+    stops = sum(len(day.plan.stops) for day in planned)
+    parts = [
+        f"{stops} stop{'s' if stops != 1 else ''} across "
+        f"{len(planned)} day{'s' if len(planned) != 1 else ''}"
+    ]
+
+    # Naming the weather reasoning is the point of doing it. A plan that quietly
+    # put the walking tour on the only dry day looks arbitrary; saying so is what
+    # makes it read as a decision.
+    #
+    # Only claimed for days where it is actually true. A thin catalogue can leave
+    # the planner choosing between an outdoor stop and an empty day, and it takes
+    # the stop - so the wet days are not always all-indoor, and saying they are
+    # would be the plan describing itself wrongly. That is worse than saying
+    # nothing: the explorer packs for the sentence, not for the itinerary.
+    sheltered = [
+        day
+        for day in planned
+        if day.weather is not None
+        and day.weather.is_wet
+        and all(stop.experience.is_indoor for stop in day.plan.stops)
+    ]
+    if sheltered:
+        parts.append(
+            "with indoor stops on "
+            + ", ".join(day.day.strftime("%a") for day in sheltered)
+            + ", which look wet"
+        )
+
+    if total_cost == 0:
+        parts.append("and nothing to pay")
+    else:
+        parts.append(f"and roughly {total_cost:.0f} {request.currency} in total")
+
+    sentence = ", ".join(parts)
+    return sentence[0].upper() + sentence[1:] + "."
 
 
 def _clamp_to_waking_hours(request: PlanRequest, timezone: str) -> PlanRequest:
@@ -724,7 +999,7 @@ def _explain(stops: list[PlannedStop], request: PlanRequest) -> str:
     if cost == 0:
         parts.append("and nothing to pay")
     else:
-        parts.append(f"and roughly {cost:.0f} ETB")
+        parts.append(f"and roughly {cost:.0f} {request.currency}")
 
     # Upper-case the first character only. str.capitalize() would lower-case the
     # rest, turning "Azmari Night" into "azmari night" and "ETB" into "etb".

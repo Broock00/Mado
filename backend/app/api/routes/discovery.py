@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
@@ -12,7 +13,9 @@ from app.core import rate_limit
 from app.core.config import get_settings
 from app.core.envelope import CollectionEnvelope, Envelope, clamp_limit
 from app.core.errors import PermissionDeniedError, ValidationError
+from app.domains.catalog import locate
 from app.domains.catalog import repository as catalog_repo
+from app.domains.catalog import suitability as suitability_vocab
 from app.domains.catalog.repository import (
     RADIUS_STEPS_KM,
     RESOLVED_BY_CHOSEN,
@@ -23,7 +26,7 @@ from app.domains.catalog.schemas import CamelModel, ExperienceSummary
 from app.domains.discovery.service import DiscoveryService, build_context
 from app.domains.explorer.learning import infer_preferences
 from app.domains.explorer.service import ExplorerService
-from app.integrations import places as places_module
+from app.integrations import weather
 
 router = APIRouter(tags=["discovery"])
 settings = get_settings()
@@ -53,6 +56,11 @@ class DiscoveryQuery(CamelModel):
     # Where the point came from, in words, for "near you in Brooklyn".
     place_label: str | None = None
     raining: bool = False
+    # Normalised to the vocabulary at the boundary, so a typo never reaches a
+    # query as a requirement nothing can satisfy - which would silently return
+    # an empty feed and look like a city with nothing in it.
+    requires: list[str] = Field(default_factory=list)
+    prefers: list[str] = Field(default_factory=list)
     limit: int = Field(default=12, ge=1, le=50)
 
 
@@ -87,7 +95,27 @@ async def discovery_query(
             "through a geocoding service, so it need not exist in Mado."
         ),
     ),
-    raining: bool = Query(default=False, description="Current weather signal from the client."),
+    raining: bool = Query(
+        default=False,
+        description=(
+            "Observed weather from the client, for right now. The server fetches "
+            "its own forecast for anything further ahead; this stays because an "
+            "observation of the current moment beats a prediction of it."
+        ),
+    ),
+    requires: list[str] | None = Query(
+        default=None,
+        description=(
+            "Suitability claims a listing must have made to be returned - "
+            "'vegan', 'step_free_access', 'childrens_play_area'. Listings that "
+            "have claimed nothing are excluded, because unverified is not a "
+            "'maybe' for somebody who needs it."
+        ),
+    ),
+    prefers: list[str] | None = Query(
+        default=None,
+        description="Suitability claims that sort results without excluding any.",
+    ),
     limit: int = Query(default=12, ge=1, le=50),
 ) -> DiscoveryQuery:
     """Work out where this request is about.
@@ -127,30 +155,15 @@ async def discovery_query(
         )
 
     if area is None and place:
+        # Resolved through `catalog.locate`, which the concierge also uses. The
+        # rules about countries, boxes and radius-by-kind used to live here and
+        # nowhere else, which is why the assistant could not answer a question
+        # about a place the map could show perfectly well.
         near = (latitude, longitude) if latitude is not None and longitude is not None else None
-        found = await places_module.get_provider().search(place, near=near, limit=1)
-        if found:
-            target = found[0]
-            place_label = target.area_label or target.label
-            # A country is scoped by its code rather than its shape. Exact,
-            # where a box is not - Kenya's box covers parts of four neighbours -
-            # and it works for the United States, whose box spans the globe
-            # because of the Pacific territories.
-            is_country = (target.kind or "").lower() == "country"
-            area = Area(
-                latitude=target.latitude,
-                longitude=target.longitude,
-                # The place decides how wide to look: a road is a short walk and
-                # a borough is not.
-                radius_km=radius_km or target.suggested_radius_km,
-                # A region is not a circle either. Without its box, "Kenya"
-                # searches sixty kilometres around the middle of the country -
-                # four hundred from Nairobi - and finds nothing.
-                bounding_box=(
-                    target.bounding_box if radius_km is None and not is_country else None
-                ),
-                country_code=target.country_code if is_country else None,
-            )
+        resolved = await locate.resolve_place(place, near=near, radius_km=radius_km)
+        if resolved is not None:
+            area = resolved.area
+            place_label = resolved.label
 
     if area is None and city:
         area = Area(city_slug=city)
@@ -184,6 +197,8 @@ async def discovery_query(
         area=area,
         place_label=place_label,
         raining=raining,
+        requires=suitability_vocab.normalise(requires),
+        prefers=suitability_vocab.normalise(prefers),
         limit=limit,
     )
 
@@ -204,12 +219,21 @@ async def _context(session, user, params: DiscoveryQuery):
     if user is not None:
         inferred = await infer_preferences(session, user_id=user.id, privacy=privacy)
 
+    # Today's forecast for wherever the query is about, not wherever the explorer
+    # is sitting: somebody in Addis browsing Brooklyn wants Brooklyn's weather.
+    # None whenever no provider is configured or there are no coordinates, and
+    # that stays None rather than becoming "fine".
+    today = await weather.forecast_for(params.latitude, params.longitude, days=1)
+
     return build_context(
         latitude=params.latitude,
         longitude=params.longitude,
         preferences=preferences,
         saved_ids=saved_ids,
         is_raining=params.raining,
+        weather=today.on(datetime.now(UTC).date()) if today else None,
+        required_suitability=set(params.requires),
+        preferred_suitability=set(params.prefers),
         inferred=inferred,
     )
 

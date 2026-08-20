@@ -28,10 +28,12 @@ import {
 import { ApiError, api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
 import type { PickedLocation } from '@/features/map/LocationPicker'
+import { FALLBACK_CENTRE } from '@/features/map/types'
 import { Badge, Button, Card, Input } from '@/design-system/primitives'
 import { toMajorInput, toMinor } from '@/lib/money'
 import { cn } from '@/lib/utils'
-import type { CreatePostInput, OwnPost } from '@/lib/types'
+import type { CreatePostInput, OwnPost, SuitabilitySlug } from '@/lib/types'
+import { SUITABILITY_GROUPS, suitabilityLabel } from '@/lib/suitability'
 import { TicketPlanEditor } from '@/features/commerce/TicketPlanEditor'
 import type { DraftTicket } from '@/features/commerce/TicketPlanEditor'
 import { WritingHelp } from './WritingHelp'
@@ -57,12 +59,14 @@ export function ComposePage() {
   const queryClient = useQueryClient()
 
   const user = useAppStore((s) => s.user)
-  const citySlug = useAppStore((s) => s.citySlug)
   const explorerLocation = useAppStore((s) => s.location)
+  // Wherever they were last looking on the discovery page. Only a starting
+  // position for the map, never the answer.
+  const browsingPlace = useAppStore((s) => s.place)
 
-  // A listing belongs to a city, and the app no longer assumes one. The centre
-  // the map picker opens on comes from whichever city is chosen rather than
-  // from a hardcoded table that only ever held one entry.
+  // Kept only to populate the currency list. A post's city is no longer chosen
+  // from this - it is worked out from where the pin is - so a city Mado has
+  // never heard of is now perfectly postable.
   const { data: cities } = useQuery({ queryKey: ['cities'], queryFn: () => api.cities() })
 
   const [draftId, setDraftId] = useState<string | null>(experienceId ?? null)
@@ -71,7 +75,6 @@ export function ComposePage() {
   const [form, setForm] = useState<CreatePostInput>({
     title: '',
     description: '',
-    citySlug: citySlug ?? '',
     type: 'place',
     summary: '',
     categorySlug: null,
@@ -94,6 +97,50 @@ export function ComposePage() {
   // trips to the server that could only happen in one sequence - price, save,
   // date, ticket - which is an implementation detail nobody writing a post
   // should have had to learn.
+  // Held apart from `form` because it is a set being toggled rather than a field
+  // being typed, and because an empty array and an absent key mean the same
+  // thing here - nobody has claimed anything.
+  const [suitability, setSuitability] = useState<SuitabilitySlug[]>([])
+
+  const toggleSuitability = (slug: SuitabilitySlug) =>
+    setSuitability((current) =>
+      current.includes(slug)
+        ? current.filter((item) => item !== slug)
+        : [...current, slug],
+    )
+
+  // Which publisher this is posted by. Null means the personal publisher, which
+  // is what the server assumes when the field is absent - so the default costs
+  // nothing and needs no extra request.
+  //
+  // Seeded from `?publisher=` so "Post as <business>" on the business dashboard
+  // arrives here already pointing at the right one.
+  const [publisherId, setPublisherId] = useState<string | null>(
+    () => new URLSearchParams(window.location.search).get('publisher'),
+  )
+
+  // Who this account may post as, answered by the server rather than assembled
+  // here. Usually one entry - an individual posts as themselves, a business as
+  // itself - and the control below never appears. A second entry exists only for
+  // somebody invited to another business, who genuinely has two identities.
+  const { data: identities } = useQuery({
+    queryKey: ['publishing-identities'],
+    queryFn: () => api.publishingIdentities(),
+    staleTime: 5 * 60_000,
+  })
+
+  const publisherOptions = useMemo(
+    () =>
+      (identities ?? []).map((identity) => ({
+        // The default identity is sent as null: the server resolves it from the
+        // account, and hard-coding an id here would be a second answer to
+        // "who is publishing this" that could disagree with it.
+        id: identity.isDefault ? null : identity.id,
+        name: identity.name,
+      })),
+    [identities],
+  )
+
   const [dates, setDates] = useState<{ id: string | null; startTime: string }[]>([])
   const [tickets, setTickets] = useState<DraftTicket[]>([])
   const [seeded, setSeeded] = useState(false)
@@ -117,7 +164,6 @@ export function ComposePage() {
     setForm({
       title: existing.title,
       description: existing.description,
-      citySlug: existing.citySlug ?? citySlug ?? '',
       type: existing.type,
       summary: existing.summary ?? '',
       categorySlug: existing.category?.slug ?? null,
@@ -127,12 +173,23 @@ export function ComposePage() {
     })
     setVenueId(existing.venue?.id ?? null)
     setDraftId(existing.id)
+    // Shown, not changed: the selector is disabled while editing.
+    setPublisherId(existing.publisher?.id ?? null)
+    // The card carries the union of the listing's claims and its venue's, so it
+    // is filtered back to what this listing itself can edit. Seeding the union
+    // would let a publisher "untick" a venue facility from here and then find it
+    // still true, because this form does not own that record.
+    setSuitability(
+      (existing.suitability ?? []).filter(
+        (slug) => !(existing.venue?.facilities ?? []).includes(slug),
+      ),
+    )
     setDates(
       (existing.upcomingEvents ?? [])
         .filter((event) => event.status !== 'cancelled')
         .map((event) => ({ id: event.id, startTime: event.startTime })),
     )
-  }, [existing, citySlug])
+  }, [existing])
 
   // The saved ticket plan, folded in once. Seeded rather than kept in sync,
   // because after that the list on screen is the one being edited and a refetch
@@ -181,20 +238,37 @@ export function ComposePage() {
     onError: (err) => setError(err instanceof ApiError ? err.message : 'Could not add that image.'),
   })
 
-  const chosenCity = cities?.find((c) => c.slug === form.citySlug) ?? null
-  // The city decides unless the publisher says otherwise. Sending nothing lets
-  // the server apply the same rule, so the two cannot disagree.
-  const effectiveCurrency = form.currency ?? chosenCity?.currency ?? 'ETB'
-  // Every currency Mado has a city in, plus the one being used. Built from the
-  // cities rather than hard-coded so a new city brings its own along.
+  /**
+   * Where the map opens before anything has been placed.
+   *
+   * Best available guess, in the order it is worth trusting: where the explorer
+   * actually is, then wherever they were last looking on the discovery page,
+   * then the platform's first city. None of these is the answer - the pin is -
+   * so being wrong here only costs a pan, where withholding the map entirely
+   * used to cost the whole post.
+   */
+  const mapCentre = useMemo(() => {
+    if (explorerLocation.latitude != null && explorerLocation.longitude != null) {
+      return { latitude: explorerLocation.latitude, longitude: explorerLocation.longitude }
+    }
+    if (browsingPlace) {
+      return { latitude: browsingPlace.latitude, longitude: browsingPlace.longitude }
+    }
+    return FALLBACK_CENTRE
+  }, [explorerLocation.latitude, explorerLocation.longitude, browsingPlace])
+
+  // Where it is decides, unless the publisher says otherwise. Sending nothing
+  // lets the server apply the same rule from the venue's own city, so the two
+  // cannot disagree.
+  const effectiveCurrency = form.currency ?? picked?.currency ?? 'ETB'
+  // The currency of wherever the pin is, plus every currency Mado already has a
+  // city in - which now grows on its own, because a city row is created the
+  // first time somebody posts in one.
   const currencyChoices = Array.from(
     new Set([effectiveCurrency, ...(cities ?? []).map((c) => c.currency)]),
   ).sort()
 
-  const canSave =
-    form.title.trim().length >= 4 &&
-    form.description.trim().length > 0 &&
-    Boolean(form.citySlug)
+  const canSave = form.title.trim().length >= 4 && form.description.trim().length > 0
 
   /**
    * What is still missing, judged from the screen rather than from the last
@@ -214,7 +288,6 @@ export function ComposePage() {
     if (form.title.trim().length < 4) missing.push('Give it a title of at least 4 characters.')
     if (form.description.trim().length < 40)
       missing.push('Add a description of at least 40 characters.')
-    if (!form.citySlug) missing.push('Choose a city.')
     if (!form.categorySlug) missing.push('Choose a category so people can find it.')
     if (!venueId && !picked) missing.push('Add a location.')
     if (form.type === 'event' && dates.length === 0)
@@ -243,16 +316,33 @@ export function ComposePage() {
           name: venue_name(),
           address:
             picked.label ?? `${picked.latitude.toFixed(5)}, ${picked.longitude.toFixed(5)}`,
-          citySlug: form.citySlug,
+          // No city. The server works it out from these coordinates and
+          // materialises the row if it has never seen that city before, which
+          // is what lets somebody post from a town nobody had typed in.
           latitude: picked.latitude,
           longitude: picked.longitude,
+          // Present only when the pin came from a search result and was not
+          // moved afterwards. Recorded so the same address added twice can be
+          // recognised as the same address; nothing reads it back.
+          placeId: picked.placeId,
         })
         venue = created.id
         setVenueId(created.id)
       }
 
-      // 2. The listing.
-      const payload = { ...form, venueId: venue }
+      // 2. The listing. `suitability` is always sent, including empty, so
+      //    unticking the last claim actually withdraws it - omitting the key
+      //    would leave the old set standing and there would be no way to take
+      //    back a promise the kitchen can no longer keep.
+      const payload = {
+        ...form,
+        venueId: venue,
+        suitability,
+        // Only on create. `publisherId` is not an editable field server-side,
+        // and sending it on an update would be asking for something the API
+        // correctly ignores.
+        ...(draftId || !publisherId ? {} : { publisherId }),
+      }
       const saved = draftId
         ? await api.updatePost(draftId, payload)
         : await api.createPost(payload)
@@ -397,6 +487,39 @@ export function ComposePage() {
         Tell people what it is, where, and when. You can save and come back to it.
       </p>
 
+      {/* Who this is published by. Only shown when there is a choice to make -
+          most people post as themselves and should never see a control asking
+          them to confirm it.
+
+          Fixed once the post exists: moving a listing between publishers would
+          move it between the people accountable for it, and reviews, bookings
+          and moderation history all point at the original. */}
+      {publisherOptions.length > 1 && (
+        <div className="mt-4">
+          <label htmlFor="publisher" className="mb-1 block text-sm text-sand-700">
+            Posting as
+          </label>
+          <select
+            id="publisher"
+            value={publisherId ?? ''}
+            onChange={(e) => setPublisherId(e.target.value || null)}
+            disabled={isEditing}
+            className="w-full max-w-sm rounded-lg border border-sand-300 bg-white px-3 py-2 text-sm text-sand-900 disabled:bg-sand-100"
+          >
+            {publisherOptions.map((option) => (
+              <option key={option.id ?? 'me'} value={option.id ?? ''}>
+                {option.name}
+              </option>
+            ))}
+          </select>
+          {isEditing && (
+            <p className="mt-1 text-xs text-sand-500">
+              A post stays with whoever published it.
+            </p>
+          )}
+        </div>
+      )}
+
       {error && (
         <p role="alert" className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
@@ -485,26 +608,12 @@ export function ComposePage() {
             onApply={(patch) => setForm((current) => ({ ...current, ...patch }))}
           />
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="city" className="mb-1.5 block text-sm font-medium text-sand-700">
-                City
-              </label>
-              <select
-                id="city"
-                value={form.citySlug}
-                onChange={(e) => setForm({ ...form, citySlug: e.target.value })}
-                className="h-11 w-full rounded-lg border border-sand-300 bg-white px-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
-              >
-                <option value="">Choose one…</option>
-                {cities?.map((c) => (
-                  <option key={c.id} value={c.slug}>
-                    {c.name}, {c.country}
-                  </option>
-                ))}
-              </select>
-            </div>
-
+          {/* No city field. It used to be a dropdown of the ten cities somebody
+              had typed into a table, which was both a question the publisher
+              should not have had to answer and a ceiling on where the platform
+              could be used at all. The city is now worked out from where the pin
+              is, and shown back under the map as confirmation. */}
+          <div>
             <div>
               <label htmlFor="category" className="mb-1.5 block text-sm font-medium text-sand-700">
                 Category
@@ -552,28 +661,21 @@ export function ComposePage() {
                   geocoder wants - and gave no feedback until after they had
                   committed. Placing a pin is the same act as knowing where you
                   are. */}
-              {!explorerLocation.latitude && !chosenCity ? (
-                <p className="rounded-lg bg-sand-100 px-3 py-2 text-sm text-sand-600">
-                  Choose a city above, or share your location, and the map will open there.
-                </p>
-              ) : (
+              {/* Always rendered now. It used to be withheld until a city had
+                  been chosen or location shared, which meant the one control
+                  that can answer "where is it" was hidden behind answering
+                  "where is it". The map opens somewhere sensible and search
+                  moves it anywhere on earth. */}
               <Suspense
                 fallback={<div className="h-72 w-full animate-pulse rounded-xl bg-sand-200" />}
               >
-                <LocationPicker
-                  centre={
-                    explorerLocation.latitude != null && explorerLocation.longitude != null
-                      ? {
-                          latitude: explorerLocation.latitude,
-                          longitude: explorerLocation.longitude,
-                        }
-                      : { latitude: chosenCity!.latitude, longitude: chosenCity!.longitude }
-                  }
-                  value={picked}
-                  onChange={setPicked}
-                  citySlug={form.citySlug}
-                />
+                <LocationPicker centre={mapCentre} value={picked} onChange={setPicked} />
               </Suspense>
+
+              {picked?.area && (
+                <p className="text-sm text-sand-600">
+                  Filed under <span className="text-sand-900">{picked.area}</span>.
+                </p>
               )}
 
               {/* No "use this location" button any more. Dropping the pin is
@@ -591,6 +693,65 @@ export function ComposePage() {
               )}
             </>
           )}
+        </Card>
+
+        {/* Collapsed by default and never required. These are what let somebody
+            search for a vegan kitchen or step-free access and get an answer
+            rather than a hopeful list - but a publisher who skips the whole
+            section has done nothing wrong, because saying nothing is exactly
+            what an unticked box means. Making any of it mandatory would trade a
+            true "unknown" for a guessed answer. */}
+        <Card className="space-y-3 p-5">
+          <details className="group">
+            <summary className="flex cursor-pointer items-center gap-2 text-sm font-medium text-sand-700">
+              <Check className="size-4" aria-hidden />
+              What is it good for?{' '}
+              <span className="font-normal text-sand-400">(optional)</span>
+              {suitability.length > 0 && (
+                <span className="ml-auto rounded-full bg-brand-100 px-2 py-0.5 text-xs text-brand-800">
+                  {suitability.length}
+                </span>
+              )}
+            </summary>
+
+            <p className="mt-3 text-xs text-sand-500">
+              Only tick what is true every time you are open. Leaving something
+              unticked means “not said”, never “no” — so an empty box costs you
+              nothing, and a wrong tick sends somebody who cannot use stairs up a
+              flight of them.
+            </p>
+
+            <div className="mt-4 space-y-5">
+              {SUITABILITY_GROUPS.map((group) => (
+                <fieldset key={group.key} className="space-y-2">
+                  <legend className="text-xs font-medium uppercase tracking-wide text-sand-500">
+                    {group.label}
+                  </legend>
+                  {group.hint && <p className="text-xs text-sand-500">{group.hint}</p>}
+                  <div className="flex flex-wrap gap-2">
+                    {group.slugs.map((slug) => {
+                      const on = suitability.includes(slug)
+                      return (
+                        <button
+                          key={slug}
+                          type="button"
+                          aria-pressed={on}
+                          onClick={() => toggleSuitability(slug)}
+                          className={
+                            on
+                              ? 'rounded-full border border-brand-600 bg-brand-600 px-3 py-1 text-xs text-white'
+                              : 'rounded-full border border-sand-300 px-3 py-1 text-xs text-sand-700 hover:bg-sand-100'
+                          }
+                        >
+                          {suitabilityLabel(slug)}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </fieldset>
+              ))}
+            </div>
+          </details>
         </Card>
 
         {draftId && (

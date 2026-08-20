@@ -51,6 +51,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.domains.ai.models import SOURCE_EXPLICIT, SOURCE_INFERRED, UserMemory
+from app.domains.catalog import suitability as suitability_vocab
 from app.integrations.embeddings import TASK_DOCUMENT, TASK_QUERY, get_embedding_provider
 
 logger = get_logger("mado.ai.memory")
@@ -481,6 +482,57 @@ class MemoryService:
     # Internal alias kept for the recall/write paths, which want the same query
     # without implying the "show the explorer everything" contract.
     _all_for = list_for
+
+
+# What a remembered dietary fact means as a catalogue requirement.
+#
+# Only the entries that map cleanly. "lactose intolerant" becomes dairy_free and
+# "pescatarian" becomes nothing, because there is no slug for it and inventing a
+# vegetarian requirement for somebody who eats fish would narrow their results on
+# a fact they never stated. A memory with no mapping still reaches the prompt as
+# prose, so it is not lost - it just does not filter.
+_REQUIREMENT_BY_MEMORY: dict[str, str] = {
+    "vegan": suitability_vocab.VEGAN,
+    "vegetarian": suitability_vocab.VEGETARIAN,
+    "halal": suitability_vocab.HALAL,
+    "kosher": suitability_vocab.KOSHER,
+    "gluten-free": suitability_vocab.GLUTEN_FREE,
+    "gluten free": suitability_vocab.GLUTEN_FREE,
+    "lactose intolerant": suitability_vocab.DAIRY_FREE,
+    "lactose-intolerant": suitability_vocab.DAIRY_FREE,
+    "dairy-free": suitability_vocab.DAIRY_FREE,
+    "dairy free": suitability_vocab.DAIRY_FREE,
+    "nuts": suitability_vocab.NUT_FREE,
+    "peanuts": suitability_vocab.NUT_FREE,
+    "tree nuts": suitability_vocab.NUT_FREE,
+    "gluten": suitability_vocab.GLUTEN_FREE,
+    "dairy": suitability_vocab.DAIRY_FREE,
+    "milk": suitability_vocab.DAIRY_FREE,
+}
+
+
+def requirements_from(memories) -> list[str]:
+    """Turn remembered dietary facts into catalogue requirements.
+
+    This is what stops an explorer having to restate a restriction every single
+    turn. It was already recalled into the prompt on every message - see
+    ALWAYS_RECALLED_ATTRIBUTES - and the model was told about it, but retrieval
+    never was, so the concierge would describe a steakhouse warmly and then note
+    that it was a shame about the vegan thing.
+
+    Only `restriction` and `allergy` promote to a hard requirement. A `dislikes`
+    memory is a preference and must never remove options: somebody who once said
+    they are not keen on seafood has not said they cannot eat it.
+    """
+    wanted: set[str] = set()
+    for memory in memories or []:
+        if getattr(memory, "attribute", None) not in {"restriction", "allergy"}:
+            continue
+        value = (getattr(memory, "value", "") or "").strip().lower()
+        slug = _REQUIREMENT_BY_MEMORY.get(value)
+        if slug:
+            wanted.add(slug)
+    return sorted(wanted)
 
 
 # --- helpers -----------------------------------------------------------------

@@ -134,6 +134,39 @@ Extract only what the explorer actually expressed:
 - categories - the kinds of thing they asked for, lowercase slugs, from:
   food, drink, music, arts, culture, nightlife, outdoors, sports, markets, wellness
 - maxStops - for PLAN_ACTIVITY, how many stops they asked for
+- requiredSuitability - things every option must have, because somebody in the
+  group cannot use it otherwise
+- preferredSuitability - things that would be better but are not essential
+
+Both suitability lists are drawn from this vocabulary and nothing else:
+  vegan, vegetarian, halal, kosher, gluten_free, nut_free, dairy_free,
+  fasting_menu, alcohol_free, serves_late, childrens_play_area, child_menu,
+  high_chairs, baby_changing, child_friendly, pushchair_access,
+  step_free_access, accessible_toilet, accessible_parking, hearing_loop,
+  sign_language, quiet_space, indoor_seating, outdoor_seating, shaded_seating,
+  heated, air_conditioned, covered, parking, wifi, prayer_room, pet_friendly,
+  card_accepted
+
+Which list something goes in is the whole question, so read it carefully:
+
+- A need somebody in the group *has* is required. "My father is vegan", "my
+  mother uses a wheelchair", "my son is allergic to nuts" are requirements, and
+  a place that has not said it can meet them will not be offered at all.
+- A thing they would *like* is preferred. "Somewhere with a play area would be
+  good", "ideally outdoor seating".
+- Do not promote a preference to a requirement to be helpful. A requirement
+  removes options, and over-applying it returns an empty answer to somebody who
+  would have been perfectly happy.
+
+Two traps worth naming:
+- "Fasting" is ambiguous and the two meanings need different things. Orthodox
+  fasting wants fasting_menu; Ramadan usually means eating after sunset, which is
+  serves_late and often halal. If the message does not make clear which, set
+  needsClarification and ask - guessing puts food in front of somebody who cannot
+  eat it.
+- Not liking cold or heat is not a suitability claim, it is a weather constraint.
+  Use indoorPreferred for it, and let the forecast do the rest. There is no slug
+  for "warm" and inventing one from this list would be wrong.
 
 Omit anything not expressed. Do not infer a budget from "cheap" unless a number was
 given - set freeOnly only for actually free, and leave budgetAmount null otherwise.
@@ -158,6 +191,29 @@ it will not be true next month.
 Return an empty list when the message reveals nothing durable. That is the normal
 case. Inventing a preference puts words in someone's mouth and then steers months of
 recommendations by them, so when in doubt, leave it out.
+
+# Where they are asking about
+`destination` is a place named in the message that is **not** where they already
+are. Give the plain name and nothing else: "New York", "Kenya", "Shoreditch".
+
+The explorer is currently in {city_name}. Everything is answered about there unless
+this field says otherwise, so:
+
+- Set it whenever they name somewhere else, however casually. "next week we're in
+  New York, any music nights?" is destination="New York". So is "what about Paris?"
+  and "we land in Nairobi on Friday".
+- Set it for a smaller place inside where they are, too - "anything on in Bole
+  tonight" is destination="Bole". Narrowing is as useful as travelling.
+- Leave it empty when they name nowhere. "what's on tonight" means here.
+- Leave it empty when the place they name is only the subject of the thing, not
+  where they want to go: "the New York exhibition at the museum" is not a trip to
+  New York.
+- A place named in an earlier turn stays in force. Only set it when *this* message
+  names somewhere, and set it again when they change their mind.
+
+Do not translate, expand or correct the name beyond ordinary spelling - "newyork"
+is "New York", but do not turn "Brooklyn" into "Brooklyn, New York, USA". A place
+service resolves it afterwards and does that better than either of us.
 
 # Search query
 For search intents, put the part of the message describing what they are looking for
@@ -218,6 +274,11 @@ UNDERSTANDING_RESPONSE_SCHEMA: dict = {
             },
         },
         "searchQuery": {"type": "string"},
+        # A place named in this message that is not where the explorer already
+        # is. Free text, resolved afterwards through the places provider rather
+        # than matched against a table - geography is not Mado's data, so there
+        # is no list of valid values to enumerate here.
+        "destination": {"type": "string"},
         "timeWindow": {
             "type": "object",
             "nullable": True,
@@ -241,6 +302,14 @@ UNDERSTANDING_RESPONSE_SCHEMA: dict = {
                 "accessibilityRequired": {"type": "boolean"},
                 "maxStops": {"type": "integer", "nullable": True},
                 "categories": {"type": "array", "items": {"type": "string"}},
+                # Not enumerated in the schema, and deliberately. The provider
+                # rejects an enum this long on some models, and a slug outside the
+                # vocabulary is dropped by `suitability.normalise` on the way in -
+                # so the floor is enforced in code rather than by the model
+                # obeying a list. The prompt still names the vocabulary, which is
+                # what makes it usually correct rather than merely safe.
+                "requiredSuitability": {"type": "array", "items": {"type": "string"}},
+                "preferredSuitability": {"type": "array", "items": {"type": "string"}},
             },
         },
         "preferences": {
@@ -307,6 +376,26 @@ right for them, say so and stop - offering five when one fits is not helpfulness
 - Dietary restrictions and allergies are safety-relevant. Never recommend something
   that conflicts with one without naming the conflict plainly.
 
+# What a listing has and has not said
+Each result carries what it has confirmed about itself, and `unverified` naming what
+the explorer asked for that it has *not* confirmed.
+
+Unverified means nobody has said, in either direction. It does not mean no.
+
+- Never turn silence into either promise. "It does not have a play area" is as wrong
+  as "it has one" when the listing simply never said.
+- When something they asked for is unverified, say so in passing and move on -
+  "worth ringing ahead about the step-free entrance" - rather than apologising or
+  padding every suggestion with caveats.
+- Never state that a place is safe for an allergy unless it confirmed it.
+
+# Answering a trip
+When RESULTS covers several days, present it day by day in date order and keep each
+day's stops together. Say what decided a day's shape when the reason is real - a
+fixed-time event, or a forecast you were given. Never invent weather for a day whose
+forecast was not provided; if a day has none, say the forecast does not reach that
+far rather than guessing.
+
 # Answering a plan
 When RESULTS is an itinerary, the order and the timings were computed and are
 feasible. Present it as a sequence in order, with the times given. Say what makes it
@@ -338,6 +427,10 @@ def build_context_notes(
     preferences: dict | None,
     time_label: str | None,
     constraints: dict | None,
+    weather: object | None = None,
+    weather_window: list | None = None,
+    required_suitability: set[str] | None = None,
+    located_remotely: bool = False,
 ) -> str:
     """Render only the context that is actually present.
 
@@ -348,7 +441,16 @@ def build_context_notes(
     preferences = preferences or {}
     constraints = constraints or {}
 
-    if has_location:
+    if located_remotely:
+        # The strongest instruction in this block, because the model will
+        # otherwise read coordinates as "where the user is" and say so.
+        notes.append(
+            "These results are about somewhere the explorer is asking about, not "
+            "where they are. They are NOT there. Never say how far anything is "
+            "from them, never say 'near you' or 'a short walk', and do not "
+            "mention their own city unless they raise it."
+        )
+    elif has_location:
         notes.append("The explorer has shared their location; distances are accurate.")
     else:
         notes.append("The explorer has not shared a location; avoid distance claims.")
@@ -371,6 +473,46 @@ def build_context_notes(
 
     if constraints.get("accessibility_required"):
         notes.append("They need step-free access; only suggest places that provide it.")
+
+    if required_suitability:
+        from app.domains.catalog import suitability as vocab
+
+        notes.append(
+            "Everything in RESULTS has confirmed: "
+            + vocab.describe(sorted(required_suitability))
+            + ". Anything that had not confirmed it was excluded before you saw "
+            "this, so do not hedge about the ones you were given."
+        )
+
+    # Stated as facts about named days, not as suggestions. The forecast is
+    # retrieved data like everything else in RESULTS: the model may repeat it and
+    # reason from it, and may not revise it or extend it to a day not listed.
+    if weather_window:
+        lines = "\n".join(
+            f"  {day.day:%a %d %b}: {day.describe()}" for day in weather_window
+        )
+        notes.append(
+            "Forecast for the days around what they asked about:\n"
+            + lines
+            + "\nYou may state these and reason from them. For a day not listed, "
+            "say you do not have it in front of you - not that no forecast "
+            "exists. One of those is true and the other is a claim about the "
+            "world you are not in a position to make."
+        )
+    elif weather is not None:
+        notes.append(
+            f"Forecast for the day they asked about: {weather.describe()}. "
+            "You may mention this when it explains a choice. Do not predict "
+            "weather for any other day."
+        )
+    else:
+        # Said explicitly, because silence here reads as "nothing to report" and
+        # the model will fill it in from what it knows about the city's climate -
+        # which is not a forecast and must never be offered as one.
+        notes.append(
+            "No forecast is available for what they asked about. If they ask "
+            "about the weather, say you cannot see it rather than estimating."
+        )
 
     return "\n".join(notes)
 

@@ -1,4 +1,4 @@
-"""Discovery service - the Discovery Canvas and search orchestration.
+﻿"""Discovery service - the Discovery Canvas and search orchestration.
 
 Spec 10.01.03 describes the canvas as "a dynamic decision-support interface", not a
 feed: independently-ranked modules, each with its own eligibility rules, that are
@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.domains.catalog import repository as catalog_repo
+from app.domains.catalog import suitability as suitability_vocab
 from app.domains.catalog.models import Experience
 from app.domains.catalog.repository import Area
 from app.domains.catalog.schemas import ExperienceSummary
@@ -41,6 +42,7 @@ from app.domains.discovery.ranking import (
 )
 from app.domains.explorer.learning import InferredPreferences
 from app.integrations.search import SearchUnavailable, get_search_client
+from app.integrations.weather import DailyWeather
 
 logger = get_logger("mado.discovery")
 
@@ -57,6 +59,26 @@ class FeedModule:
     subtitle: str | None
     layout: str  # carousel | grid | list | map
     items: list[ExperienceSummary]
+
+
+def _meeting_requirements(
+    experiences: list[Experience], ctx: RankingContext
+) -> list[Experience]:
+    """Drop listings that have not claimed everything the explorer requires.
+
+    Unknown is dropped along with contradicted, and that asymmetry is the point:
+    for a requirement, "nobody has said whether this kitchen can do nut-free" is
+    not a maybe worth showing. Preferences are untouched here - they sort, in
+    `ranking._fit_score`, and never exclude.
+    """
+    required = ctx.required_suitability
+    if not required:
+        return experiences
+    return [
+        experience
+        for experience in experiences
+        if suitability_vocab.assess(experience, required).is_fully_met
+    ]
 
 
 @dataclass(slots=True)
@@ -89,6 +111,15 @@ class DiscoveryService:
         diversify: bool = True,
         weights: dict[str, float] | None = None,
     ) -> list[ExperienceSummary]:
+        # The last gate for a hard requirement, and the only one the index paths
+        # pass through. `catalog.repository.require_suitability` filters in SQL,
+        # but Meilisearch and pgvector both hand back ids chosen without any
+        # knowledge of these columns, so a step-free requirement would arrive
+        # here already violated. Filtering at the one point every surface shares
+        # is what makes "required" mean required rather than "required on the
+        # code paths somebody remembered".
+        experiences = _meeting_requirements(experiences, ctx)
+
         ranked = rank(
             experiences,
             ctx,
@@ -97,17 +128,28 @@ class DiscoveryService:
             limit=limit,
             weights=weights,
         )
+        # `wanted` travels into the card so it can show what this listing has not
+        # claimed. Silence is what made the old behaviour dangerous: a listing
+        # that never mentioned step-free access appeared in a step-free search
+        # looking exactly like one that had promised it.
+        wanted = sorted(ctx.wanted_suitability)
         return [
             to_summary(
                 item.experience,
                 reason=item.reason,
-                distance_km=item.distance_km,
+                # Withheld when the explorer is asking about somewhere else.
+                # Distance from the centre of a city they are not in is a number
+                # with no meaning, and every surface renders it as "1.6 km away"
+                # - which reads as away from them.
+                distance_km=None if ctx.located_remotely else item.distance_km,
                 is_saved=str(item.experience.id) in ctx.saved_experience_ids,
+                is_reposted=str(item.experience.id) in ctx.reposted_experience_ids,
+                wanted=wanted,
             )
             for item in ranked
         ]
 
-    async def _pool(self, *, area: Area, **filters) -> list:
+    async def _pool(self, ctx: RankingContext | None = None, *, area: Area, **filters) -> list:
         """Candidates for one rail, looking close in before looking further out.
 
         "What is happening near you" should mean the next street before it means
@@ -118,11 +160,22 @@ class DiscoveryService:
         Widening is not the same as ignoring distance: the ranker scores
         proximity, so a wider pool still puts the closest things first. This
         only decides what it is allowed to consider.
+
+        The context's hard requirements are applied here rather than by each
+        caller, so a rail added later cannot forget them - which for a step-free
+        or allergy requirement is not a missing feature but a wrong answer. Note
+        they are applied *inside* the ladder, so a requirement that empties the
+        nearest radius widens the search rather than dropping the requirement.
         """
+        required = sorted(ctx.required_suitability) if ctx else None
         found: list = []
         for step in area.ladder():
             found = await catalog_repo.query_experiences(
-                self.session, area=step, limit=CANDIDATE_POOL, **filters
+                self.session,
+                area=step,
+                limit=CANDIDATE_POOL,
+                required_suitability=required,
+                **filters,
             )
             if len(found) >= catalog_repo.MIN_CANDIDATES:
                 break
@@ -237,7 +290,7 @@ class DiscoveryService:
     async def for_you(
         self, ctx: RankingContext, *, area: Area, limit: int = 12
     ) -> list[ExperienceSummary]:
-        candidates = await self._pool(area=area)
+        candidates = await self._pool(ctx, area=area)
         return self.summarize(candidates, ctx, limit=limit)
 
     async def happening_now(
@@ -245,19 +298,19 @@ class DiscoveryService:
     ) -> list[ExperienceSummary]:
         """In progress or starting within the hour."""
         window = (ctx.now - timedelta(hours=2), ctx.now + timedelta(hours=1))
-        candidates = await self._pool(area=area, starts_between=window)
+        candidates = await self._pool(ctx, area=area, starts_between=window)
         return self.summarize(candidates, ctx, limit=limit)
 
     async def tonight(
         self, ctx: RankingContext, *, area: Area, limit: int = 12
     ) -> list[ExperienceSummary]:
-        candidates = await self._pool(area=area, starts_between=tonight_window(ctx.now))
+        candidates = await self._pool(ctx, area=area, starts_between=tonight_window(ctx.now))
         return self.summarize(candidates, ctx, limit=limit)
 
     async def weekend(
         self, ctx: RankingContext, *, area: Area, limit: int = 12
     ) -> list[ExperienceSummary]:
-        candidates = await self._pool(area=area, starts_between=weekend_window(ctx.now))
+        candidates = await self._pool(ctx, area=area, starts_between=weekend_window(ctx.now))
         return self.summarize(candidates, ctx, limit=limit)
 
     async def nearby(
@@ -298,7 +351,7 @@ class DiscoveryService:
     async def trending(
         self, ctx: RankingContext, *, area: Area, limit: int = 12
     ) -> list[ExperienceSummary]:
-        candidates = await self._pool(area=area)
+        candidates = await self._pool(ctx, area=area)
         # Trend score is the point of this rail, so it is sorted on directly rather
         # than blended - but the full ranker still supplies reasons and distances.
         candidates.sort(key=lambda exp: float(exp.trend_score or 0), reverse=True)
@@ -307,14 +360,14 @@ class DiscoveryService:
     async def free_experiences(
         self, ctx: RankingContext, *, area: Area, limit: int = 12
     ) -> list[ExperienceSummary]:
-        candidates = await self._pool(area=area, free_only=True)
+        candidates = await self._pool(ctx, area=area, free_only=True)
         return self.summarize(candidates, ctx, limit=limit)
 
     async def hidden_gems(
         self, ctx: RankingContext, *, area: Area, limit: int = 12
     ) -> list[ExperienceSummary]:
         """High quality, low popularity - the serendipity rail (spec principle 14)."""
-        candidates = await self._pool(area=area)
+        candidates = await self._pool(ctx, area=area)
         gems = [
             exp
             for exp in candidates
@@ -325,7 +378,7 @@ class DiscoveryService:
     async def by_category(
         self, ctx: RankingContext, *, area: Area, category_slug: str, limit: int = 24
     ) -> list[ExperienceSummary]:
-        candidates = await self._pool(area=area, category_slugs=[category_slug])
+        candidates = await self._pool(ctx, area=area, category_slugs=[category_slug])
         return self.summarize(candidates, ctx, limit=limit, diversify=False)
 
     async def similar_to(
@@ -422,6 +475,7 @@ class DiscoveryService:
                 category_slugs=category_slugs,
                 free_only=free_only,
                 experience_type=experience_type,
+                required_suitability=sorted(ctx.required_suitability),
                 limit=CANDIDATE_POOL,
             )
             needle = query.casefold()
@@ -519,7 +573,11 @@ def build_context(
     longitude: float | None = None,
     preferences: dict | None = None,
     saved_ids: set[str] | None = None,
+    reposted_ids: set[str] | None = None,
     is_raining: bool = False,
+    weather: DailyWeather | None = None,
+    required_suitability: set[str] | None = None,
+    preferred_suitability: set[str] | None = None,
     now: datetime | None = None,
     timezone: str = "Africa/Addis_Ababa",
     inferred: InferredPreferences | None = None,
@@ -531,10 +589,19 @@ def build_context(
 
     ``inferred`` is passed in rather than loaded here so this stays a pure
     function: it reads a database, and building a ranking context should not.
-    Callers fetch it once per request via :func:`infer_preferences`.
+    Callers fetch it once per request via :func:`infer_preferences`. ``weather``
+    is passed in for the same reason - it makes a network call.
+
+    Standing dietary and access needs are read from the stored profile and merged
+    with whatever this request asked for. Somebody who recorded a nut allergy at
+    signup should not have to restate it every time they open the app, which is
+    the whole point of the profile holding it.
     """
     preferences = preferences or {}
     stated_dislikes = set(preferences.get("dislikedCategories", []) or [])
+    profile_requirements = suitability_vocab.normalise(
+        preferences.get("suitability") or preferences.get("requirements") or []
+    )
     return RankingContext(
         now=now or datetime.now(UTC),
         latitude=latitude,
@@ -553,5 +620,9 @@ def build_context(
         inference_confidence=inferred.confidence if inferred else 0.0,
         budget=preferences.get("budget"),
         is_raining=is_raining,
+        weather=weather,
+        required_suitability=set(required_suitability or set()) | set(profile_requirements),
+        preferred_suitability=set(preferred_suitability or set()),
         saved_experience_ids=saved_ids or set(),
+        reposted_experience_ids=reposted_ids or set(),
     )

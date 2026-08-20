@@ -7,6 +7,10 @@
  * review.
  */
 
+import type { SuitabilitySlug } from './suitability'
+
+export type { SuitabilitySlug }
+
 export interface Meta {
   requestId?: string | null
   timestamp?: string | null
@@ -90,6 +94,14 @@ export interface PublisherSummary {
   logoUrl?: string | null
   verificationStatus: string
   trustLevel: number
+  /**
+   * `organization` means a business posted this; `individual` means a person
+   * did. On a card that is the difference between "the cafe says so" and
+   * "somebody who went there says so", which are different claims.
+   */
+  type: 'individual' | 'organization'
+  businessType?: string | null
+  businessTypeLabel?: string | null
 }
 
 export interface VenueSummary {
@@ -101,6 +113,12 @@ export interface VenueSummary {
   longitude: number
   neighborhood?: Neighborhood | null
   accessibility: Record<string, unknown>
+  /**
+   * The building's own claims. Sent apart from the experience's union so an
+   * editor can tell which record owns a claim and not offer to untick one it
+   * does not own.
+   */
+  facilities: SuitabilitySlug[]
   openingHours: Record<string, string>
 }
 
@@ -139,11 +157,34 @@ export interface ExperienceSummary {
   nextEvent?: EventInstance | null
   durationMinutes?: number | null
   isIndoor?: boolean | null
+  /**
+   * What this listing claims to be suitable for, from the vocabulary in
+   * `suitability.ts` - the union of the experience's own claims and its venue's.
+   */
+  suitability: SuitabilitySlug[]
+  /**
+   * Of what the explorer asked for, what this listing has *not* claimed.
+   *
+   * Unknown, never denied. Rendering this as "does not have" would invent a
+   * refusal nobody made, which for an access or allergy need is the harmful
+   * direction to be wrong in.
+   */
+  unverified: SuitabilitySlug[]
   /** Why this was surfaced - spec PRODUCT-00 principle 5. */
   reason?: string | null
   distanceKm?: number | null
   isSaved: boolean
+  /** The count comes off the listing itself, so a card costs no extra query. */
+  repostCount: number
+  isReposted: boolean
 }
+
+/** The state of the repost toggle after it was pressed. */
+export interface Reaction {
+  active: boolean
+  count: number
+}
+
 
 export interface ExperienceDetail extends ExperienceSummary {
   description: string
@@ -201,6 +242,13 @@ export interface ConciergeResult {
   reason?: string | null
   distanceKm?: number | null
   rating?: number | null
+  /** A result in the chat is a post like any other, so it can be reposted
+   *  from there. Zero for plan stops, which are built by hand. */
+  repostCount: number
+  isReposted: boolean
+  publisherName?: string | null
+  publisherSlug?: string | null
+  publisherType?: 'individual' | 'organization' | null
 }
 
 export interface SuggestedAction {
@@ -435,6 +483,38 @@ export interface Place {
   kind?: string | null
   /** How far around this place to look first - a road is not a borough. */
   suggestedRadiusKm: number
+  provider: string
+  /** The provider's identifier, kept when saving a venue against this place. */
+  placeId?: string | null
+  /**
+   * The currency in official use in this country, from CLDR. Not a property of
+   * the place - a lookup on `countryCode` done server-side so the browser does
+   * not need its own copy of the country-to-currency table.
+   */
+  currency?: string
+  /**
+   * Credits the provider requires be shown wherever this place is. Usually
+   * empty; when it is not, rendering the place without them breaches the
+   * licence it came under.
+   */
+  attributions?: string[]
+}
+
+/**
+ * One row of the location box, while somebody is still typing.
+ *
+ * Deliberately has no coordinates. Resolving every row would cost a lookup for
+ * the several nobody picks; `api.placeDetails` resolves the one that is chosen.
+ */
+export interface PlaceSuggestion {
+  placeId: string
+  text: string
+  /** "Brooklyn" - what the row leads with. */
+  primary: string
+  /** "NY, USA" - what tells two identically-named streets apart. */
+  secondary: string
+  kinds: string[]
+  distanceMetres?: number | null
   provider: string
 }
 
@@ -880,8 +960,13 @@ export interface OwnPost extends ExperienceDetail {
 export interface CreatePostInput {
   title: string
   description: string
-  citySlug: string
   type: 'place' | 'event' | 'activity'
+  /**
+   * Normally omitted. A post's city follows its venue, which was itself filed
+   * under the city its coordinates turned out to be in. Send one only for a post
+   * with no location at all.
+   */
+  citySlug?: string | null
   summary?: string | null
   categorySlug?: string | null
   venueId?: string | null
@@ -892,14 +977,135 @@ export interface CreatePostInput {
   currency?: string | null
   durationMinutes?: number | null
   isIndoor?: boolean | null
+  /**
+   * What this listing claims to be suitable for. Anything outside the vocabulary
+   * is dropped by the server rather than rejecting the save, so a stale client
+   * loses a claim instead of losing the post somebody just wrote.
+   */
+  suitability?: SuitabilitySlug[] | null
+}
+
+/**
+ * A business — what a business *account* is.
+ *
+ * An account is a person or a business, never both. There is no business login:
+ * the same credentials sign in to the same account, and after converting, that
+ * account has no personal profile alongside the business.
+ */
+export interface Business {
+  id: string
+  name: string
+  slug: string
+  type: 'individual' | 'organization'
+  businessType?: string | null
+  businessTypeLabel?: string | null
+  description?: string | null
+  industry?: string | null
+  website?: string | null
+  contact: Record<string, string>
+  social: Record<string, string>
+  logoUrl?: string | null
+  coverUrl?: string | null
+  verificationStatus: string
+  trustLevel: number
+  createdAt?: string | null
+}
+
+/** A business as an explorer sees it, with what it currently has published. */
+export interface PublicBusiness extends Business {
+  listings: ExperienceSummary[]
+}
+
+export interface BusinessMember {
+  id: string
+  role: string
+  roleLabel: string
+  status: 'invited' | 'active' | 'declined' | 'removed'
+  /** Null while an invitation is unanswered — no account is attached yet. */
+  userId?: string | null
+  displayName?: string | null
+  invitedEmail?: string | null
+  invitedAt?: string | null
+  expiresAt?: string | null
+  /** What the role permits, from the same source that enforces it. */
+  permissions: string[]
+}
+
+export interface BusinessInvitation {
+  id: string
+  role: string
+  roleLabel: string
+  businessId: string
+  businessName: string
+  businessSlug: string
+  invitedAt?: string | null
+  expiresAt?: string | null
+}
+
+export interface BusinessRole {
+  value: string
+  label: string
+  permissions: string[]
+}
+
+export type AccountType = 'individual' | 'business'
+
+export interface AccountTypeState {
+  accountType: AccountType
+  /**
+   * False when the account has never answered — it predates the question, or
+   * has only just registered. Distinct from the type itself, which defaults to
+   * individual, so the interface asks once rather than reading a default as a
+   * decision.
+   */
+  chosen: boolean
+  business?: Business | null
+}
+
+/** Someone a post can be published under. */
+export interface PublishingIdentity {
+  id: string
+  name: string
+  type: 'individual' | 'organization'
+  logoUrl?: string | null
+  /** The account's own identity. Exactly one entry carries this. */
+  isDefault: boolean
+}
+
+export interface CreateBusinessInput {
+  name: string
+  businessType?: string | null
+  description?: string | null
+  website?: string | null
+  contact?: Record<string, string> | null
+  social?: Record<string, string> | null
+  logoUrl?: string | null
+  coverUrl?: string | null
 }
 
 export interface CreateVenueInput {
   name: string
   address: string
-  citySlug: string
   latitude: number
   longitude: number
+  /**
+   * Normally omitted: the server works the city out from the coordinates, which
+   * is what lets a venue be added anywhere rather than only in a city somebody
+   * had already typed into a table.
+   */
+  citySlug?: string | null
+  /**
+   * The building's half of the suitability vocabulary - step-free access, a car
+   * park, a play area. These stay true whoever is performing tonight, which is
+   * why they belong to the venue rather than to a listing.
+   */
+  facilities?: SuitabilitySlug[] | null
+  /**
+   * The place provider's identifier, when the coordinates came from a search
+   * rather than a pin dropped on a map. Optional: a venue is located by its
+   * coordinates, and most are placed by hand.
+   */
+  placeId?: string | null
 }
 
 export interface VenueCreated {
