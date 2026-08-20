@@ -82,8 +82,25 @@ class Geocoder(Protocol):
         ...
 
 
+GEOCODING_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+
+
 class GoogleGeocoder:
-    """Google Geocoding API. The vendor named in spec 82.01."""
+    """Google Geocoding API. The vendor named in spec 82.01.
+
+    **The key goes in the query string, and it has to.** Everywhere else in this
+    project a Google key travels in an `X-Goog-Api-Key` header, and for good
+    reason - a key was leaked in a URL here once. This service is the exception:
+    it does not read that header at all. Sent one, it replies HTTP 200 with
+    `status: REQUEST_DENIED` and "You must use an API key", exactly as though
+    none had been sent - so geocoding through Google silently returned nothing,
+    for every address, while looking like a service that simply found no match.
+
+    That is also why `_read` below checks `status` rather than trusting
+    `raise_for_status`: this API reports refusals with a 200. `redact` in
+    `app/core/logging.py` scrubs `key=` from anything reaching a log sink, which
+    is what makes the query parameter safe.
+    """
 
     name = "google"
 
@@ -91,29 +108,16 @@ class GoogleGeocoder:
         self._api_key = api_key
 
     async def geocode(self, address: str, *, city: str, country: str) -> GeocodeResult | None:
-        params = {
-            "address": f"{address}, {city}, {country}",
-            # Biasing to the country stops "Bole" resolving to somewhere on
-            # another continent that happens to share the name.
-            "region": country[:2].lower(),
-        }
-        try:
-            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-                response = await client.get(
-                    "https://maps.googleapis.com/maps/api/geocode/json",
-                    params=params,
-                    # Header auth rather than a query parameter: httpx renders the
-                    # full URL into transport errors, so a key in the query string
-                    # ends up in the logs the first time a request fails.
-                    headers={"X-Goog-Api-Key": self._api_key},
-                )
-                response.raise_for_status()
-                body = response.json()
-        except httpx.HTTPError as exc:
-            logger.warning("google_geocode_failed", error=redact(str(exc)))
-            return None
-
-        results = body.get("results") or []
+        body = await self._read(
+            {
+                "address": f"{address}, {city}, {country}",
+                # Biasing to the country stops "Bole" resolving to somewhere on
+                # another continent that happens to share the name.
+                "region": country[:2].lower(),
+            },
+            operation="google_geocode",
+        )
+        results = (body or {}).get("results") or []
         if not results:
             return None
 
@@ -130,23 +134,38 @@ class GoogleGeocoder:
             provider=self.name,
         )
 
-
     async def reverse(self, latitude: float, longitude: float) -> str | None:
+        body = await self._read(
+            {"latlng": f"{latitude},{longitude}"}, operation="google_reverse"
+        )
+        results = (body or {}).get("results") or []
+        return results[0].get("formatted_address") if results else None
+
+    async def _read(self, params: dict[str, str], *, operation: str) -> dict | None:
         try:
             async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
                 response = await client.get(
-                    "https://maps.googleapis.com/maps/api/geocode/json",
-                    params={"latlng": f"{latitude},{longitude}"},
-                    headers={"X-Goog-Api-Key": self._api_key},
+                    GEOCODING_URL, params={**params, "key": self._api_key}
                 )
                 response.raise_for_status()
                 body = response.json()
-        except httpx.HTTPError as exc:
-            logger.warning("google_reverse_failed", error=redact(str(exc)))
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning(f"{operation}_failed", error=redact(str(exc)))
             return None
 
-        results = body.get("results") or []
-        return results[0].get("formatted_address") if results else None
+        status = str(body.get("status") or "")
+        if status not in {"OK", "ZERO_RESULTS"}:
+            # A configuration problem every time - the Geocoding API not enabled
+            # on the key, a referrer restriction on a server-side key, or no
+            # billing account. Worth a log line, because the alternative is a
+            # publisher being told their address does not exist.
+            logger.warning(
+                f"{operation}_refused",
+                status=status,
+                detail=redact(str(body.get("error_message") or "")),
+            )
+            return None
+        return body
 
 
 def _google_confidence(result: dict) -> float:

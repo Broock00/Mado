@@ -82,6 +82,26 @@ STATEMENTS: list[tuple[str, str]] = [
     ("api keys", f"delete from publisher.api_keys where owner_user_id in ({_ACCOUNTS})"),
     ("publishers", f"delete from publisher.publishers where owner_user_id in ({_ACCOUNTS})"),
     ("accounts", f"delete from identity.users where id in ({_ACCOUNTS})"),
+    # Cities materialised by a test posting somewhere the platform had never seen.
+    #
+    # These cannot be caught by the ownership rule above - a city has no owner,
+    # which is the whole point of it being derived from coordinates rather than
+    # entered by somebody. So the rule here is emptiness instead: a city that is
+    # not live, and that nothing is left pointing at, is a city no test and no
+    # person has a use for.
+    #
+    # Deliberately conservative in two directions. `is_live` false spares every
+    # seeded city outright, and they are all live. Requiring no venues and no
+    # experiences spares a real city somebody genuinely posted in, because it
+    # will not be empty. What is left is exactly the rows a test run created and
+    # then had emptied out by the statements above.
+    (
+        "materialised cities",
+        "delete from catalog.cities c where c.is_live = false "
+        "and not exists (select 1 from catalog.venues v where v.city_id = c.id) "
+        "and not exists (select 1 from catalog.experiences e where e.city_id = c.id) "
+        "and not exists (select 1 from catalog.neighborhoods n where n.city_id = c.id)",
+    ),
 ]
 
 

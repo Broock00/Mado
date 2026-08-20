@@ -6,11 +6,19 @@
  * looking at somewhere you are not yet, and being somewhere Mado has nothing.
  *
  * Anything typeable works, because nothing here comes from a list Mado keeps. A
- * country, a city, a borough, a street, a landmark: the text goes to a geocoder
- * and comes back as a point with a sensible radius around it, so "5th Avenue"
- * searches a few streets and "Brooklyn" searches a borough. The predecessor of
- * this component offered a dropdown of cities the database happened to contain,
- * which was one.
+ * country, a city, a borough, a street, a landmark, a venue: the text goes to
+ * Google Places and comes back as a point with a sensible radius around it, so
+ * "5th Avenue" searches a few streets and "Brooklyn" searches a borough. The
+ * predecessor of this component offered a dropdown of cities the database
+ * happened to contain, which was one.
+ *
+ * **Two calls, not one.** Typing asks for suggestions - names and identifiers,
+ * no coordinates. Choosing one asks for its details. That is worth the extra
+ * round trip on selection because the alternative resolves every row in the
+ * dropdown, five or six of which nobody picks, and is billed for all of them. A
+ * session token ties the keystrokes to the choice so the provider charges for
+ * the search rather than for the typing; it is minted per search and never
+ * reused, because a reused token quietly loses the grouping.
  *
  * The resolved point is stored, not the words. Sending the text on every
  * request would re-resolve it each time, and a search that quietly resolved
@@ -21,7 +29,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Check, ChevronDown, Loader2, MapPin, Search, X } from 'lucide-react'
 
-import { api } from '@/lib/api'
+import { api, newPlaceSessionToken } from '@/lib/api'
 import { useAppStore } from '@/app/store'
 import { useLocationContext, useRequestLocation } from '@/app/hooks'
 import { cn } from '@/lib/utils'
@@ -36,14 +44,30 @@ export function PlaceFilter() {
   const [open, setOpen] = useState(false)
   const [term, setTerm] = useState('')
   const [debounced, setDebounced] = useState('')
+  // Which row is being resolved, so the dropdown can show it working rather
+  // than sitting still for the length of a network call.
+  const [choosing, setChoosing] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
   const container = useRef<HTMLDivElement>(null)
+  const session = useRef(newPlaceSessionToken())
 
   // Typing is not a search. Each keystroke would be a request to somebody
-  // else's service, which their terms of use would rightly object to.
+  // else's service, which their terms of use would rightly object to - and
+  // although the session token means the provider bills the search rather than
+  // the keystrokes, it does not make the requests themselves free.
   useEffect(() => {
     const timer = setTimeout(() => setDebounced(term.trim()), 350)
     return () => clearTimeout(timer)
   }, [term])
+
+  // Opening the box starts a new search, and a search is what a session token
+  // groups. Carrying the previous one over would bill two searches as one and
+  // rank the second against the first one's context.
+  useEffect(() => {
+    if (!open) return
+    session.current = newPlaceSessionToken()
+    setFailed(false)
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -67,11 +91,53 @@ export function PlaceFilter() {
       : null
 
   const { data: results, isFetching } = useQuery({
-    queryKey: ['place-search', debounced, near?.lat, near?.lng],
-    queryFn: () => api.searchPlaces(debounced, near),
+    queryKey: ['place-autocomplete', debounced, near?.lat, near?.lng],
+    queryFn: () =>
+      api.autocompletePlaces(debounced, near, { sessionToken: session.current }),
     enabled: debounced.length >= 2,
-    staleTime: 10 * 60_000,
+    // Predictions belong to the session that asked for them, and the session
+    // ends the moment something is chosen. Caching across sessions would show a
+    // second search results grouped under the first one's token.
+    staleTime: 0,
+    gcTime: 0,
   })
+
+  /**
+   * Resolve a chosen suggestion and adopt it.
+   *
+   * The details call closes the session, so a fresh token is minted immediately
+   * afterwards - including on failure, because a token that has been sent once
+   * has already been spent whether or not an answer came back.
+   */
+  const choose = async (placeId: string) => {
+    setChoosing(placeId)
+    setFailed(false)
+    try {
+      const context = await api.placeDetails(placeId, session.current)
+      const found = context.place
+      if (!found) {
+        setFailed(true)
+        return
+      }
+      setPlace({
+        label: found.label,
+        latitude: found.latitude,
+        longitude: found.longitude,
+        radiusKm: found.suggestedRadiusKm,
+        // A country is searched by its code and a wide place by its box. Only
+        // something small enough to be a circle relies on the radius above.
+        countryCode:
+          (found.kind || '').toLowerCase() === 'country' ? found.countryCode : null,
+      })
+      setTerm('')
+      setOpen(false)
+    } catch {
+      setFailed(true)
+    } finally {
+      session.current = newPlaceSessionToken()
+      setChoosing(null)
+    }
+  }
 
   // What the button says. Never "near you" for somewhere the explorer is not.
   const label = place
@@ -163,34 +229,34 @@ export function PlaceFilter() {
                     Nowhere by that name. Try a city or a street.
                   </p>
                 )}
+                {failed && (
+                  <p className="px-3 py-2 text-sm text-sand-600">
+                    That place would not resolve. Try another.
+                  </p>
+                )}
                 {results?.map((found) => (
                   <button
-                    key={`${found.latitude},${found.longitude},${found.label}`}
+                    key={found.placeId}
                     type="button"
-                    onClick={() => {
-                      setPlace({
-                        label: found.label,
-                        latitude: found.latitude,
-                        longitude: found.longitude,
-                        radiusKm: found.suggestedRadiusKm,
-                        // A country is searched by its code and a wide place by
-                        // its box. Only something small enough to be a circle
-                        // relies on the radius above.
-                        countryCode:
-                          (found.kind || '').toLowerCase() === 'country'
-                            ? found.countryCode
-                            : null,
-                      })
-                      setTerm('')
-                      setOpen(false)
-                    }}
-                    className="flex w-full flex-col items-start rounded-lg px-3 py-2 text-left text-sm hover:bg-sand-100"
+                    disabled={choosing !== null}
+                    onClick={() => void choose(found.placeId)}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-sand-100 disabled:opacity-60"
                   >
-                    <span className="text-sand-900">{found.label}</span>
-                    <span className="text-xs text-sand-500">
-                      {found.kind ? `${found.kind} · ` : ''}
-                      {found.suggestedRadiusKm} km around
+                    <span className="min-w-0 flex-1">
+                      {/* Two lines rather than one: eight rows that all begin
+                          "Brooklyn, " are unreadable at a glance. */}
+                      <span className="block truncate text-sand-900">
+                        {found.primary || found.text}
+                      </span>
+                      {found.secondary && (
+                        <span className="block truncate text-xs text-sand-500">
+                          {found.secondary}
+                        </span>
+                      )}
                     </span>
+                    {choosing === found.placeId && (
+                      <Loader2 className="size-4 shrink-0 animate-spin text-sand-500" aria-hidden />
+                    )}
                   </button>
                 ))}
               </>

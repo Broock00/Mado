@@ -21,6 +21,8 @@ import os
 import httpx
 import pytest
 
+from app.core import asyncio_compat
+
 BASE_URL = os.environ.get("MADO_TEST_API_URL", "http://127.0.0.1:8000")
 
 # Opt out explicitly. Named for what it does rather than for an environment, so
@@ -104,3 +106,24 @@ def _remove_what_the_tests_made():
 def anyio_backend() -> str:
     """Pin anyio to asyncio so async tests do not also try trio."""
     return "asyncio"
+
+
+def pytest_asyncio_loop_factories(config, item):
+    """Run async tests on a loop psycopg can actually drive.
+
+    The Windows trap documented in `app/core/asyncio_compat.py`, reaching the
+    tests: asyncio defaults to `ProactorEventLoop` there, psycopg refuses to run
+    on it, and any test touching the database dies with an `InterfaceError` whose
+    text is about event loops and says nothing about what the test was doing.
+
+    A loop factory rather than `set_event_loop_policy`, because the policy API is
+    deprecated from Python 3.14 and this runs on 3.14. Returning None on every
+    other platform leaves the default loop alone, which is already compatible.
+    """
+    factory = asyncio_compat.loop_factory()
+    if factory is None:
+        return None
+    # Exactly one entry. The mapping is factory *names* to factories and
+    # pytest-asyncio parametrises over it, so listing several here would run
+    # every async test once per loop rather than choosing between them.
+    return {"selector": factory}
