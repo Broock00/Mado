@@ -21,6 +21,8 @@ themselves. This is the queryable fact.
 
 from __future__ import annotations
 
+import re
+
 HOTEL = "hotel"
 RESORT = "resort"
 GUESTHOUSE = "guesthouse"
@@ -75,6 +77,10 @@ SOCIAL_PLATFORMS = ("facebook", "instagram", "x", "tiktok", "youtube", "linkedin
 
 MAX_SOCIAL_URL = 500
 
+# Enough of a hostname to be worth completing with a scheme. Not a URL parser:
+# the question here is only whether somebody pasted an address or a handle.
+_HOSTNAME = re.compile(r"^[a-z0-9][a-z0-9-]*(\.[a-z0-9-]+)*\.[a-z]{2,}([/?#]|$)", re.IGNORECASE)
+
 
 def label(business_type: str | None) -> str:
     """What this kind of business is called in a sentence."""
@@ -96,13 +102,36 @@ def normalise_type(value: str | None) -> str | None:
     return cleaned if cleaned in ALL else None
 
 
-def normalise_social(value: dict | None) -> dict[str, str]:
-    """Keep the platforms that are known and the values that look like links.
+def _as_link(raw: str) -> str | None:
+    """What to store for a social value, or None if it could not be a link.
 
-    Unknown platforms are dropped for the reason in SOCIAL_PLATFORMS. Values are
-    length-bounded and required to be http(s), because these are rendered as
-    anchors and a `javascript:` URL in a business profile is stored XSS waiting
-    for somebody to click it.
+    A scheme-less `instagram.com/mado` is completed rather than refused: it is
+    what people paste, and dropping it leaves a field that empties itself with
+    no explanation. A scheme we do not accept is refused rather than completed -
+    `https://javascript:alert(1)` would be nonsense, and the original is the
+    stored XSS this function exists to stop, since these render as anchors.
+    """
+    url = raw.strip()
+    if not url:
+        return None
+    if url.lower().startswith(("http://", "https://")):
+        return url[:MAX_SOCIAL_URL]
+
+    colon, slash = url.find(":"), url.find("/")
+    if colon != -1 and (slash == -1 or colon < slash):
+        return None
+    # A host, not a handle: `@mado` completed becomes `https://@mado`, a link
+    # that opens nothing while looking exactly like one that was saved.
+    if not _HOSTNAME.match(url):
+        return None
+    return f"https://{url}"[:MAX_SOCIAL_URL]
+
+
+def normalise_social(value: dict | None) -> dict[str, str]:
+    """Keep the platforms that are known and the values that could be links.
+
+    Unknown platforms are dropped for the reason in SOCIAL_PLATFORMS; values are
+    length-bounded and cleaned by `_as_link`.
     """
     if not isinstance(value, dict):
         return {}
@@ -112,12 +141,9 @@ def normalise_social(value: dict | None) -> dict[str, str]:
         raw = value.get(platform)
         if not isinstance(raw, str):
             continue
-        url = raw.strip()
-        if not url:
-            continue
-        if not url.lower().startswith(("http://", "https://")):
-            continue
-        cleaned[platform] = url[:MAX_SOCIAL_URL]
+        link = _as_link(raw)
+        if link:
+            cleaned[platform] = link
     return cleaned
 
 

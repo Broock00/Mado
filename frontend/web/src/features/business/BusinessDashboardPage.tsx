@@ -22,6 +22,8 @@ import { ApiError, api } from '@/lib/api'
 import type { Business, BusinessMember } from '@/lib/types'
 import { BUSINESS_TYPES } from '@/lib/business'
 import { Badge, Button, Card, EmptyState, Input, Skeleton } from '@/design-system/primitives'
+import { SocialIcon } from './SocialIcon'
+import { SOCIAL_PLATFORMS, normaliseSocialUrl } from './social'
 
 function ProfileSection({ business }: { business: Business }) {
   const queryClient = useQueryClient()
@@ -31,8 +33,23 @@ function ProfileSection({ business }: { business: Business }) {
     description: business.description ?? '',
     website: business.website ?? '',
   })
+  // Every platform gets an entry, empty or not: the form is a fixed set of
+  // fields, and a blank one is how a link is removed. Kept apart from `form`
+  // above only because it is addressed by platform rather than by field name.
+  const [social, setSocial] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      SOCIAL_PLATFORMS.map((platform) => [platform.value, business.social?.[platform.value] ?? '']),
+    ),
+  )
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // What somebody typed that could not become a link. Named rather than
+  // silently dropped: the server drops these too, and a field that empties
+  // itself on the next load looks like the save failed for no reason.
+  const unusable = SOCIAL_PLATFORMS.filter(
+    (platform) => social[platform.value].trim() && !normaliseSocialUrl(social[platform.value]),
+  )
 
   const save = useMutation({
     mutationFn: () =>
@@ -41,10 +58,30 @@ function ProfileSection({ business }: { business: Business }) {
         businessType: form.businessType || null,
         description: form.description.trim() || null,
         website: form.website.trim() || null,
+        // The whole set, every time. A partial object would leave a link the
+        // publisher just cleared exactly where it was: the server replaces
+        // `social` rather than merging into it.
+        social: Object.fromEntries(
+          SOCIAL_PLATFORMS.flatMap((platform) => {
+            const url = normaliseSocialUrl(social[platform.value])
+            return url ? [[platform.value, url]] : []
+          }),
+        ),
       }),
-    onSuccess: () => {
+    onSuccess: (updated) => {
       setError(null)
       setSaved(true)
+      // Show what was stored, not what was typed. `instagram.com/x` is saved as
+      // `https://instagram.com/x`, and leaving the shorter one in the box makes
+      // the next visit look like the field changed on its own.
+      setSocial(
+        Object.fromEntries(
+          SOCIAL_PLATFORMS.map((platform) => [
+            platform.value,
+            updated.social?.[platform.value] ?? '',
+          ]),
+        ),
+      )
       void queryClient.invalidateQueries({ queryKey: ['business', business.id] })
       void queryClient.invalidateQueries({ queryKey: ['my-businesses'] })
     },
@@ -128,10 +165,72 @@ function ProfileSection({ business }: { business: Business }) {
         </div>
       </div>
 
+      {/* Social links. Every platform gets a field whether or not it is used —
+          a list you add rows to would make somebody choose the platform twice,
+          once from a menu and once by pasting, and there are only seven. The
+          mark sits beside its field so the row is identifiable at a glance,
+          which is also how it will be shown on the public page. */}
+      <div className="space-y-3 border-t border-sand-200 pt-4">
+        <div>
+          <h3 className="text-sm font-medium text-sand-700">Social links</h3>
+          <p className="mt-1 text-xs text-sand-500">
+            Shown on your public page as icons. Leave one blank to remove it.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          {SOCIAL_PLATFORMS.map((platform) => {
+            const value = social[platform.value]
+            const broken = Boolean(value.trim()) && !normaliseSocialUrl(value)
+            const fieldId = `social-${platform.value}`
+            return (
+              <div key={platform.value}>
+                <div className="flex items-center gap-2.5">
+                  <label
+                    htmlFor={fieldId}
+                    className="grid size-9 shrink-0 place-items-center rounded-lg bg-sand-200 text-sand-600"
+                    title={platform.label}
+                  >
+                    <SocialIcon platform={platform} />
+                    <span className="sr-only">{platform.label}</span>
+                  </label>
+                  <Input
+                    id={fieldId}
+                    type="url"
+                    inputMode="url"
+                    value={value}
+                    onChange={(e) => {
+                      setSocial({ ...social, [platform.value]: e.target.value })
+                      setSaved(false)
+                    }}
+                    placeholder={platform.example}
+                    maxLength={500}
+                    aria-invalid={broken}
+                    aria-describedby={broken ? `${fieldId}-problem` : undefined}
+                  />
+                </div>
+                {broken && (
+                  <p id={`${fieldId}-problem`} className="ml-[2.875rem] mt-1 text-xs text-red-300">
+                    That is not a link. Paste the address of your {platform.label} page, like{' '}
+                    {platform.example}.
+                  </p>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
       {error && <p className="text-sm text-red-300">{error}</p>}
 
       <div className="flex items-center gap-3">
-        <Button onClick={() => save.mutate()} loading={save.isPending}>
+        <Button
+          onClick={() => save.mutate()}
+          loading={save.isPending}
+          // Saving around a bad link would drop it server-side and report
+          // success, which is indistinguishable from having saved it.
+          disabled={unusable.length > 0}
+        >
           Save
         </Button>
         {saved && !save.isPending && <span className="text-sm text-sand-500">Saved.</span>}

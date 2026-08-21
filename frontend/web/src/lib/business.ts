@@ -38,13 +38,7 @@ export function businessTypeLabel(value: string | null | undefined): string {
   return BUSINESS_TYPES.find((type) => type.value === value)?.label ?? 'Business'
 }
 
-/** Social platforms a business may list, in the order they are shown. */
-export const SOCIAL_PLATFORMS = [
-  'instagram',
-  'facebook',
-  'x',
-  'tiktok',
-  'youtube',
-  'linkedin',
-  'telegram',
-] as const
+// Social platforms live in `features/business/social.tsx` rather than here: a
+// platform is a name *and* the mark it is drawn as, and splitting the two let a
+// platform exist with no icon — which, where these render as the icon alone, is
+// an invisible link.

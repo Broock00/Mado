@@ -21,17 +21,8 @@ import { api } from '@/lib/api'
 import type { PublicBusiness } from '@/lib/types'
 import { ExperienceCard } from '@/features/experiences/ExperienceCard'
 import { Badge, Button, Card, EmptyState, Skeleton } from '@/design-system/primitives'
-
-/** Social platforms, in the order they are shown. */
-const SOCIAL_ORDER = [
-  'instagram',
-  'facebook',
-  'x',
-  'tiktok',
-  'youtube',
-  'linkedin',
-  'telegram',
-] as const
+import { SocialIcon } from './SocialIcon'
+import { listedSocials } from './social'
 
 function Header({ business }: { business: PublicBusiness }) {
   return (
@@ -104,7 +95,7 @@ function Header({ business }: { business: PublicBusiness }) {
 function ContactRow({ business }: { business: PublicBusiness }) {
   const phone = business.contact?.phone
   const email = business.contact?.email
-  const social = SOCIAL_ORDER.filter((platform) => business.social?.[platform])
+  const social = listedSocials(business.social)
 
   if (!business.website && !phone && !email && social.length === 0) return null
 
@@ -131,17 +122,32 @@ function ContactRow({ business }: { business: PublicBusiness }) {
           </Button>
         </a>
       )}
-      {social.map((platform) => (
-        <a
-          key={platform}
-          href={business.social[platform]}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="rounded-lg px-3 py-1.5 text-sm capitalize text-sand-700 hover:bg-sand-200"
-        >
-          {platform}
-        </a>
-      ))}
+
+      {/* The mark alone. A brand's own glyph is more recognisable than its name
+          set in our type, and seven of them written out would crowd out the
+          website and phone number — which is what somebody came here for.
+          `aria-label` carries the name that the icon dropped, so the link is
+          still announced as "Instagram" rather than as its address. */}
+      {social.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {(business.website || phone || email) && (
+            <span className="mx-1 hidden h-6 w-px bg-sand-200 sm:block" aria-hidden />
+          )}
+          {social.map(({ platform, url }) => (
+            <a
+              key={platform.value}
+              href={url}
+              target="_blank"
+              rel="noreferrer noopener"
+              title={platform.label}
+              aria-label={platform.label}
+              className="grid size-9 place-items-center rounded-full border border-sand-300 text-sand-600 transition-colors hover:border-brand-500 hover:bg-sand-200 hover:text-brand-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
+            >
+              <SocialIcon platform={platform} />
+            </a>
+          ))}
+        </div>
+      )}
     </Card>
   )
 }

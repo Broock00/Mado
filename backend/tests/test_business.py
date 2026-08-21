@@ -223,6 +223,62 @@ class TestCreatingABusiness:
         assert "instagram" not in business["social"]
         assert business["social"]["facebook"] == "https://fb.example/x"
 
+    def test_a_pasted_address_without_a_scheme_is_completed(self, client):
+        """What people paste. Dropping it leaves a field that empties itself."""
+        auth, _ = account(client)
+        business = make_business(client, auth, social={"instagram": "instagram.example/mado"})
+        assert business["social"]["instagram"] == "https://instagram.example/mado"
+
+    def test_a_handle_is_not_stored_as_a_link(self, client):
+        """`https://@mado` opens nothing while looking exactly like a saved link,
+        which is worse than the field visibly refusing it."""
+        auth, _ = account(client)
+        business = make_business(client, auth, social={"tiktok": "@mado", "x": "mado"})
+        assert business["social"] == {}
+
+    def test_clearing_a_social_link_removes_it(self, client):
+        """The client sends the whole set; the server replaces rather than merges.
+        Merging would leave a link the publisher just deleted exactly where it
+        was, and they would have no way to remove it at all."""
+        auth, _ = account(client)
+        business = make_business(client, auth, social={"facebook": "https://fb.example/x"})
+        response = client.patch(
+            f"/api/v1/businesses/{business['id']}",
+            headers=auth,
+            json={"social": {}},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["social"] == {}
+
+    def test_the_client_lists_the_same_platforms(self):
+        """The dashboard renders a field and an icon per platform before it has
+        asked the server anything, so the vocabulary is duplicated in
+        `features/business/social.ts`. Drift means a publisher fills in a field
+        the server silently drops. Display order is the client's business and is
+        deliberately not asserted here.
+        """
+        import pathlib
+        import re
+
+        from app.domains.publisher import business as business_vocab
+
+        source = (
+            pathlib.Path(business_vocab.__file__).parents[4]
+            / "frontend"
+            / "web"
+            / "src"
+            / "features"
+            / "business"
+            / "social.ts"
+        )
+        # Asserted, because a missing file reads as an empty list and would pass
+        # this test by finding nothing at all.
+        assert source.is_file(), source
+
+        text = source.read_text(encoding="utf-8")
+        listed = set(re.findall(r"^\s*value: '([a-z]+)',$", text, re.MULTILINE))
+        assert listed == set(business_vocab.SOCIAL_PLATFORMS)
+
 
 # --- SECURITY: one business must never reach another --------------------------
 
