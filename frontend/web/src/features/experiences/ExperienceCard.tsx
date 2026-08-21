@@ -21,9 +21,20 @@ interface Props {
   className?: string
   /** Fixed width for horizontal rails; grids let the column define width. */
   fixedWidth?: boolean
+  /** Denser card for profile grids and rails where space is tight. */
+  compact?: boolean
+  /** Hide the publisher row — redundant when every card is from the same business. */
+  hidePublisher?: boolean
 }
 
-export function ExperienceCard({ experience, onToggleSave, className, fixedWidth }: Props) {
+export function ExperienceCard({
+  experience,
+  onToggleSave,
+  className,
+  fixedWidth,
+  compact,
+  hidePublisher,
+}: Props) {
   const image = experience.media[0]
   const when = formatWhen(experience.nextEvent?.startTime)
   const distance = formatDistance(experience.distanceKm)
@@ -37,11 +48,16 @@ export function ExperienceCard({ experience, onToggleSave, className, fixedWidth
       className={cn(
         'group relative flex flex-col overflow-hidden rounded-card border border-sand-200 bg-white',
         'shadow-card transition-shadow duration-200 hover:shadow-lifted',
-        fixedWidth && 'w-[17.5rem] shrink-0',
+        fixedWidth && cn(compact ? 'w-[13rem]' : 'w-[17.5rem]', 'shrink-0'),
         className,
       )}
     >
-      <div className="relative aspect-[4/3] overflow-hidden bg-sand-200">
+      <div
+        className={cn(
+          'relative overflow-hidden bg-sand-200',
+          compact ? 'aspect-[16/10]' : 'aspect-[4/3]',
+        )}
+      >
         {image ? (
           <img
             src={image.url}
@@ -56,12 +72,12 @@ export function ExperienceCard({ experience, onToggleSave, className, fixedWidth
         )}
 
         {/* Time-critical status sits on the image where the eye lands first. */}
-        <div className="absolute left-2.5 top-2.5 flex flex-wrap gap-1.5">
+        <div className="absolute left-2 top-2 flex flex-wrap gap-1">
           {cancelled ? (
             <Badge tone="danger">Cancelled</Badge>
           ) : soon ? (
             <Badge tone="accent" icon={<Clock className="size-3" aria-hidden />}>
-              Starting soon
+              {compact ? 'Soon' : 'Starting soon'}
             </Badge>
           ) : null}
           {experience.price.type === 'free' && !cancelled && <Badge tone="success">Free</Badge>}
@@ -74,13 +90,14 @@ export function ExperienceCard({ experience, onToggleSave, className, fixedWidth
             aria-pressed={experience.isSaved}
             aria-label={experience.isSaved ? `Remove ${experience.title} from saved` : `Save ${experience.title}`}
             className={cn(
-              'absolute right-2.5 top-2.5 grid size-9 place-items-center rounded-full',
+              'absolute right-2 top-2 grid place-items-center rounded-full',
               'bg-white/90 backdrop-blur transition-colors hover:bg-white',
+              compact ? 'size-7' : 'size-9',
               experience.isSaved ? 'text-brand-700' : 'text-sand-600',
             )}
           >
             <Bookmark
-              className="size-4"
+              className={compact ? 'size-3.5' : 'size-4'}
               // The filled state carries the meaning for anyone who cannot rely on
               // the colour shift alone.
               fill={experience.isSaved ? 'currentColor' : 'none'}
@@ -90,9 +107,14 @@ export function ExperienceCard({ experience, onToggleSave, className, fixedWidth
         )}
       </div>
 
-      <div className="flex flex-1 flex-col gap-2 p-3.5">
+      <div className={cn('flex flex-1 flex-col', compact ? 'gap-1 p-2.5' : 'gap-2 p-3.5')}>
         <div className="flex items-start justify-between gap-2">
-          <h3 className="line-clamp-2 text-[0.95rem] font-semibold leading-snug text-sand-900">
+          <h3
+            className={cn(
+              'font-semibold leading-snug text-sand-900',
+              compact ? 'line-clamp-1 text-sm' : 'line-clamp-2 text-[0.95rem]',
+            )}
+          >
             {/* Whole-card link target, but only the title is the accessible name. */}
             <Link to={`/experiences/${experience.id}`} className="after:absolute after:inset-0">
               {experience.title}
@@ -106,19 +128,19 @@ export function ExperienceCard({ experience, onToggleSave, className, fixedWidth
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-sand-500">
-          {experience.category && <span>{experience.category.name}</span>}
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-sand-500">
+          {experience.category && !compact && <span>{experience.category.name}</span>}
+          {experience.category && !compact && experience.venue?.neighborhood && (
+            <span aria-hidden>·</span>
+          )}
           {experience.venue?.neighborhood && (
-            <>
-              <span aria-hidden>·</span>
-              <span>{experience.venue.neighborhood.name}</span>
-            </>
+            <span>{experience.venue.neighborhood.name}</span>
+          )}
+          {(experience.category || experience.venue?.neighborhood) && when && !cancelled && (
+            <span aria-hidden>·</span>
           )}
           {when && !cancelled && (
-            <>
-              <span aria-hidden>·</span>
-              <span className={cn(soon && 'font-medium text-accent-700')}>{when}</span>
-            </>
+            <span className={cn(soon && 'font-medium text-accent-700')}>{when}</span>
           )}
         </div>
 
@@ -128,7 +150,7 @@ export function ExperienceCard({ experience, onToggleSave, className, fixedWidth
             without adding a fact. A business posting about itself is different
             - it is the subject describing itself, and an explorer weighing the
             claim deserves to know that before they read it. */}
-        {business && (
+        {business && !hidePublisher && (
           <p className="flex items-center gap-1.5 text-xs text-sand-600">
             <Building2 className="size-3 shrink-0 text-sand-400" aria-hidden />
             <span className="line-clamp-1">{experience.publisher?.name}</span>
@@ -140,15 +162,15 @@ export function ExperienceCard({ experience, onToggleSave, className, fixedWidth
 
         {/* The explanation. Spec DISC-003 requires the explorer to understand why
             an item appeared without exposing the inference behind it. */}
-        {experience.reason && (
+        {experience.reason && !compact && (
           <p className="flex items-start gap-1.5 text-xs text-brand-800">
             <Sparkles className="mt-0.5 size-3 shrink-0" aria-hidden />
             <span className="line-clamp-1">{experience.reason}</span>
           </p>
         )}
 
-        <div className="mt-auto flex items-center justify-between gap-2 pt-1">
-          <span className="text-sm font-medium text-sand-800">
+        <div className={cn('mt-auto flex items-center justify-between gap-2', compact ? 'pt-0.5' : 'pt-1')}>
+          <span className={cn('font-medium text-sand-800', compact ? 'text-xs' : 'text-sm')}>
             {formatPrice(experience.price)}
           </span>
           <div className="flex items-center gap-2 text-xs text-sand-500">

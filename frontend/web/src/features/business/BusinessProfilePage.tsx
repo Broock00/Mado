@@ -35,33 +35,37 @@ const SOCIAL_ORDER = [
 
 function Header({ business }: { business: PublicBusiness }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-sand-200 bg-white">
+    <div className="overflow-hidden rounded-2xl border border-sand-200 bg-white shadow-card">
       {business.coverUrl ? (
         <img
           src={business.coverUrl}
           alt=""
-          className="h-44 w-full object-cover sm:h-60"
+          className="h-40 w-full object-cover sm:h-52"
           loading="lazy"
         />
       ) : (
         // Not an error state. Plenty of real businesses have no cover photo, and
         // a broken-image icon would say something untrue about them.
-        <div className="h-24 w-full bg-sand-100 sm:h-32" aria-hidden />
+        <div className="h-20 w-full bg-sand-100 sm:h-28" aria-hidden />
       )}
 
       <div className="flex flex-wrap items-start gap-4 p-5">
-        {business.logoUrl && (
+        {business.logoUrl ? (
           <img
             src={business.logoUrl}
             alt=""
             className="size-16 shrink-0 rounded-xl object-cover ring-1 ring-sand-200"
             loading="lazy"
           />
+        ) : (
+          <span className="grid size-16 shrink-0 place-items-center rounded-xl bg-brand-50 ring-1 ring-sand-200">
+            <Building2 className="size-7 text-brand-700" aria-hidden />
+          </span>
         )}
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold text-sand-900">{business.name}</h1>
+            <h1 className="text-xl font-semibold tracking-tight text-sand-950">{business.name}</h1>
             {/* Says what this account is, next to its name. Separate from
                 verification below, which says whether anybody has checked -
                 two different questions that a single badge would blur. */}
@@ -81,13 +85,15 @@ function Header({ business }: { business: PublicBusiness }) {
 
           {business.businessTypeLabel && (
             <p className="mt-1 flex items-center gap-1.5 text-sm text-sand-600">
-              <Building2 className="size-4" aria-hidden />
+              <Building2 className="size-4 shrink-0" aria-hidden />
               {business.businessTypeLabel}
             </p>
           )}
 
           {business.description && (
-            <p className="mt-3 whitespace-pre-line text-sand-700">{business.description}</p>
+            <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-sand-700">
+              {business.description}
+            </p>
           )}
         </div>
       </div>
@@ -103,7 +109,7 @@ function ContactRow({ business }: { business: PublicBusiness }) {
   if (!business.website && !phone && !email && social.length === 0) return null
 
   return (
-    <Card className="flex flex-wrap items-center gap-2 p-4">
+    <Card className="flex flex-wrap items-center gap-2 p-3.5">
       {business.website && (
         <a href={business.website} target="_blank" rel="noreferrer noopener">
           <Button variant="secondary" size="sm">
@@ -157,9 +163,13 @@ export function BusinessProfilePage() {
   if (isLoading) {
     return (
       <div className="mx-auto max-w-4xl space-y-4 px-4 py-6">
-        <Skeleton className="h-56 w-full rounded-2xl" />
-        <Skeleton className="h-14 w-full rounded-xl" />
-        <Skeleton className="h-40 w-full rounded-xl" />
+        <Skeleton className="h-52 w-full rounded-2xl" />
+        <Skeleton className="h-12 w-full rounded-xl" />
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-40 w-full rounded-card" />
+          ))}
+        </div>
       </div>
     )
   }
@@ -184,17 +194,30 @@ export function BusinessProfilePage() {
     )
   }
 
+  const count = business.listings.length
+
   return (
     <div className="mx-auto max-w-4xl space-y-5 px-4 py-6">
       <Header business={business} />
       <ContactRow business={business} />
 
       <section aria-labelledby="business-listings">
-        <h2 id="business-listings" className="mb-3 text-sm font-medium text-sand-700">
-          What&rsquo;s on
-        </h2>
+        <div className="mb-3 flex items-baseline justify-between gap-3">
+          <h2
+            id="business-listings"
+            className="flex items-center gap-2.5 text-sm font-semibold text-sand-800"
+          >
+            <span className="block h-4 w-0.5 shrink-0 rounded-full bg-brand-600" aria-hidden />
+            What&rsquo;s on
+          </h2>
+          {count > 0 && (
+            <span className="text-xs text-sand-500">
+              {count} {count === 1 ? 'listing' : 'listings'}
+            </span>
+          )}
+        </div>
 
-        {business.listings.length === 0 ? (
+        {count === 0 ? (
           // An empty state, not an error. A business that has published nothing
           // yet is an ordinary business, and the page still answered what and
           // where.
@@ -204,9 +227,14 @@ export function BusinessProfilePage() {
             description={`${business.name} has not posted anything on Mado so far.`}
           />
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {business.listings.map((experience) => (
-              <ExperienceCard key={experience.id} experience={experience} />
+              <ExperienceCard
+                key={experience.id}
+                experience={experience}
+                compact
+                hidePublisher
+              />
             ))}
           </div>
         )}
