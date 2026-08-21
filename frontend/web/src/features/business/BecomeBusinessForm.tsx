@@ -71,7 +71,7 @@ export function BecomeBusinessForm({ onDone }: { onDone: (slug: string) => void 
             id="biz-type"
             value={form.businessType}
             onChange={(e) => setForm({ ...form, businessType: e.target.value })}
-            className="w-full rounded-lg border border-sand-300 bg-white px-3 py-2 text-sm text-sand-900"
+            className="w-full rounded-lg border border-sand-300 bg-sand-100 px-3 py-2 text-sm text-sand-900"
           >
             <option value="">Not saying yet</option>
             {BUSINESS_TYPES.map((type) => (
@@ -93,7 +93,7 @@ export function BecomeBusinessForm({ onDone }: { onDone: (slug: string) => void 
             rows={3}
             maxLength={4000}
             placeholder="What is it, and what is it like to be there?"
-            className="w-full rounded-lg border border-sand-300 bg-white px-3 py-2 text-sm text-sand-900"
+            className="w-full rounded-lg border border-sand-300 bg-sand-100 px-3 py-2 text-sm text-sand-900"
           />
         </div>
 
@@ -117,7 +117,7 @@ export function BecomeBusinessForm({ onDone }: { onDone: (slug: string) => void 
         listings, and any tickets sold, attributed to something that no longer exists.
       </p>
 
-      {error && <p className="text-sm text-red-700">{error}</p>}
+      {error && <p className="text-sm text-red-300">{error}</p>}
 
       <Button
         onClick={() => convert.mutate()}

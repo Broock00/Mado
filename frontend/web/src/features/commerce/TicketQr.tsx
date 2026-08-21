@@ -50,7 +50,7 @@ export function TicketQr({ code, size = 148 }: { code: string; size?: number }) 
     <figure className="flex flex-col items-center gap-1.5">
       {svg && !failed ? (
         <div
-          className="rounded-lg bg-white p-2 shadow-sm"
+          className="rounded-lg bg-sand-100 p-2 shadow-sm"
           style={{ width: size, height: size }}
           // The markup is produced locally from a code this client already
           // holds; nothing here came from a server response.

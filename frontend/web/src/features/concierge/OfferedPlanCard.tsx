@@ -52,7 +52,7 @@ export function OfferedPlanCard({
   })
 
   return (
-    <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3">
+    <div className="rounded-xl border border-brand-700/50 bg-brand-900/25 p-3">
       <div className="flex items-center gap-2 text-xs font-medium text-brand-800">
         <Route className="size-3.5" aria-hidden />
         A plan for you
@@ -74,8 +74,8 @@ export function OfferedPlanCard({
               <span
                 className={
                   stop.isFixedTime
-                    ? 'mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-brand-600 text-[0.65rem] font-semibold text-white'
-                    : 'mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border border-sand-300 bg-white text-[0.65rem] font-medium text-sand-700'
+                    ? 'mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-brand-700 text-[0.65rem] font-semibold text-white'
+                    : 'mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border border-sand-300 bg-sand-100 text-[0.65rem] font-medium text-sand-700'
                 }
               >
                 {index + 1}
@@ -137,7 +137,7 @@ export function OfferedPlanCard({
           </Button>
         )}
         {keep.isError && (
-          <p className="mt-1 text-xs text-red-700" role="alert">
+          <p className="mt-1 text-xs text-red-300" role="alert">
             {(keep.error as Error).message}
           </p>
         )}

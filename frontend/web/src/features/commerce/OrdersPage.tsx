@@ -81,7 +81,7 @@ function Tickets({ order, detailed = false }: { order: Order; detailed?: boolean
         {order.tickets.map((ticket) => (
           <li
             key={ticket.id}
-            className="flex items-center justify-between rounded-lg border border-sand-300 bg-white px-3 py-2"
+            className="flex items-center justify-between rounded-lg border border-sand-300 bg-sand-100 px-3 py-2"
           >
             <span className="text-sm text-sand-700">{ticket.ticketTypeName}</span>
             {/* Monospace and spaced, because this gets read aloud at a door. */}
@@ -97,7 +97,7 @@ function Tickets({ order, detailed = false }: { order: Order; detailed?: boolean
       {order.tickets.map((ticket) => (
         <li
           key={ticket.id}
-          className="flex flex-col items-center gap-2 rounded-xl border border-sand-300 bg-white p-4"
+          className="flex flex-col items-center gap-2 rounded-xl border border-sand-300 bg-sand-100 p-4"
         >
           <span className="text-sm font-medium text-sand-800">{ticket.ticketTypeName}</span>
           <TicketQr code={ticket.code} />

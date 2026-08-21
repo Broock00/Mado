@@ -132,7 +132,7 @@ function NewCollection() {
         Cancel
       </Button>
       {create.isError && (
-        <p className="w-full text-sm text-red-700" role="alert">
+        <p className="w-full text-sm text-red-300" role="alert">
           {(create.error as Error).message}
         </p>
       )}

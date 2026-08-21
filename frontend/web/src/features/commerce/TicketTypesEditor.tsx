@@ -85,7 +85,7 @@ export function TicketTypesEditor({
   const live = (tiers ?? []).filter((tier) => tier.unavailableReason !== 'withdrawn')
 
   return (
-    <div className="mt-2 rounded-lg border border-sand-200 bg-white p-3">
+    <div className="mt-2 rounded-lg border border-sand-200 bg-sand-100 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 text-sm font-medium text-sand-700">
           <Ticket className="size-4" aria-hidden />

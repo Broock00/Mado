@@ -327,7 +327,7 @@ export function LocationPicker({
 
           {suggestions.length > 0 && (
             <ul
-              className="absolute top-full left-0 z-30 mt-1 w-full overflow-hidden rounded-xl border border-sand-200 bg-white shadow-lifted"
+              className="absolute top-full left-0 z-30 mt-1 w-full overflow-hidden rounded-xl border border-sand-200 bg-sand-100 shadow-lifted"
               aria-label="Places matching your search"
             >
               {suggestions.map((suggestion) => (
@@ -336,7 +336,7 @@ export function LocationPicker({
                     type="button"
                     disabled={searching}
                     onClick={() => void choose(suggestion)}
-                    className="block w-full px-3 py-2 text-left text-sm hover:bg-sand-100 disabled:opacity-60"
+                    className="block w-full px-3 py-2 text-left text-sm hover:bg-sand-200 disabled:opacity-60"
                   >
                     <span className="block truncate text-sand-900">
                       {suggestion.primary || suggestion.text}
@@ -390,7 +390,7 @@ export function LocationPicker({
       </p>
 
       {problem && (
-        <p className="text-sm text-red-700" role="alert">
+        <p className="text-sm text-red-300" role="alert">
           {problem}
         </p>
       )}

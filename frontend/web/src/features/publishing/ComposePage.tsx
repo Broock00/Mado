@@ -576,7 +576,7 @@ export function ComposePage() {
             value={publisherId ?? ''}
             onChange={(e) => setPublisherId(e.target.value || null)}
             disabled={isEditing}
-            className="w-full max-w-sm rounded-lg border border-sand-300 bg-white px-3 py-2 text-sm text-sand-900 disabled:bg-sand-100"
+            className="w-full max-w-sm rounded-lg border border-sand-300 bg-sand-100 px-3 py-2 text-sm text-sand-900 disabled:bg-sand-100"
           >
             {publisherOptions.map((option) => (
               <option key={option.id ?? 'me'} value={option.id ?? ''}>
@@ -593,7 +593,7 @@ export function ComposePage() {
       )}
 
       {error && (
-        <p role="alert" className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p role="alert" className="mt-4 rounded-lg bg-red-950 px-3 py-2 text-sm text-red-300">
           {error}
         </p>
       )}
@@ -617,8 +617,8 @@ export function ComposePage() {
                   className={cn(
                     'rounded-lg border p-3 text-left transition-colors',
                     form.type === option.value
-                      ? 'border-brand-600 bg-brand-50'
-                      : 'border-sand-300 hover:bg-sand-100',
+                      ? 'border-brand-500 bg-brand-900/40'
+                      : 'border-sand-300 hover:bg-sand-200',
                   )}
                 >
                   <span className="block text-sm font-medium text-sand-900">{option.label}</span>
@@ -664,7 +664,7 @@ export function ComposePage() {
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               rows={6}
               placeholder="What happens, who it suits, anything worth knowing before turning up."
-              className="w-full rounded-lg border border-sand-300 bg-white px-3.5 py-2.5 text-sm placeholder:text-sand-400 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
+              className="w-full rounded-lg border border-sand-300 bg-sand-100 px-3.5 py-2.5 text-sm placeholder:text-sand-400 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
             />
             <p className="mt-1 text-xs text-sand-400">
               {form.description.trim().length} characters — at least 40 to publish
@@ -694,7 +694,7 @@ export function ComposePage() {
                 id="category"
                 value={form.categorySlug ?? ''}
                 onChange={(e) => setForm({ ...form, categorySlug: e.target.value || null })}
-                className="h-11 w-full rounded-lg border border-sand-300 bg-white px-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
+                className="h-11 w-full rounded-lg border border-sand-300 bg-sand-100 px-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
               >
                 <option value="">Choose one…</option>
                 {categories?.map((c) => (
@@ -714,7 +714,7 @@ export function ComposePage() {
             Where is it?
           </h2>
           {venueId ? (
-            <p className="flex items-center gap-2 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-800">
+            <p className="flex items-center gap-2 rounded-lg bg-brand-900/30 px-3 py-2 text-sm text-brand-300">
               <Check className="size-4" aria-hidden />
               {venue.name || post?.venue?.name || 'Location added'}
             </p>
@@ -824,7 +824,7 @@ export function ComposePage() {
                           className={
                             on
                               ? 'rounded-full border border-brand-600 bg-brand-600 px-3 py-1 text-xs text-white'
-                              : 'rounded-full border border-sand-300 px-3 py-1 text-xs text-sand-700 hover:bg-sand-100'
+                              : 'rounded-full border border-sand-300 px-3 py-1 text-xs text-sand-700 hover:bg-sand-200'
                           }
                         >
                           {suitabilityLabel(slug)}
@@ -859,7 +859,7 @@ export function ComposePage() {
             {/* Upload first, paste-a-URL second. Almost nobody photographing a
                 venue has somewhere to host the picture already, so asking for a
                 URL was in practice asking most publishers not to add a photo. */}
-            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-sand-300 px-4 py-6 text-sm text-sand-600 hover:bg-sand-100">
+            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-sand-300 px-4 py-6 text-sm text-sand-600 hover:bg-sand-200">
               <Upload className="size-4" aria-hidden />
               {uploadImage.isPending ? 'Uploading…' : 'Choose a photo'}
               <input
@@ -999,7 +999,7 @@ export function ComposePage() {
                       priceAmount: e.target.value === 'free' ? null : form.priceAmount,
                     })
                   }
-                  className="h-11 rounded-lg border border-sand-300 bg-white px-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
+                  className="h-11 rounded-lg border border-sand-300 bg-sand-100 px-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
                 >
                   <option value="free">Free</option>
                   <option value="fixed">Fixed</option>
@@ -1023,7 +1023,7 @@ export function ComposePage() {
                       value={effectiveCurrency}
                       onChange={(e) => setForm({ ...form, currency: e.target.value })}
                       aria-label="Currency"
-                      className="h-11 rounded-lg border border-sand-300 bg-white px-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
+                      className="h-11 rounded-lg border border-sand-300 bg-sand-100 px-3 text-sm focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
                     >
                       {currencyChoices.map((code) => (
                         <option key={code} value={code}>
@@ -1065,12 +1065,12 @@ export function ComposePage() {
         {/* Shown continuously rather than only on failure, so nothing is a
             surprise at the moment of publishing. */}
         {outstanding.length > 0 && (
-          <Card className="border-accent-300 bg-accent-100/40 p-4">
-            <p className="flex items-center gap-2 text-sm font-medium text-accent-700">
+          <Card className="border-accent-300/40 bg-accent-100/40 p-4">
+            <p className="flex items-center gap-2 text-sm font-medium text-accent-300">
               <AlertTriangle className="size-4" aria-hidden />
               Before this can go live
             </p>
-            <ul className="mt-2 space-y-1 pl-6 text-sm text-accent-700">
+            <ul className="mt-2 space-y-1 pl-6 text-sm text-accent-300">
               {outstanding.map((problem) => (
                 <li key={problem} className="list-disc">
                   {problem}
@@ -1081,7 +1081,7 @@ export function ComposePage() {
         )}
 
         {post?.moderationStatus === 'pending' && (
-          <Card className="border-accent-300 bg-accent-100/40 p-4 text-sm text-accent-700">
+          <Card className="border-accent-300/40 bg-accent-100/40 p-4 text-sm text-accent-300">
             This post is waiting for a quick review before it appears in discovery.
             {post.moderationNotes && <p className="mt-1 text-xs">{post.moderationNotes}</p>}
           </Card>
@@ -1091,7 +1091,7 @@ export function ComposePage() {
 
       {/* Sticky action bar: saving and publishing stay reachable however long the
           form gets. */}
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-sand-200 bg-white/95 backdrop-blur sm:bottom-0">
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-sand-200 bg-sand-100/95 backdrop-blur sm:bottom-0">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div className="min-w-0 text-sm text-sand-500">
             {draftId ? (

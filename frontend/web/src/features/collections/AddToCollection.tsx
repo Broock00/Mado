@@ -22,9 +22,11 @@ import { cn } from '@/lib/utils'
 export function AddToCollection({
   experienceId,
   citySlug,
+  size = 'md',
 }: {
   experienceId: string
   citySlug?: string | null
+  size?: 'sm' | 'md' | 'lg'
 }) {
   const user = useAppStore((s) => s.user)
   const queryClient = useQueryClient()
@@ -85,13 +87,13 @@ export function AddToCollection({
 
   return (
     <div className="relative" ref={panelRef}>
-      <Button variant="secondary" onClick={() => setOpen((current) => !current)}>
+      <Button variant="secondary" size={size} onClick={() => setOpen((current) => !current)}>
         <FolderPlus className="size-4" aria-hidden />
         Add to collection
       </Button>
 
       {open && (
-        <div className="absolute right-0 z-40 mt-2 w-72 overflow-hidden rounded-xl border border-sand-200 bg-white shadow-lifted">
+        <div className="absolute right-0 z-40 mt-2 w-72 overflow-hidden rounded-xl border border-sand-200 bg-sand-100 shadow-lifted">
           <ul className="max-h-64 overflow-y-auto">
             {(collections ?? []).map((collection) => {
               // Whether this place is already in it is not on the card payload,
@@ -108,7 +110,7 @@ export function AddToCollection({
                     disabled={add.isPending}
                     onClick={() => add.mutate(collection.id)}
                     className={cn(
-                      'flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left text-sm hover:bg-sand-100',
+                      'flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left text-sm hover:bg-sand-200',
                       already && 'text-sand-500',
                     )}
                   >
@@ -160,7 +162,7 @@ export function AddToCollection({
               <button
                 type="button"
                 onClick={() => setCreating(true)}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-sand-700 hover:bg-sand-100"
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-sand-700 hover:bg-sand-200"
               >
                 <Plus className="size-4" aria-hidden />
                 New collection
@@ -169,7 +171,7 @@ export function AddToCollection({
           </div>
 
           {failure && (
-            <p className="border-t border-sand-200 px-4 py-2 text-xs text-red-700" role="alert">
+            <p className="border-t border-sand-200 px-4 py-2 text-xs text-red-300" role="alert">
               {failure.message}
             </p>
           )}

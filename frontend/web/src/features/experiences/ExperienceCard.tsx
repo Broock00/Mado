@@ -46,8 +46,8 @@ export function ExperienceCard({
   return (
     <article
       className={cn(
-        'group relative flex flex-col overflow-hidden rounded-card border border-sand-200 bg-white',
-        'shadow-card transition-shadow duration-200 hover:shadow-lifted',
+        'group relative flex flex-col overflow-hidden rounded-card border border-sand-200 bg-sand-100',
+        'shadow-card transition-shadow duration-200 hover:shadow-lifted hover:border-sand-300',
         fixedWidth && cn(compact ? 'w-[13rem]' : 'w-[17.5rem]', 'shrink-0'),
         className,
       )}
@@ -66,7 +66,7 @@ export function ExperienceCard({
             className="size-full object-cover transition-transform duration-500 ease-[var(--ease-out-soft)] group-hover:scale-[1.03]"
           />
         ) : (
-          <div className="flex size-full items-center justify-center text-sand-400">
+          <div className="flex size-full items-center justify-center text-sand-600">
             <MapPin className="size-8" aria-hidden />
           </div>
         )}
@@ -91,15 +91,13 @@ export function ExperienceCard({
             aria-label={experience.isSaved ? `Remove ${experience.title} from saved` : `Save ${experience.title}`}
             className={cn(
               'absolute right-2 top-2 grid place-items-center rounded-full',
-              'bg-white/90 backdrop-blur transition-colors hover:bg-white',
+              'bg-black/50 backdrop-blur transition-colors hover:bg-black/70',
               compact ? 'size-7' : 'size-9',
-              experience.isSaved ? 'text-brand-700' : 'text-sand-600',
+              experience.isSaved ? 'text-brand-700' : 'text-white/80',
             )}
           >
             <Bookmark
               className={compact ? 'size-3.5' : 'size-4'}
-              // The filled state carries the meaning for anyone who cannot rely on
-              // the colour shift alone.
               fill={experience.isSaved ? 'currentColor' : 'none'}
               aria-hidden
             />
@@ -111,7 +109,7 @@ export function ExperienceCard({
         <div className="flex items-start justify-between gap-2">
           <h3
             className={cn(
-              'font-semibold leading-snug text-sand-900',
+              'font-semibold leading-snug text-white',
               compact ? 'line-clamp-1 text-sm' : 'line-clamp-2 text-[0.95rem]',
             )}
           >
@@ -121,7 +119,7 @@ export function ExperienceCard({
             </Link>
           </h3>
           {experience.ratingAverage != null && (
-            <span className="flex shrink-0 items-center gap-0.5 text-xs font-medium text-sand-600">
+            <span className="flex shrink-0 items-center gap-0.5 text-xs font-medium text-sand-500">
               <Star className="size-3.5 fill-accent-500 text-accent-500" aria-hidden />
               {experience.ratingAverage.toFixed(1)}
             </span>
@@ -140,7 +138,7 @@ export function ExperienceCard({
             <span aria-hidden>·</span>
           )}
           {when && !cancelled && (
-            <span className={cn(soon && 'font-medium text-accent-700')}>{when}</span>
+            <span className={cn(soon && 'font-medium text-mado-400')}>{when}</span>
           )}
         </div>
 
@@ -151,10 +149,10 @@ export function ExperienceCard({
             - it is the subject describing itself, and an explorer weighing the
             claim deserves to know that before they read it. */}
         {business && !hidePublisher && (
-          <p className="flex items-center gap-1.5 text-xs text-sand-600">
-            <Building2 className="size-3 shrink-0 text-sand-400" aria-hidden />
+          <p className="flex items-center gap-1.5 text-xs text-sand-500">
+            <Building2 className="size-3 shrink-0 text-sand-600" aria-hidden />
             <span className="line-clamp-1">{experience.publisher?.name}</span>
-            <span className="shrink-0 rounded-full bg-sand-200 px-1.5 py-0.5 text-[0.625rem] font-medium uppercase tracking-wide text-sand-600">
+            <span className="shrink-0 rounded-full bg-sand-200 px-1.5 py-0.5 text-[0.625rem] font-medium uppercase tracking-wide text-sand-500">
               Business
             </span>
           </p>
@@ -163,21 +161,21 @@ export function ExperienceCard({
         {/* The explanation. Spec DISC-003 requires the explorer to understand why
             an item appeared without exposing the inference behind it. */}
         {experience.reason && !compact && (
-          <p className="flex items-start gap-1.5 text-xs text-brand-800">
+          <p className="flex items-start gap-1.5 text-xs text-mado-400">
             <Sparkles className="mt-0.5 size-3 shrink-0" aria-hidden />
             <span className="line-clamp-1">{experience.reason}</span>
           </p>
         )}
 
         <div className={cn('mt-auto flex items-center justify-between gap-2', compact ? 'pt-0.5' : 'pt-1')}>
-          <span className={cn('font-medium text-sand-800', compact ? 'text-xs' : 'text-sm')}>
+          <span className={cn('font-semibold text-white', compact ? 'text-xs' : 'text-sm')}>
             {formatPrice(experience.price)}
           </span>
           <div className="flex items-center gap-2 text-xs text-sand-500">
             {distance && <span>{distance}</span>}
             {verified && (
               <BadgeCheck
-                className="size-4 text-brand-600"
+                className="size-4 text-brand-700"
                 aria-label={`${experience.publisher?.name} is a verified publisher`}
               />
             )}
@@ -192,7 +190,7 @@ export function ExperienceCardSkeleton({ fixedWidth }: { fixedWidth?: boolean })
   return (
     <div
       className={cn(
-        'overflow-hidden rounded-card border border-sand-200 bg-white',
+        'overflow-hidden rounded-card border border-sand-200 bg-sand-100',
         fixedWidth && 'w-[17.5rem] shrink-0',
       )}
     >

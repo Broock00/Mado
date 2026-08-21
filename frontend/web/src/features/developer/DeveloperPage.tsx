@@ -74,10 +74,10 @@ function RevealedSecret({
   }
 
   return (
-    <Card className="mt-3 border-brand-300 bg-brand-50 p-4">
+    <Card className="mt-3 border-brand-700/50 bg-brand-900/30 p-4">
       <p className="text-sm font-medium text-sand-900">{label}</p>
       <p className="mt-1 text-sm text-sand-700">Copy it now. {why}</p>
-      <code className="mt-3 block overflow-x-auto rounded-lg border border-sand-300 bg-white px-3 py-2 font-mono text-sm">
+      <code className="mt-3 block overflow-x-auto rounded-lg border border-sand-300 bg-sand-100 px-3 py-2 font-mono text-sm">
         {value}
       </code>
       <div className="mt-3 flex flex-wrap gap-2">
@@ -502,7 +502,7 @@ function EndpointRow({ endpoint }: { endpoint: WebhookEndpoint }) {
       </div>
 
       {endpoint.status === 'suspended' && (
-        <div className="mt-3 rounded-lg bg-red-50 px-3 py-2">
+        <div className="mt-3 rounded-lg bg-red-950 px-3 py-2 text-sm text-red-300">
           <p className="text-sm text-red-800">
             Nothing is being sent here. {endpoint.lastError ?? 'Deliveries kept failing.'}
           </p>

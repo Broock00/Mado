@@ -97,20 +97,20 @@ export function NotificationBell() {
         className={cn(
           'relative rounded-lg p-2 transition-colors',
           open
-            ? 'bg-brand-100 text-brand-800'
+            ? 'bg-brand-900/50 text-brand-300'
             : 'text-sand-600 hover:bg-sand-200/60 hover:text-sand-900',
         )}
       >
         <Bell className="size-4.5" aria-hidden />
         {unread > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-brand-600 px-1 text-[0.65rem] font-semibold text-white">
+          <span className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-brand-700 px-1 text-[0.65rem] font-semibold text-white">
             {unread > 9 ? '9+' : unread}
           </span>
         )}
       </button>
 
       {open && (
-        <div className="absolute right-0 z-40 mt-2 w-80 overflow-hidden rounded-xl border border-sand-200 bg-white shadow-lifted">
+        <div className="absolute right-0 z-40 mt-2 w-80 overflow-hidden rounded-xl border border-sand-200 bg-sand-100 shadow-lifted">
           <div className="flex items-center justify-between border-b border-sand-200 px-4 py-2.5">
             <span className="text-sm font-medium text-sand-900">Notifications</span>
             {unread > 0 && (
@@ -146,7 +146,7 @@ export function NotificationBell() {
           <Link
             to="/settings"
             onClick={() => setOpen(false)}
-            className="block border-t border-sand-200 px-4 py-2.5 text-xs text-sand-600 hover:bg-sand-100"
+            className="block border-t border-sand-200 px-4 py-2.5 text-xs text-sand-600 hover:bg-sand-200"
           >
             Choose what you are told about
           </Link>
@@ -191,13 +191,13 @@ function NotificationRow({
   )
 
   return (
-    <li className={cn('border-b border-sand-100 last:border-b-0', notification.isUnread && 'bg-brand-50/40')}>
+    <li className={cn('border-b border-sand-200 last:border-b-0', notification.isUnread && 'bg-brand-900/25')}>
       {notification.link ? (
-        <Link to={notification.link} onClick={onOpen} className="block px-4 py-3 hover:bg-sand-100">
+        <Link to={notification.link} onClick={onOpen} className="block px-4 py-3 hover:bg-sand-200">
           {body}
         </Link>
       ) : (
-        <button type="button" onClick={onOpen} className="block w-full px-4 py-3 text-left hover:bg-sand-100">
+        <button type="button" onClick={onOpen} className="block w-full px-4 py-3 text-left hover:bg-sand-200">
           {body}
         </button>
       )}

@@ -49,7 +49,7 @@ function Stop({
             'mt-1 grid size-7 shrink-0 place-items-center rounded-full border text-xs font-medium',
             stop.isFixedTime
               ? 'border-brand-600 bg-brand-600 text-white'
-              : 'border-sand-300 bg-white text-sand-700',
+              : 'border-sand-300 bg-sand-100 text-sand-700',
           )}
         >
           {position}

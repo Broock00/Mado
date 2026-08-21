@@ -77,7 +77,7 @@ export function AppShell() {
           not merely possible. */}
       <a
         href="#main"
-        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-white focus:px-4 focus:py-2 focus:shadow-lifted"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-sand-100 focus:px-4 focus:py-2 focus:text-sand-900 focus:shadow-lifted"
       >
         Skip to content
       </a>
@@ -88,18 +88,20 @@ export function AppShell() {
       {!online && (
         <div
           role="status"
-          className="bg-amber-100 px-4 py-2 text-center text-sm text-amber-900"
+          className="bg-sand-100 px-4 py-2 text-center text-sm text-sand-700"
         >
           {t('offline.banner')}
         </div>
       )}
 
-      <header className="sticky top-0 z-30 border-b border-sand-200 bg-sand-50/85 backdrop-blur">
+      <header className="sticky top-0 z-30 border-b border-sand-200 bg-sand-50/90 backdrop-blur">
         <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-          <Link to="/" className="flex items-center gap-2">
-            <span className="grid size-8 place-items-center rounded-lg bg-brand-700 text-white">
-              <Compass className="size-4.5" aria-hidden />
-            </span>
+          <Link to="/" className="flex items-center gap-2" aria-label="Mado home">
+            <img
+              src="/logo.png"
+              alt="Mado"
+              className="size-9 rounded-xl object-cover"
+            />
             <span className="text-lg font-semibold tracking-tight text-sand-900">Mado</span>
           </Link>
 
@@ -113,8 +115,8 @@ export function AppShell() {
                   cn(
                     'rounded-lg px-3 py-2 text-sm font-medium transition-colors',
                     isActive
-                      ? 'bg-brand-100 text-brand-800'
-                      : 'text-sand-600 hover:bg-sand-200/60 hover:text-sand-900',
+                      ? 'bg-sand-200 text-brand-700'
+                      : 'text-sand-500 hover:bg-sand-200/70 hover:text-sand-900',
                   )
                 }
               >
@@ -127,12 +129,6 @@ export function AppShell() {
             {user ? (
               <div className="flex items-center gap-1">
                 <NotificationBell />
-                {/* Tickets an explorer has already paid for had no route into
-                    them at all: /orders existed and nothing linked to it, so
-                    the only way back to a ticket was the URL or the email.
-                    Beside the bell rather than in the tab bar because five is
-                    the ceiling there, and this is a thing you reach for on the
-                    door rather than something you browse. */}
                 <NavLink
                   to="/orders"
                   aria-label={t('nav.orders')}
@@ -140,8 +136,8 @@ export function AppShell() {
                     cn(
                       'rounded-lg p-2 transition-colors',
                       isActive
-                        ? 'bg-brand-100 text-brand-800'
-                        : 'text-sand-600 hover:bg-sand-200/60 hover:text-sand-900',
+                        ? 'bg-sand-200 text-brand-700'
+                        : 'text-sand-500 hover:bg-sand-200/70 hover:text-sand-900',
                     )
                   }
                 >
@@ -157,8 +153,8 @@ export function AppShell() {
                       cn(
                         'rounded-lg p-2 transition-colors',
                         isActive
-                          ? 'bg-brand-100 text-brand-800'
-                          : 'text-sand-600 hover:bg-sand-200/60 hover:text-sand-900',
+                          ? 'bg-sand-200 text-brand-700'
+                          : 'text-sand-500 hover:bg-sand-200/70 hover:text-sand-900',
                       )
                     }
                   >
@@ -172,24 +168,22 @@ export function AppShell() {
                     cn(
                       'rounded-lg p-2 transition-colors',
                       isActive
-                        ? 'bg-brand-100 text-brand-800'
-                        : 'text-sand-600 hover:bg-sand-200/60 hover:text-sand-900',
+                        ? 'bg-sand-200 text-brand-700'
+                        : 'text-sand-500 hover:bg-sand-200/70 hover:text-sand-900',
                     )
                   }
                 >
                   <Settings className="size-4.5" aria-hidden />
                 </NavLink>
                 {/* A business account *is* the business, so the header names
-                    the business rather than the person who signed in. Showing
-                    "Test Person" above a profile belonging to a cafe is the
-                    dual identity the account model exists to avoid. */}
-                <span className="hidden pl-1 text-sm text-sand-600 sm:inline">
+                    the business rather than the person who signed in. */}
+                <span className="hidden pl-1 text-sm text-sand-500 sm:inline">
                   {accountName}
                 </span>
                 <button
                   type="button"
                   onClick={signOut}
-                  className="rounded-lg px-3 py-2 text-sm font-medium text-sand-600 hover:bg-sand-200/60"
+                  className="rounded-lg px-3 py-2 text-sm font-medium text-sand-500 transition-colors hover:bg-sand-200/70 hover:text-sand-900"
                 >
                   {t('account.signOut')}
                 </button>
@@ -198,7 +192,7 @@ export function AppShell() {
               <Link
                 to="/signin"
                 state={{ from: location.pathname }}
-                className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-sand-700 hover:bg-sand-200/60"
+                className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-sand-600 transition-colors hover:bg-sand-200/70 hover:text-sand-900"
               >
                 <User className="size-4" aria-hidden />
                 {t('account.signIn')}
@@ -216,7 +210,7 @@ export function AppShell() {
           within one-handed reach. */}
       <nav
         aria-label="Primary"
-        className="fixed inset-x-0 bottom-0 z-30 border-t border-sand-200 bg-white/95 backdrop-blur sm:hidden"
+        className="fixed inset-x-0 bottom-0 z-30 border-t border-sand-200 bg-sand-50/95 backdrop-blur sm:hidden"
       >
         <div className="flex items-stretch justify-around">
           {NAV.map((item) => (

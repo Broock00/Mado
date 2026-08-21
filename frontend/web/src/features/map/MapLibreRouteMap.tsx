@@ -182,7 +182,7 @@ export function MapLibreRouteMap({
     for (const point of route?.points ?? []) {
       const element = document.createElement('div')
       element.className =
-        'grid size-7 place-items-center rounded-full bg-brand-700 text-xs font-semibold text-white shadow-lifted ring-2 ring-white'
+        'grid size-7 place-items-center rounded-full bg-brand-700 text-xs font-semibold text-white shadow-lifted ring-2 ring-sand-100'
       // Numbered by position in the plan, so a marker matches the timeline even
       // when an earlier stop had no coordinates and was skipped.
       element.textContent = String(point.index + 1)

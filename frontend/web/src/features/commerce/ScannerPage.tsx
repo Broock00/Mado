@@ -59,9 +59,9 @@ const VERDICT: Record<
 }
 
 const TONE = {
-  good: 'border-green-300 bg-green-50 text-green-900',
-  warn: 'border-accent-300 bg-accent-100/60 text-accent-800',
-  bad: 'border-red-300 bg-red-50 text-red-900',
+  good: 'border-brand-600/50 bg-brand-900/30 text-brand-300',
+  warn: 'border-accent-300/60 bg-accent-100/80 text-accent-300',
+  bad: 'border-red-800/60 bg-red-950 text-red-300',
 }
 
 /** Present on Android and ChromeOS, absent on desktop Chrome for Windows -

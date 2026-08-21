@@ -95,7 +95,7 @@ function VerifyEmailRow() {
         </Button>
       )}
       {resend.isError && (
-        <p className="w-full text-sm text-red-700" role="alert">
+        <p className="w-full text-sm text-red-300" role="alert">
           {(resend.error as Error).message}
         </p>
       )}
@@ -181,7 +181,7 @@ function ChangePassword() {
           </Button>
         </div>
         {change.isError && (
-          <p className="text-sm text-red-700" role="alert">
+          <p className="text-sm text-red-300" role="alert">
             {(change.error as Error).message}
           </p>
         )}
@@ -243,7 +243,7 @@ function Sessions() {
       )}
 
       {revoke.isError && (
-        <p className="mt-2 text-sm text-red-700" role="alert">
+        <p className="mt-2 text-sm text-red-300" role="alert">
           {(revoke.error as Error).message}
         </p>
       )}

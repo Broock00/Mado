@@ -62,7 +62,7 @@ const badgeTones: Record<BadgeTone, string> = {
   accent: 'bg-accent-100 text-accent-700',
   success: 'bg-brand-100 text-brand-800',
   ai: 'bg-[var(--color-ai-soft)] text-[var(--color-ai)]',
-  danger: 'bg-red-100 text-red-800',
+  danger: 'bg-red-950 text-red-300',
 }
 
 export function Badge({
@@ -96,7 +96,7 @@ export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
-        'rounded-card border border-sand-200 bg-white shadow-card',
+        'rounded-card border border-sand-200 bg-sand-100 shadow-card',
         className,
       )}
       {...props}
@@ -112,10 +112,10 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
       <input
         ref={ref}
         className={cn(
-          'h-11 w-full rounded-lg border border-sand-300 bg-white px-3.5 text-sm',
+          'h-11 w-full rounded-lg border border-sand-300 bg-sand-100 px-3.5 text-sm text-sand-900',
           'placeholder:text-sand-400',
-          'focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20',
-          'disabled:bg-sand-100 disabled:text-sand-400',
+          'focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25',
+          'disabled:bg-sand-200 disabled:text-sand-400',
           className,
         )}
         {...props}

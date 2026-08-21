@@ -114,7 +114,7 @@ export function ResetPasswordPage() {
         </p>
 
         {reset.isError && (
-          <p className="mt-3 text-sm text-red-700" role="alert">
+          <p className="mt-3 text-sm text-red-300" role="alert">
             {(reset.error as Error).message}{' '}
             <Link to="/forgot-password" className="underline">
               Ask for a new link

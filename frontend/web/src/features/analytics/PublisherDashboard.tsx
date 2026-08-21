@@ -173,7 +173,7 @@ export function PublisherDashboard() {
               aria-pressed={windowDays === days}
               className={
                 windowDays === days
-                  ? 'rounded-md bg-brand-100 px-3 py-1.5 text-sm font-medium text-brand-900'
+                  ? 'rounded-md bg-brand-900/40 px-3 py-1.5 text-sm font-medium text-brand-200'
                   : 'rounded-md px-3 py-1.5 text-sm text-sand-600 hover:text-sand-900'
               }
             >
@@ -223,7 +223,7 @@ export function PublisherDashboard() {
           </div>
 
           {data.withheldCount > 0 && (
-            <Card className="mt-4 border-red-200 bg-red-50 p-4 text-sm text-red-900">
+            <Card className="mt-4 border-red-800/60 bg-red-950 p-4 text-sm text-red-300">
               {data.withheldCount} of your posts{' '}
               {data.withheldCount === 1 ? 'is' : 'are'} withheld from discovery pending a
               moderator. They are listed below.

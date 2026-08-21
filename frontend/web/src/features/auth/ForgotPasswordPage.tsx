@@ -74,7 +74,7 @@ export function ForgotPasswordPage() {
             </form>
 
             {ask.isError && (
-              <p className="mt-3 text-sm text-red-700" role="alert">
+              <p className="mt-3 text-sm text-red-300" role="alert">
                 {(ask.error as Error).message}
               </p>
             )}

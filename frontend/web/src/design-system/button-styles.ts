@@ -19,9 +19,10 @@ export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
 export type ButtonSize = 'sm' | 'md' | 'lg'
 
 export const buttonVariants: Record<ButtonVariant, string> = {
+  // Matches the Ask Mado launcher: darker orange, not the bright mid-tone.
   primary: 'bg-brand-700 text-white hover:bg-brand-800 active:bg-brand-900 shadow-sm',
   secondary:
-    'bg-white text-sand-800 border border-sand-300 hover:bg-sand-100 active:bg-sand-200',
+    'bg-sand-100 text-sand-800 border border-sand-300 hover:bg-sand-200 active:bg-sand-300',
   ghost: 'bg-transparent text-sand-700 hover:bg-sand-200/70 active:bg-sand-300/70',
   danger: 'bg-danger text-white hover:opacity-90',
 }

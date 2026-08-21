@@ -81,7 +81,7 @@ export function ReportDialog({
           <button
             type="button"
             onClick={onClose}
-            className="grid size-8 place-items-center rounded-full text-sand-500 hover:bg-sand-100"
+            className="grid size-8 place-items-center rounded-full text-sand-500 hover:bg-sand-200"
             aria-label="Close"
           >
             <X className="size-4" aria-hidden />
@@ -112,8 +112,8 @@ export function ReportDialog({
                     className={cn(
                       'w-full rounded-lg border px-3 py-2 text-left transition-colors',
                       reason === option.value
-                        ? 'border-brand-600 bg-brand-50'
-                        : 'border-sand-300 hover:bg-sand-100',
+                        ? 'border-brand-500 bg-brand-900/40'
+                        : 'border-sand-300 hover:bg-sand-200',
                     )}
                   >
                     <span className="block text-sm font-medium text-sand-900">{option.label}</span>
@@ -132,11 +132,11 @@ export function ReportDialog({
               maxLength={1000}
               placeholder="Anything else worth knowing (optional)"
               aria-label="Extra detail"
-              className="mt-3 w-full rounded-lg border border-sand-300 bg-white px-3 py-2 text-sm placeholder:text-sand-400 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
+              className="mt-3 w-full rounded-lg border border-sand-300 bg-sand-100 px-3 py-2 text-sm placeholder:text-sand-400 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20"
             />
 
             {error && (
-              <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+              <p role="alert" className="mt-3 rounded-lg bg-red-950 px-3 py-2 text-sm text-red-300">
                 {error}
               </p>
             )}

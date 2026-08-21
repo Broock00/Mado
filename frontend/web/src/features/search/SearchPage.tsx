@@ -134,7 +134,7 @@ export function SearchPage() {
       </form>
 
       {look && (
-        <div className="mb-4 rounded-xl border border-sand-200 bg-white px-4 py-3">
+        <div className="mb-4 rounded-xl border border-sand-200 bg-sand-100 px-4 py-3">
           {look.unclear ? (
             <>
               <p className="text-sm font-medium text-sand-900">{t('search.visual.unclear')}</p>
@@ -171,8 +171,8 @@ export function SearchPage() {
           className={cn(
             'inline-flex items-center gap-1.5 rounded-pill border px-3 py-1.5 text-sm transition-colors',
             freeOnly
-              ? 'border-brand-600 bg-brand-100 text-brand-800'
-              : 'border-sand-300 bg-white text-sand-700 hover:bg-sand-100',
+              ? 'border-brand-500 bg-brand-900/40 text-brand-200'
+              : 'border-sand-300 bg-sand-100 text-sand-700 hover:bg-sand-200',
           )}
         >
           <SlidersHorizontal className="size-3.5" aria-hidden />
@@ -192,7 +192,7 @@ export function SearchPage() {
                   setInput(suggestion)
                   runSearch(suggestion)
                 }}
-                className="rounded-pill border border-sand-300 bg-white px-3.5 py-1.5 text-sm text-sand-700 transition-colors hover:border-brand-400 hover:bg-brand-50"
+                className="rounded-pill border border-sand-300 bg-sand-100 px-3.5 py-1.5 text-sm text-sand-700 transition-colors hover:border-brand-500 hover:bg-brand-900/25"
               >
                 {suggestion}
               </button>
@@ -243,7 +243,7 @@ export function SearchPage() {
                   className={
                     view === 'list'
                       ? 'flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white'
-                      : 'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-sand-700 hover:bg-sand-100'
+                      : 'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-sand-700 hover:bg-sand-200'
                   }
                 >
                   <LayoutGrid className="size-4" aria-hidden />
@@ -256,7 +256,7 @@ export function SearchPage() {
                   className={
                     view === 'map'
                       ? 'flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-sm font-medium text-white'
-                      : 'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-sand-700 hover:bg-sand-100'
+                      : 'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-sand-700 hover:bg-sand-200'
                   }
                 >
                   <MapIcon className="size-4" aria-hidden />

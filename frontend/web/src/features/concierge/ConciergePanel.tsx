@@ -71,9 +71,9 @@ function ProactiveSuggestionCard() {
   return (
     <Link
       to={`/experiences/${data.experienceId}`}
-      className="block rounded-xl border border-brand-200 bg-brand-50 px-3.5 py-3 transition-colors hover:border-brand-400"
+      className="block rounded-xl border border-brand-700/50 bg-brand-900/30 px-3.5 py-3 transition-colors hover:border-brand-500"
     >
-      <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-brand-700">
+      <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-brand-400">
         <Sparkles className="size-3" aria-hidden />
         You might like
       </p>
@@ -91,7 +91,7 @@ function ProactiveSuggestionCard() {
       </div>
       {/* The reason is assembled from the same fields that chose it, so it can
           never claim something the query did not check. */}
-      <p className="mt-1 text-xs text-brand-800">{data.reason}</p>
+      <p className="mt-1 text-xs text-brand-300">{data.reason}</p>
     </Link>
   )
 }
@@ -192,7 +192,7 @@ export function ConciergePanel() {
         aria-label="Close concierge"
       />
 
-      <div className="relative flex h-full w-full max-w-md flex-col bg-white shadow-lifted">
+      <div className="relative flex h-full w-full max-w-md flex-col bg-sand-100 shadow-lifted">
         <header className="flex items-center justify-between border-b border-sand-200 px-4 py-3">
           <div className="flex items-center gap-2">
             <span className="grid size-8 place-items-center rounded-full bg-[var(--color-ai-soft)]">
@@ -206,7 +206,7 @@ export function ConciergePanel() {
           <button
             type="button"
             onClick={() => toggle(false)}
-            className="grid size-8 place-items-center rounded-full text-sand-500 hover:bg-sand-100"
+            className="grid size-8 place-items-center rounded-full text-sand-500 hover:bg-sand-200"
             aria-label="Close"
           >
             <X className="size-4" aria-hidden />
@@ -227,7 +227,7 @@ export function ConciergePanel() {
                     key={opener.label}
                     type="button"
                     onClick={() => submit(opener.message)}
-                    className="rounded-pill border border-sand-300 px-3 py-1.5 text-sm text-sand-700 transition-colors hover:border-brand-400 hover:bg-brand-50"
+                    className="rounded-pill border border-sand-300 px-3 py-1.5 text-sm text-sand-700 transition-colors hover:border-brand-500 hover:bg-brand-900/25"
                   >
                     {opener.label}
                   </button>
@@ -251,7 +251,7 @@ export function ConciergePanel() {
                   {/* What changed, above the plan. An explorer comparing two
                       lists of four stops will not spot that the third moved. */}
                   {turn.planChange && (
-                    <p className="mt-2 rounded-lg bg-sand-100 px-3 py-2 text-xs text-sand-700">
+                    <p className="mt-2 rounded-lg bg-sand-200 px-3 py-2 text-xs text-sand-700">
                       {turn.planChange}
                     </p>
                   )}
@@ -273,7 +273,7 @@ export function ConciergePanel() {
                           <Link
                             to={`/experiences/${result.id}`}
                             onClick={() => toggle(false)}
-                            className="block rounded-lg border border-sand-200 bg-sand-50 p-3 transition-colors hover:border-brand-300 hover:bg-brand-50"
+                            className="block rounded-lg border border-sand-200 bg-sand-50 p-3 transition-colors hover:border-brand-600 hover:bg-brand-900/25"
                           >
                             <p className="text-sm font-medium text-sand-900">{result.title}</p>
                             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-sand-500">
@@ -296,7 +296,7 @@ export function ConciergePanel() {
                                 </p>
                               )}
                             {result.reason && (
-                              <p className="mt-1 text-xs text-brand-800">{result.reason}</p>
+                              <p className="mt-1 text-xs text-brand-300">{result.reason}</p>
                             )}
                           </Link>
                         </li>
@@ -306,7 +306,7 @@ export function ConciergePanel() {
 
                   {/* A low-confidence turn asks rather than guesses (spec 56.02 s13). */}
                   {turn.clarification && (
-                    <p className="rounded-lg bg-accent-100 px-3 py-2 text-sm text-accent-700">
+                    <p className="rounded-lg bg-accent-100 px-3 py-2 text-sm text-accent-300">
                       {turn.clarification}
                     </p>
                   )}
@@ -318,7 +318,7 @@ export function ConciergePanel() {
                           key={action.label}
                           type="button"
                           onClick={() => submit(action.message)}
-                          className="rounded-pill border border-sand-300 px-3 py-1 text-xs text-sand-700 transition-colors hover:border-brand-400 hover:bg-brand-50"
+                          className="rounded-pill border border-sand-300 px-3 py-1 text-xs text-sand-700 transition-colors hover:border-brand-500 hover:bg-brand-900/25"
                         >
                           {action.label}
                         </button>
@@ -375,7 +375,7 @@ export function ConciergePanel() {
             <button
               type="button"
               onClick={() => requestLocation()}
-              className="mt-2 text-xs text-brand-700 underline underline-offset-2 hover:text-brand-800"
+              className="mt-2 text-xs text-brand-400 underline underline-offset-2 hover:text-brand-300"
             >
               Share your location for answers about where you are
             </button>

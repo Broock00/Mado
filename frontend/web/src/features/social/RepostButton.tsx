@@ -79,14 +79,14 @@ export function RepostButton({
         aria-label={reposted ? 'Undo repost' : 'Repost'}
         className={cn(
           'flex w-fit items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm transition-colors',
-          reposted ? 'text-brand-700 hover:bg-brand-50' : 'text-sand-600 hover:bg-sand-100',
+          reposted ? 'text-brand-400 hover:bg-brand-900/25' : 'text-sand-600 hover:bg-sand-200',
         )}
       >
         <Repeat2 className="size-4" aria-hidden />
         {label(count)}
       </button>
 
-      {error && <p className="px-2 text-xs text-red-700">{error}</p>}
+      {error && <p className="px-2 text-xs text-red-300">{error}</p>}
     </div>
   )
 }

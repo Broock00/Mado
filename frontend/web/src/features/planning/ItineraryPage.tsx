@@ -97,7 +97,7 @@ export function ItineraryPage() {
       {!online && (
         <p
           role="status"
-          className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900"
+          className="mt-4 rounded-lg bg-accent-100 px-3 py-2 text-sm text-accent-300"
         >
           <CloudOff className="mr-1.5 inline size-4 align-text-bottom" aria-hidden />
           {t('offline.savedCopy')}

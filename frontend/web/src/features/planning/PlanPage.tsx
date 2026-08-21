@@ -152,7 +152,7 @@ export function PlanPage() {
           explorer saying "I'm free on Saturday" has already said everything the
           planner needs - asking them to restate it as a window, a budget and a
           stop count is asking for the same thing again in a worse notation. */}
-      <Card className="flex flex-wrap items-center justify-between gap-4 border-brand-200 bg-brand-50/60 p-5">
+      <Card className="flex flex-wrap items-center justify-between gap-4 border-brand-700/50 bg-brand-900/25 p-5">
         <div className="min-w-0">
           <p className="font-medium text-sand-900">Ask Mado to plan something</p>
           <p className="mt-0.5 text-sm text-sand-600">
@@ -240,8 +240,8 @@ export function PlanPage() {
                 aria-pressed={windowKey === option.key}
                 className={
                   windowKey === option.key
-                    ? 'rounded-full bg-brand-600 px-4 py-1.5 text-sm font-medium text-white'
-                    : 'rounded-full border border-sand-300 px-4 py-1.5 text-sm text-sand-700 hover:bg-sand-100'
+                    ? 'rounded-full bg-brand-700 px-4 py-1.5 text-sm font-medium text-white'
+                    : 'rounded-full border border-sand-300 px-4 py-1.5 text-sm text-sand-700 hover:bg-sand-200'
                 }
               >
                 {option.label}
@@ -264,8 +264,8 @@ export function PlanPage() {
                   aria-pressed={maxStops === count}
                   className={
                     maxStops === count
-                      ? 'size-9 rounded-lg bg-brand-600 text-sm font-medium text-white'
-                      : 'size-9 rounded-lg border border-sand-300 text-sm text-sand-700 hover:bg-sand-100'
+                      ? 'size-9 rounded-lg bg-brand-700 text-sm font-medium text-white'
+                      : 'size-9 rounded-lg border border-sand-300 text-sm text-sand-700 hover:bg-sand-200'
                   }
                 >
                   {count}
@@ -317,7 +317,7 @@ export function PlanPage() {
         </Button>
 
         {build.isError && (
-          <p className="mt-3 text-sm text-red-700" role="alert">
+          <p className="mt-3 text-sm text-red-300" role="alert">
             {(build.error as Error).message}
           </p>
         )}

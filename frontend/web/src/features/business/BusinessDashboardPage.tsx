@@ -83,7 +83,7 @@ function ProfileSection({ business }: { business: Business }) {
               setForm({ ...form, businessType: e.target.value })
               setSaved(false)
             }}
-            className="w-full rounded-lg border border-sand-300 bg-white px-3 py-2 text-sm text-sand-900"
+            className="w-full rounded-lg border border-sand-300 bg-sand-100 px-3 py-2 text-sm text-sand-900"
           >
             <option value="">Not saying</option>
             {BUSINESS_TYPES.map((type) => (
@@ -107,7 +107,7 @@ function ProfileSection({ business }: { business: Business }) {
             }}
             rows={4}
             maxLength={4000}
-            className="w-full rounded-lg border border-sand-300 bg-white px-3 py-2 text-sm text-sand-900"
+            className="w-full rounded-lg border border-sand-300 bg-sand-100 px-3 py-2 text-sm text-sand-900"
           />
         </div>
 
@@ -128,7 +128,7 @@ function ProfileSection({ business }: { business: Business }) {
         </div>
       </div>
 
-      {error && <p className="text-sm text-red-700">{error}</p>}
+      {error && <p className="text-sm text-red-300">{error}</p>}
 
       <div className="flex items-center gap-3">
         <Button onClick={() => save.mutate()} loading={save.isPending}>
@@ -186,7 +186,7 @@ function MemberRow({
           {member.status === 'invited' ? 'Invited, not yet accepted' : member.roleLabel}
           {member.invitedEmail && member.displayName ? ` · ${member.invitedEmail}` : ''}
         </p>
-        {error && <p className="mt-1 text-xs text-red-700">{error}</p>}
+        {error && <p className="mt-1 text-xs text-red-300">{error}</p>}
       </div>
 
       {member.status === 'invited' && <Badge tone="neutral">Pending</Badge>}
@@ -196,7 +196,7 @@ function MemberRow({
         value={member.role}
         onChange={(e) => changeRole.mutate(e.target.value)}
         disabled={changeRole.isPending || remove.isPending}
-        className="rounded-lg border border-sand-300 bg-white px-2 py-1.5 text-sm text-sand-900"
+        className="rounded-lg border border-sand-300 bg-sand-100 px-2 py-1.5 text-sm text-sand-900"
       >
         {roles.map((role) => (
           <option key={role.value} value={role.value}>
@@ -282,7 +282,7 @@ function TeamSection({ businessId }: { businessId: string }) {
             id="invite-role"
             value={role}
             onChange={(e) => setRole(e.target.value)}
-            className="rounded-lg border border-sand-300 bg-white px-3 py-2 text-sm text-sand-900"
+            className="rounded-lg border border-sand-300 bg-sand-100 px-3 py-2 text-sm text-sand-900"
           >
             {options.map((option) => (
               <option key={option.value} value={option.value}>
@@ -308,7 +308,7 @@ function TeamSection({ businessId }: { businessId: string }) {
         </p>
       )}
 
-      {error && <p className="text-sm text-red-700">{error}</p>}
+      {error && <p className="text-sm text-red-300">{error}</p>}
 
       {isLoading ? (
         <Skeleton className="h-16 w-full rounded-lg" />

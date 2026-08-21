@@ -48,8 +48,8 @@ export function LanguageChoice() {
               onClick={() => setLanguage(option.code as Language)}
               className={cn(
                 'flex w-full items-center justify-between px-5 py-4 text-left transition-colors',
-                'hover:bg-sand-100 disabled:opacity-60',
-                chosen && 'bg-brand-50',
+                'hover:bg-sand-200 disabled:opacity-60',
+                chosen && 'bg-brand-900/30',
               )}
             >
               <span className="flex items-center gap-3">

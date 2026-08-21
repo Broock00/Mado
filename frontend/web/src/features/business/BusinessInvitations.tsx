@@ -48,7 +48,7 @@ export function BusinessInvitations() {
     <Card className="space-y-3 p-5">
       <h2 className="text-sm font-medium text-sand-700">Invitations</h2>
 
-      {error && <p className="text-sm text-red-700">{error}</p>}
+      {error && <p className="text-sm text-red-300">{error}</p>}
 
       <ul className="space-y-3">
         {invitations.map((invitation) => (

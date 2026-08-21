@@ -69,7 +69,7 @@ function ShareBar({ collection }: { collection: CollectionDetail }) {
           return (
             <label
               key={option.value}
-              className="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-2 hover:bg-sand-100"
+              className="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-2 hover:bg-sand-200"
             >
               <input
                 type="radio"
@@ -92,7 +92,7 @@ function ShareBar({ collection }: { collection: CollectionDetail }) {
       </div>
 
       {setVisibility.isError && (
-        <p className="mt-2 text-sm text-red-700" role="alert">
+        <p className="mt-2 text-sm text-red-300" role="alert">
           {(setVisibility.error as Error).message}
         </p>
       )}

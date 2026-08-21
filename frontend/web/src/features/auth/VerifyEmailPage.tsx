@@ -119,7 +119,7 @@ export function VerifyEmailPage() {
                   </Button>
                 )}
                 {resend.isError && (
-                  <p className="mt-2 text-sm text-red-700" role="alert">
+                  <p className="mt-2 text-sm text-red-300" role="alert">
                     {(resend.error as Error).message}
                   </p>
                 )}

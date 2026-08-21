@@ -89,7 +89,7 @@ export function MyActivity() {
                         read it as eleven visits. */}
                     <span className="h-2 flex-1 overflow-hidden rounded-full bg-sand-200">
                       <span
-                        className="block h-full rounded-full bg-brand-500"
+                        className="block h-full rounded-full bg-brand-700"
                         style={{
                           width: `${strongest ? Math.max(6, (category.weight / strongest) * 100) : 0}%`,
                         }}

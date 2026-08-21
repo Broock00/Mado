@@ -139,7 +139,7 @@ export function SignInPage() {
           </div>
 
           {error && (
-            <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+            <p role="alert" className="rounded-lg bg-red-950 px-3 py-2 text-sm text-red-300">
               {error}
             </p>
           )}

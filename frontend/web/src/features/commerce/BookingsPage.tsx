@@ -139,8 +139,8 @@ export function BookingsPage() {
                 className={cn(
                   'rounded-pill border px-3 py-1.5 text-sm transition-colors',
                   date.id === selected
-                    ? 'border-brand-400 bg-brand-50 font-medium text-brand-800'
-                    : 'border-sand-300 text-sand-700 hover:bg-sand-100',
+                    ? 'border-brand-500 bg-brand-900/40 font-medium text-brand-200'
+                    : 'border-sand-300 text-sand-700 hover:bg-sand-200',
                 )}
               >
                 {when(date.startTime)}

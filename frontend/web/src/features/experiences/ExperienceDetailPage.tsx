@@ -322,7 +322,7 @@ export function ExperienceDetailPage() {
                   {data.tags.map((tag) => (
                     <span
                       key={tag.id}
-                      className="rounded-full border border-sand-200 bg-white px-3 py-1 text-xs font-medium text-sand-700"
+                      className="rounded-full bg-[#1a1a1a] px-3 py-1.5 text-xs font-medium text-zinc-300"
                     >
                       {tag.name}
                     </span>
@@ -330,7 +330,7 @@ export function ExperienceDetailPage() {
                   {data.suitability.map((slug) => (
                     <span
                       key={slug}
-                      className="rounded-full border border-brand-100 bg-brand-50 px-3 py-1 text-xs font-medium capitalize text-brand-800"
+                      className="rounded-full bg-[#1a1a1a] px-3 py-1.5 text-xs font-medium capitalize text-zinc-300"
                     >
                       {SUITABILITY_LABELS[slug] ?? slug.replace(/_/g, ' ')}
                     </span>
@@ -349,12 +349,12 @@ export function ExperienceDetailPage() {
                     return (
                       <li
                         key={slug}
-                        className="flex items-center gap-2.5 rounded-xl border border-brand-100 bg-brand-50/60 px-3 py-2.5"
+                        className="flex items-center gap-2.5 rounded-xl bg-[#1a1a1a] px-3 py-2.5"
                       >
-                        <span className="grid size-6 shrink-0 place-items-center rounded-lg bg-brand-100 text-brand-700">
+                        <span className="grid size-6 shrink-0 place-items-center rounded-lg bg-black/40 text-zinc-400">
                           <Icon className="size-3" aria-hidden />
                         </span>
-                        <span className="text-xs font-medium capitalize text-brand-900">{label}</span>
+                        <span className="text-xs font-medium capitalize text-zinc-300">{label}</span>
                       </li>
                     )
                   })}
@@ -373,7 +373,7 @@ export function ExperienceDetailPage() {
                 {/* Ticket panel: mobile only — desktop lives in the booking widget */}
                 {selectedEvent && (
                   <>
-                    <div className="mt-3 overflow-hidden rounded-xl border border-sand-200 bg-white lg:hidden">
+                    <div className="mt-3 overflow-hidden rounded-xl border border-sand-200 bg-sand-100 lg:hidden">
                       <div className="border-b border-sand-100 px-4 py-2.5">
                         <p className="text-sm font-medium text-sand-900">
                           {formatLongDate(selectedEvent.startTime)}
@@ -388,7 +388,7 @@ export function ExperienceDetailPage() {
                         <TicketPanel experienceId={data.id} occurrence={selectedEvent} embedded />
                       </div>
                     </div>
-                    <div className="mt-4 rounded-xl border border-sand-200 bg-white px-4 py-4 lg:hidden">
+                    <div className="mt-4 rounded-xl border border-sand-200 bg-sand-100 px-4 py-4 lg:hidden">
                       <Reviews experienceId={data.id} minimal />
                     </div>
                   </>
@@ -436,7 +436,7 @@ export function ExperienceDetailPage() {
                 mapUrl={mapUrl}
                 distance={distance}
               />
-              <div className="rounded-2xl border border-sand-200/80 bg-white px-5 py-4 shadow-card">
+              <div className="rounded-2xl border border-sand-200/80 bg-sand-100 px-5 py-4 shadow-card">
                 <Reviews experienceId={data.id} minimal />
               </div>
             </div>
@@ -498,8 +498,8 @@ function PublisherCard({ publisher }: { publisher: ExperienceDetail['publisher']
       loading="lazy"
     />
   ) : (
-    <span className="grid size-12 shrink-0 place-items-center rounded-full bg-brand-100 ring-2 ring-brand-50">
-      <Building2 className="size-5 text-brand-700" aria-hidden />
+    <span className="grid size-12 shrink-0 place-items-center rounded-full bg-brand-900/40 ring-2 ring-brand-700/50">
+      <Building2 className="size-5 text-brand-400" aria-hidden />
     </span>
   )
 
@@ -554,7 +554,7 @@ function HorizontalScrollRow({ children }: { children: React.ReactNode }) {
         type="button"
         onClick={() => scroll(-1)}
         aria-label="Scroll left"
-        className="absolute -left-3 top-1/2 z-10 grid size-9 -translate-y-1/2 place-items-center rounded-full border border-sand-200 bg-white text-sand-700 shadow-card transition hover:bg-sand-50"
+        className="absolute -left-3 top-1/2 z-10 grid size-9 -translate-y-1/2 place-items-center rounded-full border border-sand-200 bg-sand-100 text-sand-700 shadow-card transition hover:bg-sand-200"
       >
         <ChevronLeft className="size-4" aria-hidden />
       </button>
@@ -568,7 +568,7 @@ function HorizontalScrollRow({ children }: { children: React.ReactNode }) {
         type="button"
         onClick={() => scroll(1)}
         aria-label="Scroll right"
-        className="absolute -right-3 top-1/2 z-10 grid size-9 -translate-y-1/2 place-items-center rounded-full border border-sand-200 bg-white text-sand-700 shadow-card transition hover:bg-sand-50"
+        className="absolute -right-3 top-1/2 z-10 grid size-9 -translate-y-1/2 place-items-center rounded-full border border-sand-200 bg-sand-100 text-sand-700 shadow-card transition hover:bg-sand-200"
       >
         <ChevronRight className="size-4" aria-hidden />
       </button>
@@ -603,10 +603,10 @@ function DateList({
               aria-pressed={selected}
               onClick={() => onSelect(event.id)}
               className={cn(
-                'whitespace-nowrap rounded-lg border px-3 py-2 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600',
+                'whitespace-nowrap rounded-full px-3 py-2 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500',
                 selected
-                  ? 'border-brand-600 bg-brand-50 font-medium text-brand-900'
-                  : 'border-sand-200 bg-white text-sand-700 hover:border-brand-200 hover:bg-brand-50/40',
+                  ? 'bg-[#2a2a2a] font-medium text-zinc-100'
+                  : 'bg-[#1a1a1a] text-zinc-300 hover:bg-[#222] hover:text-zinc-100',
                 cancelled && 'cursor-not-allowed opacity-40',
               )}
             >
@@ -617,10 +617,10 @@ function DateList({
                   month: 'short',
                 })}
               </span>
-              <span className={cn('mt-0.5 block tabular-nums', selected ? 'text-brand-700' : 'text-sand-500')}>
+              <span className={cn('mt-0.5 block tabular-nums', selected ? 'text-zinc-300' : 'text-zinc-500')}>
                 {start.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
                 {almostGone && !cancelled && (
-                  <span className="ml-1.5 font-medium text-accent-600">{event.remaining} left</span>
+                  <span className="ml-1.5 font-medium text-brand-400">{event.remaining} left</span>
                 )}
               </span>
             </button>
@@ -661,7 +661,7 @@ function BookingWidget({
   distance: string | null
 }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-sand-200/80 bg-white shadow-lifted">
+    <div className="overflow-hidden rounded-2xl border border-sand-200/80 bg-sand-100 shadow-lifted">
       {/* Price header */}
       <div className="bg-gradient-to-br from-brand-700 to-brand-800 px-5 py-4">
         <p className="text-2xl font-bold tracking-tight text-white">
@@ -685,8 +685,10 @@ function BookingWidget({
         {selectedEvent ? (
           <TicketPanel experienceId={data.id} occurrence={selectedEvent} embedded />
         ) : (
-          <a href="#reserve">
-            <Button className="w-full" size="lg">See available dates</Button>
+          <a href="#reserve" className="block">
+            <Button className="w-full" variant="secondary" size="sm">
+              See available dates
+            </Button>
           </a>
         )}
 
@@ -705,7 +707,7 @@ function BookingWidget({
             />
             {data.isSaved ? 'Saved' : 'Save'}
           </Button>
-          <AddToCollection experienceId={data.id} citySlug={data.citySlug} />
+          <AddToCollection experienceId={data.id} citySlug={data.citySlug} size="sm" />
         </div>
 
         {requiresAuth && (
@@ -760,7 +762,7 @@ function BookingWidget({
       <button
         type="button"
         onClick={onReport}
-        className="flex w-full items-center justify-center gap-1.5 border-t border-sand-100 py-3 text-xs text-sand-400 transition-colors hover:bg-sand-50 hover:text-sand-700"
+        className="flex w-full items-center justify-center gap-1.5 border-t border-sand-200 py-3 text-xs text-sand-400 transition-colors hover:bg-sand-200 hover:text-sand-700"
       >
         <Flag className="size-3.5" aria-hidden />
         Report a problem
@@ -783,7 +785,7 @@ function MobileDock({
   onToggleSave: () => void
 }) {
   return (
-    <div className="fixed inset-x-0 bottom-16 z-40 border-t border-sand-100 bg-white/95 shadow-[0_-1px_0_0_rgb(0_0_0/0.04),0_-8px_24px_rgb(0_0_0/0.07)] backdrop-blur-xl sm:bottom-0 lg:hidden">
+    <div className="fixed inset-x-0 bottom-16 z-40 border-t border-sand-100 bg-sand-100/95 shadow-[0_-1px_0_0_rgb(0_0_0/0.04),0_-8px_24px_rgb(0_0_0/0.07)] backdrop-blur-xl sm:bottom-0 lg:hidden">
       <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
         <div className="min-w-0 flex-1">
           <p className="truncate text-lg font-bold text-sand-950">{formatPrice(data.price)}</p>
@@ -799,8 +801,8 @@ function MobileDock({
           disabled={requiresAuth}
           aria-label={data.isSaved ? 'Saved' : 'Save'}
           className={cn(
-            'grid size-11 shrink-0 place-items-center rounded-xl border border-sand-200 transition-colors hover:bg-sand-50 disabled:opacity-40',
-            data.isSaved ? 'border-brand-200 bg-brand-50 text-brand-700' : 'text-sand-600',
+            'grid size-11 shrink-0 place-items-center rounded-xl border border-sand-200 transition-colors hover:bg-sand-200 disabled:opacity-40',
+            data.isSaved ? 'border-brand-600 bg-brand-900/30 text-brand-400' : 'text-sand-600',
           )}
         >
           <Bookmark className="size-5" fill={data.isSaved ? 'currentColor' : 'none'} aria-hidden />

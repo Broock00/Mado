@@ -124,7 +124,7 @@ export function MyPostsPage() {
       {posts && posts.length > 0 && <VerificationCard />}
 
       {justPublished && (
-        <div className="mb-5 rounded-card border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-900">
+        <div className="mb-5 rounded-card border border-brand-700/50 bg-brand-900/30 px-4 py-3 text-sm text-brand-200">
           Published. It is now discoverable by anyone exploring the city.
         </div>
       )}
@@ -153,7 +153,7 @@ export function MyPostsPage() {
       {refusal && (
         <p
           role="alert"
-          className="mb-3 rounded-lg bg-accent-100/60 px-3 py-2 text-sm text-accent-800"
+          className="mb-3 rounded-lg bg-accent-100/80 px-3 py-2 text-sm text-accent-300"
         >
           {refusal}
         </p>
@@ -253,14 +253,14 @@ function PostRow({
 
         {/* The author is told why, not just that. */}
         {withheld && (
-          <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+          <p className="mt-2 rounded-lg bg-red-950 px-3 py-2 text-xs text-red-300">
             Withheld from discovery while it is reviewed
             {post.reportCount > 0 && ` after ${post.reportCount} report${post.reportCount > 1 ? 's' : ''}`}
             . Your post has not been deleted.
           </p>
         )}
         {pending && post.moderationNotes && (
-          <p className="mt-2 rounded-lg bg-accent-100/50 px-3 py-2 text-xs text-accent-700">
+          <p className="mt-2 rounded-lg bg-accent-100/60 px-3 py-2 text-xs text-accent-300">
             {post.moderationNotes}
           </p>
         )}
@@ -348,7 +348,7 @@ function PostRow({
               size="sm"
               onClick={() => setConfirming(true)}
               disabled={busy}
-              className="text-red-700 hover:bg-red-50"
+              className="text-red-300 hover:bg-red-950/50"
             >
               <Trash2 className="size-3.5" aria-hidden />
               Delete

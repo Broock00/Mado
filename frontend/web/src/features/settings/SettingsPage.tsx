@@ -268,7 +268,7 @@ export function SettingsPage() {
       </Card>
 
       {updatePrivacy.isError && (
-        <p className="mt-2 text-sm text-red-700" role="alert">
+        <p className="mt-2 text-sm text-red-300" role="alert">
           {(updatePrivacy.error as Error).message}
         </p>
       )}

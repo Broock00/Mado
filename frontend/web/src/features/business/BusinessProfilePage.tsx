@@ -35,7 +35,7 @@ const SOCIAL_ORDER = [
 
 function Header({ business }: { business: PublicBusiness }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-sand-200 bg-white shadow-card">
+    <div className="overflow-hidden rounded-2xl border border-sand-200 bg-sand-100 shadow-card">
       {business.coverUrl ? (
         <img
           src={business.coverUrl}
@@ -58,7 +58,7 @@ function Header({ business }: { business: PublicBusiness }) {
             loading="lazy"
           />
         ) : (
-          <span className="grid size-16 shrink-0 place-items-center rounded-xl bg-brand-50 ring-1 ring-sand-200">
+          <span className="grid size-16 shrink-0 place-items-center rounded-xl bg-brand-900/30 ring-1 ring-sand-200">
             <Building2 className="size-7 text-brand-700" aria-hidden />
           </span>
         )}
@@ -137,7 +137,7 @@ function ContactRow({ business }: { business: PublicBusiness }) {
           href={business.social[platform]}
           target="_blank"
           rel="noreferrer noopener"
-          className="rounded-lg px-3 py-1.5 text-sm capitalize text-sand-700 hover:bg-sand-100"
+          className="rounded-lg px-3 py-1.5 text-sm capitalize text-sand-700 hover:bg-sand-200"
         >
           {platform}
         </a>

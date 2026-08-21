@@ -228,7 +228,7 @@ export function Reviews({
         )}
 
         {formOpen && user && (
-          <div className="mt-3 space-y-3 rounded-lg border border-sand-200 bg-white p-3">
+          <div className="mt-3 space-y-3 rounded-lg border border-sand-200 bg-sand-100 p-3">
             <RatingPicker value={rating} onChange={setRating} />
             <textarea
               value={comment}
@@ -237,7 +237,7 @@ export function Reviews({
               maxLength={2000}
               placeholder="Optional comment"
               aria-label="Your review"
-              className="w-full resize-none rounded-lg border border-sand-200 bg-sand-50/50 px-3 py-2 text-sm text-sand-900 placeholder:text-sand-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-600/15"
+              className="w-full resize-none rounded-lg border border-sand-200 bg-sand-50/50 px-3 py-2 text-sm text-sand-900 placeholder:text-sand-400 focus:border-brand-400 focus:bg-sand-100 focus:outline-none focus:ring-2 focus:ring-brand-600/15"
             />
             <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -305,7 +305,7 @@ export function Reviews({
 
       {user ? (
         mine && !formOpen ? (
-          <div className="mt-4 rounded-xl border border-brand-100 bg-brand-50/40 p-4">
+          <div className="mt-4 rounded-xl border border-brand-700/50 bg-brand-900/25 p-4">
             <p className="text-xs font-medium uppercase tracking-wide text-brand-700">Your review</p>
             <button type="button" onClick={() => openForm()} className="mt-2 flex items-center gap-2">
               <Stars value={mine.rating} size="md" />
@@ -317,7 +317,7 @@ export function Reviews({
           <button
             type="button"
             onClick={() => openForm()}
-            className="mt-4 flex items-center gap-2 rounded-xl border border-dashed border-sand-200 px-4 py-3 hover:border-brand-200 hover:bg-brand-50/30"
+            className="mt-4 flex items-center gap-2 rounded-xl border border-dashed border-sand-200 px-4 py-3 hover:border-brand-600 hover:bg-brand-900/20"
           >
             <Stars value={0} size="md" />
             <span className="text-sm font-medium text-sand-700">Rate this experience</span>
@@ -333,7 +333,7 @@ export function Reviews({
       )}
 
       {formOpen && user && (
-        <div className="mt-4 space-y-3 rounded-xl border border-sand-200 bg-white p-4">
+        <div className="mt-4 space-y-3 rounded-xl border border-sand-200 bg-sand-100 p-4">
           <RatingPicker value={rating} onChange={setRating} />
           <textarea
             value={comment}
@@ -342,7 +342,7 @@ export function Reviews({
             maxLength={2000}
             placeholder="What should someone know before going? (optional)"
             aria-label="Your review"
-            className="w-full resize-none rounded-xl border border-sand-200 bg-sand-50/50 px-4 py-3 text-sm text-sand-900 placeholder:text-sand-400 focus:border-brand-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-600/15"
+            className="w-full resize-none rounded-xl border border-sand-200 bg-sand-50/50 px-4 py-3 text-sm text-sand-900 placeholder:text-sand-400 focus:border-brand-400 focus:bg-sand-100 focus:outline-none focus:ring-2 focus:ring-brand-600/15"
           />
           <div className="flex flex-wrap items-center gap-2">
             <Button

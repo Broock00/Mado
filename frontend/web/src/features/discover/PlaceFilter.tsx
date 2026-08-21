@@ -155,7 +155,7 @@ export function PlaceFilter() {
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
         aria-haspopup="dialog"
-        className="inline-flex max-w-[16rem] items-center gap-1.5 rounded-lg border border-sand-300 bg-white px-3 py-2 text-sm font-medium text-sand-800 hover:bg-sand-100"
+        className="inline-flex max-w-[16rem] items-center gap-1.5 rounded-lg border border-sand-300 bg-sand-100 px-3 py-2 text-sm font-medium text-sand-800 hover:bg-sand-200"
       >
         {resolving ? (
           <Loader2 className="size-4 shrink-0 animate-spin text-sand-500" aria-hidden />
@@ -170,7 +170,7 @@ export function PlaceFilter() {
         <div
           role="dialog"
           aria-label="Choose where to look"
-          className="absolute right-0 z-40 mt-1 w-80 rounded-xl border border-sand-200 bg-white p-2 shadow-lg"
+          className="absolute right-0 z-40 mt-1 w-80 rounded-xl border border-sand-200 bg-sand-100 p-2 shadow-lg"
         >
           <div className="flex items-center gap-2 rounded-lg border border-sand-300 px-2">
             <Search className="size-4 shrink-0 text-sand-500" aria-hidden />
@@ -203,8 +203,8 @@ export function PlaceFilter() {
                 setOpen(false)
               }}
               className={cn(
-                'flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-sand-100',
-                !place && 'font-medium text-brand-800',
+                'flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-sand-200',
+                !place && 'font-medium text-brand-400',
               )}
             >
               <span>
@@ -240,7 +240,7 @@ export function PlaceFilter() {
                     type="button"
                     disabled={choosing !== null}
                     onClick={() => void choose(found.placeId)}
-                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-sand-100 disabled:opacity-60"
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-sand-200 disabled:opacity-60"
                   >
                     <span className="min-w-0 flex-1">
                       {/* Two lines rather than one: eight rows that all begin

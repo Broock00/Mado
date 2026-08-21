@@ -113,9 +113,9 @@ export function RouteGuidance({ itinerary }: { itinerary: Itinerary }) {
       {route && (
         <>
           {route.warning && (
-            <Card className="mt-3 flex items-start gap-3 border-amber-200 bg-amber-50 p-4">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700" aria-hidden />
-              <p className="text-sm text-amber-900">{route.warning}</p>
+            <Card className="mt-3 flex items-start gap-3 border-accent-300/40 bg-accent-100 p-4">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-accent-300" aria-hidden />
+              <p className="text-sm text-accent-300">{route.warning}</p>
             </Card>
           )}
 
@@ -242,7 +242,7 @@ function NavigationStatus({
   if (progress.isFixTooVague) {
     return (
       <Card className="mt-3 flex items-start gap-3 p-4">
-        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
+        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-accent-300" aria-hidden />
         <p className="text-sm text-sand-700">
           Your position is only accurate to about{' '}
           {Math.round(location.fix.accuracyMetres)} m, which is not enough to place you on a
@@ -254,8 +254,8 @@ function NavigationStatus({
 
   if (progress.hasArrived) {
     return (
-      <Card className="mt-3 border-brand-200 bg-brand-50 p-4">
-        <p className="text-sm font-medium text-brand-900">
+      <Card className="mt-3 border-brand-700/50 bg-brand-900/30 p-4">
+        <p className="text-sm font-medium text-brand-200">
           You have reached the last stop. Enjoy your evening.
         </p>
       </Card>
@@ -288,7 +288,7 @@ function NavigationStatus({
       )}
 
       {progress.isOffRoute && (
-        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+        <p className="mt-3 rounded-lg bg-accent-100 px-3 py-2 text-sm text-accent-300">
           You are about {formatDistance(progress.offRouteMetres ?? 0)} from the route. Head
           back to the line to carry on - Mado will not re-route you.
         </p>

@@ -57,8 +57,8 @@ export function VoiceSearchButton({ onHeard }: { onHeard: (text: string) => void
         className={cn(
           'grid size-9 place-items-center rounded-lg border transition-colors',
           listening
-            ? 'border-red-400 bg-red-50 text-red-700'
-            : 'border-sand-300 bg-white text-sand-600 hover:bg-sand-100',
+            ? 'border-red-500/60 bg-red-950 text-red-300'
+            : 'border-sand-300 bg-sand-100 text-sand-600 hover:bg-sand-200',
         )}
       >
         {state === 'denied' ? (
@@ -103,7 +103,7 @@ export function VisualSearchButton({
         onClick={() => input.current?.click()}
         disabled={search.isPending}
         aria-label={t('search.visual.button')}
-        className="grid size-9 place-items-center rounded-lg border border-sand-300 bg-white text-sand-600 transition-colors hover:bg-sand-100 disabled:opacity-60"
+        className="grid size-9 place-items-center rounded-lg border border-sand-300 bg-sand-100 text-sand-600 transition-colors hover:bg-sand-200 disabled:opacity-60"
       >
         {search.isPending ? (
           <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -135,12 +135,12 @@ export function VisualSearchButton({
         }}
       />
       {tooBig && (
-        <p className="mt-2 text-xs text-red-700" role="alert">
+        <p className="mt-2 text-xs text-red-300" role="alert">
           {t('search.visual.tooBig')}
         </p>
       )}
       {search.isError && (
-        <p className="mt-2 text-xs text-red-700" role="alert">
+        <p className="mt-2 text-xs text-red-300" role="alert">
           {(search.error as Error).message}
         </p>
       )}
