@@ -19,9 +19,15 @@
  *
  * **A price is never rendered as fixed when only a floor is known** (§21).
  * `from` and `range` are separate shapes for exactly that reason.
+ *
+ * **What somebody already holds is shown before what they can buy.** Once
+ * tickets exist for this date the panel leads with them, linked to the codes,
+ * and the button underneath says "Buy more" - a page that offers "Get tickets"
+ * to somebody holding three reads as though the first purchase had not landed,
+ * and leaves them hunting the navigation for where their ticket went.
  */
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { ExternalLink, Minus, Plus, Ticket } from 'lucide-react'
@@ -31,6 +37,7 @@ import { useAppStore } from '@/app/store'
 import type { EventInstance, TicketTypeSummary } from '@/lib/types'
 import { Badge, Button, Card } from '@/design-system/primitives'
 import { ReserveButton } from '@/features/reservations/ReserveButton'
+import { heldFor, type Held } from './held'
 import { money } from '@/lib/money'
 
 const AVAILABILITY_LABEL: Record<string, string> = {
@@ -141,6 +148,31 @@ function TierRow({
   )
 }
 
+/**
+ * Tickets already held for this date, above the button that sells more.
+ *
+ * Shown wherever the panel appears, including when the date has since sold out
+ * - somebody who bought a ticket still needs to reach it, and "Sold out" with
+ * nothing else on the card reads as though theirs went with it.
+ *
+ * Never rendered for an external seller: Mado cannot see that server, and a
+ * count there would be an invention (spec 55.05 §64).
+ */
+function HeldTickets({ held }: { held: Held }) {
+  const plural = held.tickets === 1 ? '' : 's'
+  return (
+    <Link
+      to={held.href}
+      className="mt-3 flex items-center gap-2 rounded-xl bg-brand-50 px-3 py-2.5 text-sm font-medium text-brand-800 transition-colors hover:bg-brand-100"
+    >
+      <Ticket className="size-4 shrink-0" aria-hidden />
+      {held.bought
+        ? `${held.tickets} ticket${plural} bought`
+        : `${held.tickets} place${plural} registered`}
+    </Link>
+  )
+}
+
 export function TicketPanel({
   experienceId,
   occurrence,
@@ -159,6 +191,16 @@ export function TicketPanel({
     queryKey: ['ticketing', occurrence.id],
     queryFn: () => api.ticketing(experienceId, occurrence.id),
   })
+
+  // The same key the tickets page uses, so arriving here after buying reads
+  // from the cache the receipt already filled rather than asking again.
+  const { data: orders } = useQuery({
+    queryKey: ['my-orders'],
+    queryFn: () => api.myOrders(),
+    enabled: Boolean(user),
+  })
+
+  const held = useMemo(() => heldFor(orders ?? [], occurrence.id), [orders, occurrence.id])
 
   const buy = useMutation({
     mutationFn: () =>
@@ -228,11 +270,19 @@ export function TicketPanel({
   }
 
   if (data.cta === 'directions' || data.cta === 'find_similar' || data.cta === 'none') {
-    if (!label) return null
+    // Nothing left to sell, which is not the same as nothing to show: the date
+    // may have sold out or closed after this explorer bought, and their ticket
+    // is still the thing they came back to the page for.
+    if (!label && !held) return null
     return (
-      <div className={embedded ? 'flex items-center gap-2' : 'mt-3 flex items-center gap-2'}>
-        <Badge tone={AVAILABILITY_TONE[data.availability] ?? 'neutral'}>{label}</Badge>
-        {price && <span className="text-sm text-sand-700">{price}</span>}
+      <div className={embedded ? '' : 'mt-3'}>
+        {label && (
+          <div className="flex items-center gap-2">
+            <Badge tone={AVAILABILITY_TONE[data.availability] ?? 'neutral'}>{label}</Badge>
+            {price && <span className="text-sm text-sand-700">{price}</span>}
+          </div>
+        )}
+        {held && <HeldTickets held={held} />}
       </div>
     )
   }
@@ -259,6 +309,11 @@ export function TicketPanel({
 
       {error && <p className="mt-2 text-sm text-danger">{error}</p>}
 
+      {/* Above the button rather than below it, so what they already hold is
+          read before the offer to buy again - and so the button's own wording
+          has been explained by the time it says "more". */}
+      {held && <HeldTickets held={held} />}
+
       {user ? (
         <Button
           className="mt-4 w-full"
@@ -268,7 +323,9 @@ export function TicketPanel({
           onClick={() => buy.mutate()}
         >
           <Ticket className="size-4" aria-hidden />
-          {buying ? 'Get tickets' : 'Register'}
+          {/* "Get tickets" under "3 tickets bought" reads as though the first
+              purchase had not registered. */}
+          {held ? (buying ? 'Buy more' : 'Register more') : buying ? 'Get tickets' : 'Register'}
           {total > 0 && ` · ${total}`}
         </Button>
       ) : (
