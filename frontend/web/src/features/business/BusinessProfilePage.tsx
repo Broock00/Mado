@@ -15,16 +15,23 @@
 
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { BadgeCheck, Building2, Globe, Mail, MapPin, Phone } from 'lucide-react'
+import { BadgeCheck, Building2, Globe, Mail, MapPin, Phone, Settings2 } from 'lucide-react'
 
 import { api } from '@/lib/api'
+import { useAppStore } from '@/app/store'
 import type { PublicBusiness } from '@/lib/types'
 import { ExperienceCard } from '@/features/experiences/ExperienceCard'
 import { Badge, Button, Card, EmptyState, Skeleton } from '@/design-system/primitives'
 import { SocialIcon } from './SocialIcon'
 import { listedSocials } from './social'
 
-function Header({ business }: { business: PublicBusiness }) {
+function Header({
+  business,
+  canManage,
+}: {
+  business: PublicBusiness
+  canManage: boolean
+}) {
   return (
     <div className="overflow-hidden rounded-2xl border border-sand-200 bg-sand-100 shadow-card">
       {business.coverUrl ? (
@@ -71,6 +78,17 @@ function Header({ business }: { business: PublicBusiness }) {
               // Said plainly rather than left blank. The absence of a badge is
               // not something an explorer notices; a sentence is.
               <Badge tone="neutral">Not verified by Mado</Badge>
+            )}
+            {/* Same row as the name: manage belongs on the profile you are
+                looking at, not buried in settings. Only when this account owns
+                the business — explorers never see it. */}
+            {canManage && (
+              <Link to={`/businesses/${business.id}/manage`} className="ml-auto sm:ml-0">
+                <Button variant="secondary" size="sm">
+                  <Settings2 className="size-3.5" aria-hidden />
+                  Manage
+                </Button>
+              </Link>
             )}
           </div>
 
@@ -154,6 +172,7 @@ function ContactRow({ business }: { business: PublicBusiness }) {
 
 export function BusinessProfilePage() {
   const { slug = '' } = useParams()
+  const user = useAppStore((s) => s.user)
 
   const {
     data: business,
@@ -164,6 +183,16 @@ export function BusinessProfilePage() {
     queryKey: ['business', slug],
     queryFn: () => api.businessBySlug(slug),
     enabled: Boolean(slug),
+  })
+
+  // Whether this account *is* the business on the page. Fetched rather than
+  // assumed from the session name: a business account owns exactly one profile,
+  // and that is the only visitor who should see Manage here.
+  const { data: accountType } = useQuery({
+    queryKey: ['account-type'],
+    queryFn: () => api.accountType(),
+    enabled: Boolean(user),
+    staleTime: 60 * 60_000,
   })
 
   if (isLoading) {
@@ -201,10 +230,12 @@ export function BusinessProfilePage() {
   }
 
   const count = business.listings.length
+  const canManage =
+    accountType?.accountType === 'business' && accountType.business?.id === business.id
 
   return (
     <div className="mx-auto max-w-4xl space-y-5 px-4 py-6">
-      <Header business={business} />
+      <Header business={business} canManage={canManage} />
       <ContactRow business={business} />
 
       <section aria-labelledby="business-listings">

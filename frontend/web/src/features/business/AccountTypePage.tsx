@@ -7,9 +7,9 @@
  *
  * **Asked once, here.** This is the only moment somebody expects to be set up,
  * and the only moment the answer is genuinely needed. An account that has
- * already answered is sent straight on rather than being asked again; the way
- * to become a business afterwards is in settings, which is where somebody goes
- * when they have decided, not somewhere they trip over.
+ * already answered is sent straight on rather than being asked again. Converting
+ * later is a separate path (`/account-type/business`), not something this page
+ * re-asks on every visit.
  *
  * Two things are said on screen rather than buried: choosing business is **one
  * way**, and there is no second login. People are reasonably cautious about a
@@ -90,7 +90,7 @@ export function AccountTypePage() {
         </h1>
         <p className="mt-1 text-sm text-sand-500">
           One question before you start. Individual is the ordinary choice — you
-          can become a business later from settings.
+          can convert to a business later if you need to.
         </p>
       </div>
 
