@@ -61,7 +61,10 @@ from app.domains.identity.models import (
 from app.domains.publisher import business as business_vocab
 from app.domains.publisher import permissions
 from app.domains.publisher.models import (
+    GALLERY_IMAGE,
+    GALLERY_VIDEO,
     INVITATION_TTL_DAYS,
+    MAX_GALLERY_ITEMS,
     MEMBERSHIP_ACTIVE,
     MEMBERSHIP_DECLINED,
     MEMBERSHIP_INVITED,
@@ -69,6 +72,7 @@ from app.domains.publisher.models import (
     TRUST_LEVEL_COMMUNITY,
     TYPE_INDIVIDUAL,
     TYPE_ORGANIZATION,
+    GalleryItem,
     Publisher,
     PublisherMember,
 )
@@ -693,6 +697,130 @@ class PublishingService:
             .limit(limit)
         )
         return list(result.scalars().unique().all())
+
+    # ---------------------------------------------------------------- gallery
+
+    async def gallery_of(self, publisher_id: uuid.UUID) -> list[GalleryItem]:
+        """A business's own pictures and videos, in the order it arranged them.
+
+        No moderation gate, unlike `published_listings_of`. A gallery is not
+        discoverable - it is reachable only from the profile it belongs to, is
+        never indexed, ranked or read by the concierge - so the thing moderation
+        protects, an explorer being shown something they did not go looking for,
+        does not arise here. Reports still reach it through the business.
+        """
+        result = await self.session.execute(
+            select(GalleryItem)
+            .where(GalleryItem.publisher_id == publisher_id)
+            .order_by(GalleryItem.sort_order, GalleryItem.created_at)
+        )
+        return list(result.scalars().all())
+
+    async def list_gallery(self, user: User, publisher_id: uuid.UUID) -> list[GalleryItem]:
+        """The same list, for somebody who manages the business."""
+        await self.assert_can_manage(
+            user, publisher_id, permission=permissions.PROFILE_VIEW
+        )
+        return await self.gallery_of(publisher_id)
+
+    async def add_gallery_item(
+        self,
+        user: User,
+        publisher_id: uuid.UUID,
+        *,
+        kind: str,
+        url: str,
+        caption: str | None = None,
+        width: int | None = None,
+        height: int | None = None,
+        content_type: str | None = None,
+    ) -> GalleryItem:
+        """Put a photograph or a video on a business's profile.
+
+        Gated on `profile:edit` rather than a new `gallery:manage`. The gallery
+        *is* the profile - the permission already reads "change the business
+        name, description, contact details and images" - and `permissions.py`
+        holds that a scope nobody needs is worse than no scope, since it tells
+        whoever ticks it they have restricted something they have not. The
+        consequence is deliberate: an editor writes posts, an administrator
+        changes how the business presents itself.
+        """
+        publisher = await self.assert_can_manage(
+            user, publisher_id, permission=permissions.PROFILE_EDIT
+        )
+        # A personal publisher has no public page - `business_by_slug` returns
+        # organizations only - so items added to one would be write-only. Refused
+        # rather than accepted and never rendered, which looks like data loss.
+        if publisher.type != TYPE_ORGANIZATION:
+            raise BadRequestError(
+                "Only a business has a profile gallery.", code="NOT_A_BUSINESS"
+            )
+
+        if kind not in (GALLERY_IMAGE, GALLERY_VIDEO):
+            raise ValidationError("Unknown media kind.", code="INVALID_MEDIA_KIND")
+
+        existing = await self.gallery_of(publisher_id)
+        if len(existing) >= MAX_GALLERY_ITEMS:
+            raise ConflictError(
+                f"A gallery holds at most {MAX_GALLERY_ITEMS} items. "
+                "Remove something to add something else.",
+                code="GALLERY_LIMIT_REACHED",
+            )
+
+        # The same two shapes `add_media` accepts, and the same reasoning: an
+        # absolute http(s) URL, or a path under /media/ that our own upload
+        # produced. Arbitrary relative paths would let a caller point the gallery
+        # at any route on this host.
+        if not url.startswith(("https://", "http://", "/media/")):
+            raise ValidationError(
+                "Media URL must be http(s), or an uploaded file.",
+                code="INVALID_MEDIA_URL",
+            )
+        if url.startswith("/media/") and ".." in url:
+            raise ValidationError("Invalid media path.", code="INVALID_MEDIA_URL")
+
+        item = GalleryItem(
+            publisher_id=publisher_id,
+            kind=kind,
+            url=url,
+            caption=(caption or "").strip() or None,
+            # Appended after the last, computed from the rows rather than from a
+            # counter. Counting rows is one lost delete away from colliding with
+            # an order that already exists.
+            sort_order=(max((row.sort_order for row in existing), default=-1) + 1),
+            width=width,
+            height=height,
+            content_type=content_type,
+        )
+        self.session.add(item)
+        await self.session.flush()
+        logger.info(
+            "gallery_item_added",
+            publisher_id=str(publisher_id),
+            kind=kind,
+            by=str(user.id),
+        )
+        return item
+
+    async def remove_gallery_item(
+        self, user: User, publisher_id: uuid.UUID, item_id: uuid.UUID
+    ) -> None:
+        await self.assert_can_manage(
+            user, publisher_id, permission=permissions.PROFILE_EDIT
+        )
+        item = await self.session.get(GalleryItem, item_id)
+        # The publisher check is what stops an id from one business deleting from
+        # another: the permission above was granted for `publisher_id`, and
+        # without this the id in the path would be the only thing consulted.
+        if item is None or item.publisher_id != publisher_id:
+            raise NotFoundError("Media not found.", code="GALLERY_ITEM_NOT_FOUND")
+
+        # The file itself is left alone. Storage is content-addressed, so the
+        # same bytes may back another item, another business, or a listing image -
+        # and deleting it here would blank those. Reclaiming unreferenced blobs is
+        # a sweep over all references, not something one delete can decide.
+        await self.session.delete(item)
+        await self.session.flush()
 
     async def _member_of(
         self, publisher_id: uuid.UUID, member_id: uuid.UUID

@@ -1011,9 +1011,34 @@ export interface Business {
   createdAt?: string | null
 }
 
+/**
+ * A photograph or video a business put on its own profile.
+ *
+ * Distinct from `Media`, which belongs to a listing and disappears with it.
+ * This is the building, the rooms, the view — what somebody deciding whether to
+ * go wants to see, and what a history of posts cannot show them.
+ */
+export interface BusinessMedia {
+  id: string
+  kind: 'image' | 'video'
+  url: string
+  caption?: string | null
+  sortOrder: number
+  /**
+   * Null for a video, always. Nothing decodes video server-side, and the layout
+   * reserves space from these — treating null as 16:9 would make every vertical
+   * phone video jump when it loads.
+   */
+  width?: number | null
+  height?: number | null
+  contentType?: string | null
+  createdAt?: string | null
+}
+
 /** A business as an explorer sees it, with what it currently has published. */
 export interface PublicBusiness extends Business {
   listings: ExperienceSummary[]
+  gallery: BusinessMedia[]
 }
 
 export interface BusinessMember {

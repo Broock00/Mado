@@ -275,6 +275,31 @@ class BusinessOut(CamelModel):
     created_at: datetime | None = None
 
 
+class GalleryItemOut(CamelModel):
+    """One photograph or video on a business's own profile."""
+
+    id: uuid.UUID
+    kind: str
+    url: str
+    caption: str | None = None
+    sort_order: int
+    # Known for an image, null for a video - nothing decodes video server-side.
+    # The client reserves space from these and must keep null distinguishable
+    # from a shape, or every vertical phone video jumps when it loads.
+    width: int | None = None
+    height: int | None = None
+    content_type: str | None = None
+    created_at: datetime | None = None
+
+
+class AddGalleryItemRequest(CamelModel):
+    """Attach something already hosted elsewhere, rather than uploading it."""
+
+    kind: str = Field(default="image", pattern="^(image|video)$")
+    url: str = Field(max_length=2000)
+    caption: str | None = Field(default=None, max_length=400)
+
+
 class PublishingIdentityOut(CamelModel):
     """Someone a post can be published under."""
 

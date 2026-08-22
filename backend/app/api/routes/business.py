@@ -27,21 +27,30 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, File, Form, Request, UploadFile, status
 
 from app.api.deps import CurrentUser, OptionalUser, SessionDep
+from app.core import rate_limit
 from app.core.envelope import CollectionEnvelope, Envelope
-from app.core.errors import NotFoundError
+from app.core.errors import NotFoundError, ValidationError
 from app.domains.catalog.schemas import ExperienceSummary
 from app.domains.catalog.serializers import to_summary
 from app.domains.publisher import business as business_vocab
 from app.domains.publisher import permissions
-from app.domains.publisher.models import Publisher, PublisherMember
+from app.domains.publisher.models import (
+    GALLERY_IMAGE,
+    GALLERY_VIDEO,
+    GalleryItem,
+    Publisher,
+    PublisherMember,
+)
 from app.domains.publisher.schemas import (
     AccountTypeOut,
+    AddGalleryItemRequest,
     BusinessOut,
     ChangeRoleRequest,
     CreateBusinessRequest,
+    GalleryItemOut,
     InvitationOut,
     InviteMemberRequest,
     MemberOut,
@@ -50,6 +59,7 @@ from app.domains.publisher.schemas import (
     UpdateBusinessRequest,
 )
 from app.domains.publisher.service import PublishingService
+from app.integrations import media_storage
 
 router = APIRouter(tags=["business"])
 
@@ -74,6 +84,20 @@ def _view(publisher: Publisher) -> BusinessOut:
         verification_status=publisher.verification_status,
         trust_level=publisher.trust_level,
         created_at=publisher.created_at,
+    )
+
+
+def _gallery_view(item: GalleryItem) -> GalleryItemOut:
+    return GalleryItemOut(
+        id=item.id,
+        kind=item.kind,
+        url=item.url,
+        caption=item.caption,
+        sort_order=item.sort_order,
+        width=item.width,
+        height=item.height,
+        content_type=item.content_type,
+        created_at=item.created_at,
     )
 
 
@@ -352,6 +376,148 @@ async def remove_member(
     await session.commit()
 
 
+# --------------------------------------------------------------------- gallery
+
+
+@router.get(
+    "/businesses/{business_id}/gallery",
+    response_model=CollectionEnvelope[GalleryItemOut],
+    summary="Photos and videos on this business's profile",
+)
+async def list_gallery(
+    business_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> CollectionEnvelope[GalleryItemOut]:
+    items = await PublishingService(session).list_gallery(user, business_id)
+    return CollectionEnvelope(data=[_gallery_view(item) for item in items])
+
+
+@router.post(
+    "/businesses/{business_id}/gallery/upload",
+    status_code=status.HTTP_201_CREATED,
+    response_model=Envelope[GalleryItemOut],
+    summary="Upload a photo or a video to this business's profile",
+    description=(
+        "One endpoint for both, because the uploader is one file picker and "
+        "making the client decide which endpoint to call would mean it deciding "
+        "what the file is - which is the thing this route does not trust it "
+        "about.\n\n"
+        "An image is decoded and re-encoded, which proves it is an image, strips "
+        "EXIF including any GPS coordinates, and resizes it for serving. A video "
+        "is identified from its container's own magic bytes; MP4 and WebM are "
+        "accepted, and the stored extension comes from what was recognised "
+        "rather than from the uploaded filename."
+    ),
+)
+async def upload_gallery_item(
+    business_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+    request: Request,
+    file: UploadFile = File(...),
+    caption: str | None = Form(default=None),
+) -> Envelope[GalleryItemOut]:
+    await rate_limit.check(rate_limit.identify(request, str(user.id)), rate_limit.UPLOAD_LIMIT)
+
+    service = PublishingService(session)
+    # Before a byte is read. An upload route that processes the file first does
+    # the expensive work for anybody who asks, whether or not they may store it.
+    await service.assert_can_manage(user, business_id, permission=permissions.PROFILE_EDIT)
+
+    # The file's own opening bytes choose the verifier, not its Content-Type or
+    # its name - both are written by the client, and `photo.jpg` renamed to
+    # `.mp4` would otherwise pick the path that cannot catch it. The declared
+    # type is consulted only when the bytes are unrecognisable, and then purely
+    # so the refusal talks about what the uploader thought they were sending.
+    head = await file.read(media_storage.SNIFF_BYTES)
+    declared = (file.content_type or "").lower()
+
+    if media_storage.looks_like_video(head) or declared.startswith("video/"):
+        with media_storage.VideoUpload() as upload:
+            upload.feed(head)
+            # A megabyte at a time from here. Reading a hundred-megabyte video
+            # whole before the size check makes the size check decorative, and
+            # doing it per concurrent request is how the API runs out of memory.
+            while chunk := await file.read(1024 * 1024):
+                upload.feed(chunk)
+            stored_video = upload.finish(owner_id=user.id)
+
+        item = await service.add_gallery_item(
+            user,
+            business_id,
+            kind=GALLERY_VIDEO,
+            url=stored_video.url,
+            caption=caption,
+            content_type=stored_video.content_type,
+        )
+    else:
+        # `head` was already taken off the stream, so the rest is read on top of
+        # it rather than instead of it - the cap still bounds the whole file.
+        data = head + await file.read(media_storage.MAX_UPLOAD_BYTES + 1 - len(head))
+        if len(data) > media_storage.MAX_UPLOAD_BYTES:
+            raise ValidationError(
+                f"Images must be under {media_storage.MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
+                code="UPLOAD_TOO_LARGE",
+            )
+        stored = media_storage.store(data, owner_id=user.id)
+        item = await service.add_gallery_item(
+            user,
+            business_id,
+            kind=GALLERY_IMAGE,
+            url=stored.url,
+            caption=caption,
+            width=stored.width,
+            height=stored.height,
+            content_type="image/webp",
+        )
+
+    view = _gallery_view(item)
+    await session.commit()
+    return Envelope(data=view)
+
+
+@router.post(
+    "/businesses/{business_id}/gallery",
+    status_code=status.HTTP_201_CREATED,
+    response_model=Envelope[GalleryItemOut],
+    summary="Add media already hosted somewhere else",
+    description=(
+        "For a business whose pictures already live on their own site, and for "
+        "the seed. Uploading is the path in the interface."
+    ),
+)
+async def add_gallery_item(
+    business_id: uuid.UUID,
+    payload: AddGalleryItemRequest,
+    user: CurrentUser,
+    session: SessionDep,
+) -> Envelope[GalleryItemOut]:
+    item = await PublishingService(session).add_gallery_item(
+        user,
+        business_id,
+        kind=payload.kind,
+        url=payload.url,
+        caption=payload.caption,
+    )
+    view = _gallery_view(item)
+    await session.commit()
+    return Envelope(data=view)
+
+
+@router.delete(
+    "/businesses/{business_id}/gallery/{item_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Take a photo or video off the profile",
+)
+async def remove_gallery_item(
+    business_id: uuid.UUID,
+    item_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+) -> None:
+    await PublishingService(session).remove_gallery_item(user, business_id, item_id)
+    await session.commit()
+
+
 # ----------------------------------------------------------------- invitations
 
 
@@ -421,6 +587,11 @@ class PublicBusinessOut(BusinessOut):
     """
 
     listings: list[ExperienceSummary] = []
+    # Sent with the profile rather than fetched when the tab is opened. It is one
+    # ordered list of rows already keyed by this publisher, and a second round
+    # trip to get it would make the tab blank for as long as that request takes -
+    # for a gallery, which is the part of the page people came to look at.
+    gallery: list[GalleryItemOut] = []
 
 
 @router.get(
@@ -442,8 +613,10 @@ async def public_business(
         raise NotFoundError("Business not found.", code="PUBLISHER_NOT_FOUND")
 
     listings = await service.published_listings_of(publisher.id)
+    gallery = await service.gallery_of(publisher.id)
     view = PublicBusinessOut(
         **_view(publisher).model_dump(by_alias=False),
         listings=[to_summary(experience) for experience in listings],
+        gallery=[_gallery_view(item) for item in gallery],
     )
     return Envelope(data=view)

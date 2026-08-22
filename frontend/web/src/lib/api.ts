@@ -11,6 +11,7 @@ import type {
   ApiErrorBody,
   Business,
   BusinessInvitation,
+  BusinessMedia,
   BusinessMember,
   BusinessRole,
   CreateBusinessInput,
@@ -583,6 +584,35 @@ export const api = {
 
   removeBusinessMember: (businessId: string, memberId: string) =>
     request<void>(`/api/v1/businesses/${businessId}/members/${memberId}`, {
+      method: 'DELETE',
+    }),
+
+  businessGallery: (businessId: string) =>
+    request<CollectionEnvelope<BusinessMedia>>(
+      `/api/v1/businesses/${businessId}/gallery`,
+    ).then((r) => r.data),
+
+  /**
+   * Upload a photo or a video to a business profile.
+   *
+   * One call for both. The server decides which it is from the file's own
+   * opening bytes, so there is nothing useful for the client to declare — and
+   * no Content-Type header is set here for the usual reason: the browser has to
+   * generate the multipart boundary itself, and supplying the header without it
+   * produces a request the server cannot parse.
+   */
+  uploadBusinessMedia: (businessId: string, file: File, caption?: string) => {
+    const body = new FormData()
+    body.append('file', file)
+    if (caption) body.append('caption', caption)
+    return request<Envelope<BusinessMedia>>(
+      `/api/v1/businesses/${businessId}/gallery/upload`,
+      { method: 'POST', body },
+    ).then((r) => r.data)
+  },
+
+  removeBusinessMedia: (businessId: string, itemId: string) =>
+    request<void>(`/api/v1/businesses/${businessId}/gallery/${itemId}`, {
       method: 'DELETE',
     }),
 

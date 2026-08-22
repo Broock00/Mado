@@ -22,6 +22,7 @@ import { ApiError, api } from '@/lib/api'
 import type { Business, BusinessMember } from '@/lib/types'
 import { BUSINESS_TYPES } from '@/lib/business'
 import { Badge, Button, Card, EmptyState, Input, Skeleton } from '@/design-system/primitives'
+import { BusinessGallerySection } from './BusinessGallerySection'
 import { SocialIcon } from './SocialIcon'
 import { SOCIAL_PLATFORMS, normaliseSocialUrl } from './social'
 
@@ -509,6 +510,14 @@ export function BusinessDashboardPage() {
       </Card>
 
       {can('profile:edit') && <ProfileSection business={business} />}
+      {/* Same permission as the profile above, and deliberately: the gallery
+          *is* the profile. `permissions.py` holds that a scope nobody needs is
+          worse than no scope, so there is no separate `gallery:manage` — an
+          editor writes posts, an administrator changes how the business
+          presents itself. */}
+      {can('profile:edit') && (
+        <BusinessGallerySection businessId={business.id} slug={business.slug} />
+      )}
       {can('team:manage') && <TeamSection businessId={business.id} />}
 
       {!can('profile:edit') && !can('team:manage') && (

@@ -197,3 +197,113 @@ class TestStorage:
         assert stored.url.startswith("/media/")
         assert ".." not in stored.url
         assert stored.url.endswith(".webp")
+
+
+# --- video -------------------------------------------------------------------
+
+
+def mp4_bytes(brand: bytes = b"isom", size: int = 4096) -> bytes:
+    """An MP4 header, padded.
+
+    Only the container is asserted anywhere - nothing here decodes video - so a
+    real clip would test nothing extra and would put a binary in the repository.
+    The tests below are careful to claim only what the header proves.
+    """
+    return b"\x00\x00\x00\x18ftyp" + brand + b"\x00" * (size - 12)
+
+
+def webm_bytes(doctype: bytes = b"webm", size: int = 4096) -> bytes:
+    return b"\x1a\x45\xdf\xa3" + b"\x42\x82" + doctype + b"\x00" * (size - 10)
+
+
+class TestVideoIdentification:
+    """The container is read from the file, never from what it was called."""
+
+    def test_reads_mp4_from_its_own_bytes(self):
+        assert media_storage.identify_video(mp4_bytes()) == "mp4"
+
+    def test_reads_webm_from_its_own_bytes(self):
+        assert media_storage.identify_video(webm_bytes()) == "webm"
+
+    def test_refuses_matroska(self):
+        """Same magic bytes as WebM, and browsers will not play it - so storing
+        one produces a gallery entry that is permanently a broken player."""
+        with pytest.raises(ValidationError) as caught:
+            media_storage.identify_video(webm_bytes(doctype=b"matroska"))
+        assert caught.value.code == "UNSUPPORTED_VIDEO"
+
+    def test_refuses_quicktime(self):
+        """Plays in Safari and nowhere else. A video that works for some
+        visitors is worse than a refusal the uploader can act on."""
+        with pytest.raises(ValidationError):
+            media_storage.identify_video(mp4_bytes(brand=b"qt  "))
+
+    def test_refuses_an_image_renamed_to_mp4(self):
+        with pytest.raises(ValidationError):
+            media_storage.identify_video(make_image(400, 400))
+
+    def test_an_unrecognised_head_is_not_routed_to_the_video_path(self):
+        """`looks_like_video` picks the verifier, so it must not claim a
+        photograph - or a JPEG would be refused for not being a video."""
+        assert media_storage.looks_like_video(mp4_bytes(brand=b"qt  ")) is True
+        assert media_storage.looks_like_video(webm_bytes(doctype=b"matroska")) is True
+        assert media_storage.looks_like_video(make_image(400, 400)) is False
+
+
+class TestVideoStorage:
+    def test_extension_comes_from_the_bytes(self, tmp_path, monkeypatch):
+        """The one property that makes the served Content-Type honest."""
+        monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path)
+        with media_storage.VideoUpload() as upload:
+            upload.feed(webm_bytes())
+            stored = upload.finish(owner_id=uuid.uuid4())
+        assert stored.url.endswith(".webm")
+        assert stored.content_type == "video/webm"
+
+    def test_refuses_a_file_over_the_cap_without_writing_it_all(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path)
+        with pytest.raises(ValidationError) as caught:
+            with media_storage.VideoUpload() as upload:
+                upload.feed(mp4_bytes())
+                # One chunk past the ceiling, rather than a hundred megabytes:
+                # the check is on the running total, so this is the same test
+                # and does not spend a minute of disk write to make it.
+                upload.feed(b"\x00" * (media_storage.MAX_VIDEO_BYTES + 1))
+        assert caught.value.code == "UPLOAD_TOO_LARGE"
+
+    def test_refuses_before_the_whole_file_arrives(self, tmp_path, monkeypatch):
+        """Identification happens on the head, so a file that is not a video is
+        turned away rather than written and then deleted."""
+        monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path)
+        with pytest.raises(ValidationError):
+            with media_storage.VideoUpload() as upload:
+                upload.feed(b"\x00" * media_storage.SNIFF_BYTES)
+
+    def test_a_short_file_is_still_identified(self, tmp_path, monkeypatch):
+        """Shorter than the sniff window, so the check never fired during feed
+        and has to happen at the end. Without it a 30-byte file of anything at
+        all would be stored as a video."""
+        monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path)
+        with pytest.raises(ValidationError):
+            with media_storage.VideoUpload() as upload:
+                upload.feed(b"not a video")
+                upload.finish(owner_id=uuid.uuid4())
+
+    def test_an_abandoned_upload_leaves_nothing_behind(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path / "media")
+        with pytest.raises(ValidationError):
+            with media_storage.VideoUpload() as upload:
+                upload.feed(b"\x00" * media_storage.SNIFF_BYTES)
+        leftovers = list((tmp_path / "incoming").glob("*"))
+        assert leftovers == [], f"partial upload left on disk: {leftovers}"
+
+    def test_identical_videos_share_a_file(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path)
+        urls = []
+        for _ in range(2):
+            with media_storage.VideoUpload() as upload:
+                upload.feed(mp4_bytes())
+                urls.append(upload.finish(owner_id=uuid.uuid4()).url)
+        assert urls[0] == urls[1]

@@ -42,7 +42,7 @@ from app.domains.explorer.notifications import Notification
 from app.domains.explorer.reservations import Reservation
 from app.domains.identity.models import AuthIdentity, User, UserProfile, UserSession
 from app.domains.identity.tokens import AccountToken
-from app.domains.publisher.models import Publisher
+from app.domains.publisher.models import GalleryItem, Publisher, PublisherMember
 from app.domains.trust.audit import AuditEntry
 from app.domains.trust.flags import FeatureFlag
 
@@ -50,6 +50,7 @@ __all__ = [
     "ApiKey",
     "AuditEntry",
     "FeatureFlag",
+    "GalleryItem",
     "WebhookDelivery",
     "WebhookEndpoint",
     "Reservation",
@@ -77,6 +78,7 @@ __all__ = [
     "Message",
     "Neighborhood",
     "Publisher",
+    "PublisherMember",
     "Review",
     "SavedItem",
     "Tag",

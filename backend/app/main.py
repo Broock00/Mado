@@ -165,14 +165,31 @@ app.include_router(platform.router)
 
 app.include_router(api_router, prefix="/api/v1")
 
-# Uploaded images. Served by the application only in development - in production
-# this path belongs to a CDN or object store, which is why the URL prefix is
-# stable and the storage backend is not baked into it. StaticFiles resolves paths
-# against the root and refuses traversal outside it, and every stored name is a
-# content hash rather than anything an uploader chose.
+class UploadedFiles(StaticFiles):
+    """Static files that are never allowed to be anything but what they claim.
+
+    `nosniff` matters here and not on the API, because this is the one route that
+    serves bytes somebody else supplied. The Content-Type is already trustworthy -
+    every stored name is a content hash with an extension our own verifier chose,
+    not one the uploader named - so a browser that obeys the header is safe. This
+    is for the ones that guess: content sniffing is what turns a file crafted to
+    read as both a valid MP4 and valid HTML into stored XSS on our own origin.
+    """
+
+    def file_response(self, *args: object, **kwargs: object):  # type: ignore[override]
+        response = super().file_response(*args, **kwargs)  # type: ignore[arg-type]
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
+
+# Uploaded images and videos. Served by the application only in development - in
+# production this path belongs to a CDN or object store, which is why the URL
+# prefix is stable and the storage backend is not baked into it. StaticFiles
+# resolves paths against the root and refuses traversal outside it, and every
+# stored name is a content hash rather than anything an uploader chose.
 _media_root = Path(settings.media_root)
 _media_root.mkdir(parents=True, exist_ok=True)
-app.mount("/media", StaticFiles(directory=_media_root), name="media")
+app.mount("/media", UploadedFiles(directory=_media_root), name="media")
 
 
 _generated_openapi = app.openapi

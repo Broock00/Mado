@@ -11,17 +11,36 @@
  * read every other discovery surface uses, so a post withheld by moderation
  * leaves here at the same moment it leaves search — rather than lingering on the
  * one page that wrote its own filter.
+ *
+ * **What's on and the gallery are two tabs, not two sections.** They answer the
+ * same question — what is this place like — from opposite ends: one is dated and
+ * expires, the other is the building and does not. Stacked, the pictures would
+ * sit below however many listings a busy venue happens to have that week, which
+ * is where nobody scrolls. Both tabs stay visible even when empty so the layout
+ * does not shift once a business adds its first photo.
  */
 
+import { useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { BadgeCheck, Building2, Globe, Mail, MapPin, Phone, Settings2 } from 'lucide-react'
+import {
+  BadgeCheck,
+  Building2,
+  Globe,
+  Images,
+  Mail,
+  MapPin,
+  Phone,
+  Settings2,
+} from 'lucide-react'
 
 import { api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
 import type { PublicBusiness } from '@/lib/types'
 import { ExperienceCard } from '@/features/experiences/ExperienceCard'
 import { Badge, Button, Card, EmptyState, Skeleton } from '@/design-system/primitives'
+import { AddMedia, MEDIA_HINT } from './AddMedia'
+import { BusinessGallery } from './BusinessGallery'
 import { SocialIcon } from './SocialIcon'
 import { listedSocials } from './social'
 
@@ -170,6 +189,103 @@ function ContactRow({ business }: { business: PublicBusiness }) {
   )
 }
 
+type Tab = 'listings' | 'gallery'
+
+function Tabs({
+  business,
+  listingCount,
+  galleryCount,
+  children,
+}: {
+  business: PublicBusiness
+  listingCount: number
+  galleryCount: number
+  children: (tab: Tab) => ReactNode
+}) {
+  const [tab, setTab] = useState<Tab>('listings')
+
+  const tabs: { id: Tab; label: string; count: number; icon: ReactNode }[] = [
+    {
+      id: 'listings',
+      label: "What's on",
+      count: listingCount,
+      icon: <MapPin className="size-4" aria-hidden />,
+    },
+    {
+      id: 'gallery',
+      label: 'Photos & videos',
+      count: galleryCount,
+      icon: <Images className="size-4" aria-hidden />,
+    },
+  ]
+
+  // Derived rather than stored, so a gallery emptied under the viewer — the
+  // owner deleting the last photo in another tab, and a refetch arriving —
+  // falls back instead of leaving a selected tab that no longer exists.
+  const active: Tab = tabs.some((entry) => entry.id === tab) ? tab : 'listings'
+
+  return (
+    <section aria-label={`${business.name} content`}>
+      {/* The roving-tabindex pattern: one stop for the whole strip, and the
+          arrow keys move within it. Without it, reaching the content of the
+          last tab means tabbing past every other tab first. */}
+      <div role="tablist" aria-label="Profile sections" className="mb-4 flex gap-1.5">
+        {tabs.map(({ id, label, count, icon }) => {
+          const selected = active === id
+          return (
+            <button
+              key={id}
+              role="tab"
+              type="button"
+              id={`business-tab-${id}`}
+              aria-selected={selected}
+              aria-controls={`business-panel-${id}`}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => setTab(id)}
+              onKeyDown={(event) => {
+                if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
+                const delta = event.key === 'ArrowRight' ? 1 : -1
+                const from = tabs.findIndex((entry) => entry.id === active)
+                const next = tabs[(from + delta + tabs.length) % tabs.length]
+                setTab(next.id)
+                // Focus follows selection, which is what a tablist is expected
+                // to do — otherwise the next arrow press comes from the tab that
+                // is no longer selected and moves relative to the wrong one.
+                document.getElementById(`business-tab-${next.id}`)?.focus()
+              }}
+              className={`flex items-center gap-2 rounded-full px-3.5 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 ${
+                selected
+                  ? 'bg-brand-600 text-white'
+                  : 'bg-sand-200 text-sand-700 hover:bg-sand-300'
+              }`}
+            >
+              {icon}
+              {label}
+              {count > 0 && (
+                <span
+                  className={`rounded-full px-1.5 text-xs tabular-nums ${
+                    selected ? 'bg-white/20' : 'bg-sand-100 text-sand-600'
+                  }`}
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+
+      <div
+        role="tabpanel"
+        id={`business-panel-${active}`}
+        aria-labelledby={`business-tab-${active}`}
+      >
+        {children(active)}
+      </div>
+    </section>
+  )
+}
+
 export function BusinessProfilePage() {
   const { slug = '' } = useParams()
   const user = useAppStore((s) => s.user)
@@ -193,6 +309,15 @@ export function BusinessProfilePage() {
     queryFn: () => api.accountType(),
     enabled: Boolean(user),
     staleTime: 60 * 60_000,
+  })
+
+  // Gallery upload follows `profile:edit` — the same gate the server uses. Only
+  // fetched for signed-in visitors; strangers and explorers never see the button.
+  const { data: permissions, isSuccess: permissionsLoaded } = useQuery({
+    queryKey: ['business-permissions', business?.id ?? ''],
+    queryFn: () => api.businessPermissions(business!.id),
+    enabled: Boolean(user && business?.id),
+    retry: false,
   })
 
   if (isLoading) {
@@ -230,52 +355,75 @@ export function BusinessProfilePage() {
   }
 
   const count = business.listings.length
+  const gallery = business.gallery ?? []
   const canManage =
     accountType?.accountType === 'business' && accountType.business?.id === business.id
+  const canEditGallery =
+    Boolean(user) && permissionsLoaded && (permissions ?? []).includes('profile:edit')
 
   return (
     <div className="mx-auto max-w-4xl space-y-5 px-4 py-6">
       <Header business={business} canManage={canManage} />
       <ContactRow business={business} />
 
-      <section aria-labelledby="business-listings">
-        <div className="mb-3 flex items-baseline justify-between gap-3">
-          <h2
-            id="business-listings"
-            className="flex items-center gap-2.5 text-sm font-semibold text-sand-800"
-          >
-            <span className="block h-4 w-0.5 shrink-0 rounded-full bg-brand-600" aria-hidden />
-            What&rsquo;s on
-          </h2>
-          {count > 0 && (
-            <span className="text-xs text-sand-500">
-              {count} {count === 1 ? 'listing' : 'listings'}
-            </span>
-          )}
-        </div>
-
-        {count === 0 ? (
-          // An empty state, not an error. A business that has published nothing
-          // yet is an ordinary business, and the page still answered what and
-          // where.
-          <EmptyState
-            icon={<MapPin className="size-8" />}
-            title="Nothing published yet"
-            description={`${business.name} has not posted anything on Mado so far.`}
-          />
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {business.listings.map((experience) => (
-              <ExperienceCard
-                key={experience.id}
-                experience={experience}
-                compact
-                hidePublisher
-              />
-            ))}
-          </div>
-        )}
-      </section>
+      <Tabs business={business} listingCount={count} galleryCount={gallery.length}>
+        {(tab) =>
+          tab === 'gallery' ? (
+            <div className="space-y-4">
+              {gallery.length === 0 ? (
+                <EmptyState
+                  icon={<Images className="size-8" />}
+                  title="No photos or videos yet"
+                  description={
+                    canEditGallery
+                      ? MEDIA_HINT
+                      : `${business.name} has not added any photos or videos yet.`
+                  }
+                  action={
+                    canEditGallery ? (
+                      <AddMedia
+                        businessId={business.id}
+                        slug={slug}
+                        label="Add photos or videos"
+                      />
+                    ) : undefined
+                  }
+                />
+              ) : (
+                <>
+                  {canEditGallery && (
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <AddMedia businessId={business.id} slug={slug} />
+                      <p className="text-xs text-sand-500">{MEDIA_HINT}</p>
+                    </div>
+                  )}
+                  <BusinessGallery items={gallery} />
+                </>
+              )}
+            </div>
+          ) : count === 0 ? (
+            // An empty state, not an error. A business that has published
+            // nothing yet is an ordinary business, and the page still answered
+            // what and where.
+            <EmptyState
+              icon={<MapPin className="size-8" />}
+              title="Nothing published yet"
+              description={`${business.name} has not posted anything on Mado so far.`}
+            />
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {business.listings.map((experience) => (
+                <ExperienceCard
+                  key={experience.id}
+                  experience={experience}
+                  compact
+                  hidePublisher
+                />
+              ))}
+            </div>
+          )
+        }
+      </Tabs>
     </div>
   )
 }

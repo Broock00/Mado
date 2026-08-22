@@ -20,6 +20,11 @@ export default defineConfig({
       // CORS preflight and no divergence from production, where the API sits
       // behind the same gateway host.
       '/api': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      // Uploaded images and videos. Without this the SPA fallback answers
+      // `/media/...` with index.html, and every uploaded file is a broken image
+      // in development and works the moment it is deployed — the worst possible
+      // shape for a bug. In production this prefix is the CDN or object store.
+      '/media': { target: 'http://127.0.0.1:8000', changeOrigin: true },
     },
   },
   test: {

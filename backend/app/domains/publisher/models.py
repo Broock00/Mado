@@ -146,6 +146,11 @@ class Publisher(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     members: Mapped[list[PublisherMember]] = relationship(
         back_populates="publisher", cascade="all, delete-orphan"
     )
+    gallery: Mapped[list[GalleryItem]] = relationship(
+        back_populates="publisher",
+        cascade="all, delete-orphan",
+        order_by="GalleryItem.sort_order",
+    )
 
     @property
     def is_verified(self) -> bool:
@@ -234,3 +239,71 @@ class PublisherMember(Base, UUIDPrimaryKey, Timestamps):
     @property
     def is_active(self) -> bool:
         return self.status == MEMBERSHIP_ACTIVE and self.user_id is not None
+
+
+GALLERY_IMAGE = "image"
+GALLERY_VIDEO = "video"
+
+# How much a business may show on its own profile. A ceiling rather than a
+# quota: the tab is a gallery somebody scrolls, not an archive, and the
+# hundredth photograph of a lobby is not what anybody came for.
+MAX_GALLERY_ITEMS = 60
+
+
+class GalleryItem(Base, UUIDPrimaryKey, Timestamps):
+    """A photograph or video a business put on its own profile.
+
+    Distinct from `catalog.media`, which belongs to an *experience* and is
+    editorial: it illustrates one thing that is on, and disappears when that
+    listing does. This belongs to the business itself and outlives any listing -
+    the rooms, the dining room, the view - which is exactly what somebody
+    deciding whether to go wants and what a post history cannot show them.
+
+    Merging the two was the obvious alternative and does not work: a `Media` row
+    requires an experience id, so a business photo would need a hidden listing to
+    hang off, and that listing would then have to be excluded by hand from
+    search, ranking, the feed and every count. A second table is cheaper than a
+    phantom row everything else has to remember to ignore.
+
+    Nothing here is discoverable. A gallery is not indexed, not ranked and never
+    reaches the concierge: it is what the business says about itself, and the
+    platform's opinions are formed from listings and reviews.
+    """
+
+    __tablename__ = "gallery_items"
+    __table_args__ = (
+        Index("ix_gallery_items_publisher_order", "publisher_id", "sort_order"),
+        {"schema": SCHEMA},
+    )
+
+    # No `index=True`: the composite above leads with this column, so a
+    # single-column index would be a second copy of the same b-tree prefix,
+    # written on every insert and read by nothing.
+    publisher_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.publishers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(16), default=GALLERY_IMAGE, nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    # One field for both the alternative text of an image and the caption under a
+    # video, because publishers write one sentence about a picture and asking for
+    # two produces one of them filled in and the other left blank.
+    caption: Mapped[str | None] = mapped_column(String(400), default=None)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Known for an image because Pillow decoded it, and null for a video because
+    # nothing here decodes video. Null means "not known", never "square" - the
+    # client reserves space from these and guessing 16:9 would make every
+    # vertical phone video jump on load.
+    width: Mapped[int | None] = mapped_column(Integer, default=None)
+    height: Mapped[int | None] = mapped_column(Integer, default=None)
+    # `video/mp4` or `video/webm`, from what the container sniff recognised.
+    # Stored so the player can be told rather than left to sniff the URL.
+    content_type: Mapped[str | None] = mapped_column(String(64), default=None)
+
+    publisher: Mapped[Publisher] = relationship(back_populates="gallery")
+
+    @property
+    def is_video(self) -> bool:
+        return self.kind == GALLERY_VIDEO
