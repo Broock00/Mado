@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
+import string
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -332,6 +333,64 @@ class TestTheStubDoesNotInventPayments:
         assert stub.signature_is_valid(body=body, signature=good)
         assert not stub.signature_is_valid(body=body, signature="wrong")
         assert not stub.signature_is_valid(body=body, signature=None)
+
+
+class TestChapaAcceptsWhatPublishersType:
+    """Chapa's `customization.description` takes "letters, numbers, hyphens,
+    underscores, spaces, and dots" and refuses the whole request otherwise.
+
+    That matters because the descriptions carry things people wrote. A promotion
+    names the post it promotes, so a listing called "Mama's Kitchen: jazz &
+    blues" refused the payment outright - and the publisher was told "Payments
+    are unavailable right now", which is true and completely unactionable.
+
+    Sanitised inside the Chapa adapter rather than at the call sites: it is a
+    fact about Chapa and nothing else, Stripe takes the same string untouched,
+    and a caller that had to know would be one caller away from forgetting.
+    """
+
+    allowed = set(string.ascii_letters + string.digits + " ._-")
+
+    def clean(self, text: str) -> str:
+        return payments._chapa_description(text)
+
+    def test_an_apostrophe_does_not_refuse_a_payment(self):
+        assert self.clean("Promoting 'Jazz night' for 7 days") == (
+            "Promoting Jazz night for 7 days"
+        )
+
+    def test_quotes_close_up_rather_than_leaving_a_gap(self):
+        """They sit inside words: "Mama's" is "Mamas", not "Mama s"."""
+        assert self.clean("Mama's Kitchen") == "Mamas Kitchen"
+
+    def test_other_punctuation_becomes_a_space(self):
+        assert self.clean("Jazz, blues & soul: a night") == "Jazz blues soul a night"
+
+    def test_anything_a_publisher_can_type_comes_out_acceptable(self):
+        for title in (
+            "Mama's Kitchen: jazz, blues & soul!",
+            "የሙዚቃ ምሽት",
+            "Jazz 🎷 night",
+            "<script>alert(1)</script>",
+            "100% off — tonight only",
+        ):
+            cleaned = self.clean(f"Promoting '{title}' for 7 days")
+            assert set(cleaned) <= self.allowed, f"{title!r} left {cleaned!r}"
+
+    def test_it_is_never_empty(self):
+        """A description of nothing but punctuation would send a blank field,
+        which Chapa also refuses."""
+        assert self.clean("!!!") == "Mado"
+        assert self.clean("") == "Mado"
+        assert self.clean("የሙዚቃ") == "Mado"
+
+    def test_it_is_truncated_after_cleaning_not_before(self):
+        """Cleaning first and cutting second, or the hundred characters are
+        spent on punctuation that is about to be removed."""
+        assert len(self.clean("&" * 200 + "a" * 200)) == 100
+
+    def test_a_plain_description_is_left_alone(self):
+        assert self.clean("Mado Business - 30 days") == "Mado Business - 30 days"
 
 
 class TestCallbackAuthentication:

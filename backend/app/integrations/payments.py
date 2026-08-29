@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -181,6 +182,39 @@ class PaymentProvider(Protocol):
 # ------------------------------------------------------------------- Chapa
 
 
+# What Chapa accepts in `customization.description`, in its own words: "letters,
+# numbers, hyphens, underscores, spaces, and dots". Nothing else, and a request
+# carrying anything else is refused outright with a 400.
+_CHAPA_DESCRIPTION_ALLOWED = re.compile(r"[^A-Za-z0-9 ._-]")
+# Stripped rather than spaced, because they sit inside words: "Mama's" should
+# become "Mamas" and not "Mama s".
+_CHAPA_DESCRIPTION_DROPPED = re.compile(r"['’\"]")
+
+
+def _chapa_description(text: str) -> str:
+    """Make a description Chapa will accept.
+
+    Here rather than at the call sites, because it is a fact about Chapa and
+    nowhere else - Stripe takes the same string untouched, and a caller that had
+    to know this would be one caller away from forgetting.
+
+    It matters because these descriptions carry things people typed. A promotion
+    names the post it promotes, so a listing called "Mama's Kitchen: jazz &
+    blues" refused the whole payment with a message about a field the publisher
+    has never heard of - which is what "Payments are unavailable right now"
+    turned out to mean.
+
+    Truncated last, so a sanitised string is not cut to a hundred characters and
+    then shortened again by the cleaning.
+    """
+    cleaned = _CHAPA_DESCRIPTION_DROPPED.sub("", text)
+    cleaned = _CHAPA_DESCRIPTION_ALLOWED.sub(" ", cleaned)
+    cleaned = " ".join(cleaned.split())
+    # Never empty: a description of nothing but punctuation would otherwise send
+    # a blank field, which Chapa also refuses.
+    return cleaned[:100] or "Mado"
+
+
 class ChapaPayments:
     """Chapa hosted checkout - the Ethiopian provider named in spec 82.01.
 
@@ -224,7 +258,10 @@ class ChapaPayments:
             "tx_ref": reference,
             "callback_url": callback_url,
             "return_url": return_url,
-            "customization": {"title": "Mado", "description": description[:100]},
+            "customization": {
+                "title": "Mado",
+                "description": _chapa_description(description),
+            },
         }
         data = await self._post("/transaction/initialize", payload)
         url = (data.get("data") or {}).get("checkout_url")
