@@ -67,6 +67,16 @@ export function AppShell() {
     accountType?.accountType === 'business' && accountType.business
       ? accountType.business.name
       : user?.profile.displayName
+
+  // Business accounts have a public profile; individuals do not, so the name
+  // falls back to the account hub rather than going nowhere.
+  const profileTo =
+    accountType?.accountType === 'business' && accountType.business?.slug
+      ? `/businesses/${accountType.business.slug}`
+      : accountType
+        ? '/settings'
+        : null
+
   const location = useLocation()
   const { t } = useLanguage()
   const online = useIsOnline()
@@ -177,9 +187,18 @@ export function AppShell() {
                 </NavLink>
                 {/* A business account *is* the business, so the header names
                     the business rather than the person who signed in. */}
-                <span className="hidden pl-1 text-sm text-sand-500 sm:inline">
-                  {accountName}
-                </span>
+                {profileTo && accountName ? (
+                  <Link
+                    to={profileTo}
+                    className="hidden max-w-[12rem] truncate rounded-lg pl-1 text-sm text-sand-500 transition-colors hover:bg-sand-200/70 hover:text-sand-900 sm:inline"
+                  >
+                    {accountName}
+                  </Link>
+                ) : accountName ? (
+                  <span className="hidden max-w-[12rem] truncate pl-1 text-sm text-sand-500 sm:inline">
+                    {accountName}
+                  </span>
+                ) : null}
                 <button
                   type="button"
                   onClick={signOut}

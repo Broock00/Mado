@@ -47,9 +47,14 @@ import { listedSocials } from './social'
 function Header({
   business,
   canManage,
+  planName,
+  planKey,
 }: {
   business: PublicBusiness
   canManage: boolean
+  /** Only passed when the viewer may see what the business is on. */
+  planName?: string | null
+  planKey?: string | null
 }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-sand-200 bg-sand-100 shadow-card">
@@ -83,6 +88,9 @@ function Header({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-semibold tracking-tight text-sand-950">{business.name}</h1>
+            {planName && (
+              <Badge tone={planKey === 'free' ? 'neutral' : 'brand'}>{planName}</Badge>
+            )}
             {/* Says what this account is, next to its name. Separate from
                 verification below, which says whether anybody has checked -
                 two different questions that a single badge would blur. */}
@@ -320,6 +328,19 @@ export function BusinessProfilePage() {
     retry: false,
   })
 
+  const canViewPlan =
+    Boolean(user) &&
+    Boolean(business?.id) &&
+    permissionsLoaded &&
+    (permissions ?? []).includes('profile:view')
+
+  const { data: planData } = useQuery({
+    queryKey: ['business-plans', business?.id ?? ''],
+    queryFn: () => api.businessPlans(business!.id),
+    enabled: canViewPlan,
+    staleTime: 30_000,
+  })
+
   if (isLoading) {
     return (
       <div className="mx-auto max-w-4xl space-y-4 px-4 py-6">
@@ -363,7 +384,12 @@ export function BusinessProfilePage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-5 px-4 py-6">
-      <Header business={business} canManage={canManage} />
+      <Header
+        business={business}
+        canManage={canManage}
+        planName={canViewPlan ? planData?.current.planName : undefined}
+        planKey={canViewPlan ? planData?.current.plan : undefined}
+      />
       <ContactRow business={business} />
 
       <Tabs business={business} listingCount={count} galleryCount={gallery.length}>
