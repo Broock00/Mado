@@ -17,6 +17,7 @@ import {
   Eye,
   EyeOff,
   FileText,
+  Megaphone,
   PencilLine,
   Plus,
   Repeat2,
@@ -28,7 +29,8 @@ import { ApiError, api } from '@/lib/api'
 import { useAppStore } from '@/app/store'
 import { Button, EmptyState, Skeleton } from '@/design-system/primitives'
 import { cn, formatPrice, formatWhen } from '@/lib/utils'
-import type { OwnPost, PostStatus } from '@/lib/types'
+import type { BusinessPromotion, OwnPost, PostStatus } from '@/lib/types'
+import { PromoteDialog } from '@/features/business/PromoteDialog'
 import { VerificationCard } from './VerificationCard'
 
 type Filter = 'all' | 'published' | 'draft' | 'archived' | 'review'
@@ -62,6 +64,35 @@ export function MyPostsPage() {
   })
 
   const [refusal, setRefusal] = useState<string | null>(null)
+  const [promoting, setPromoting] = useState<OwnPost | null>(null)
+
+  // An account publishes under one identity (`publisher_for` on the server), so
+  // one lookup covers every card rather than one per post.
+  const publisherId = posts?.[0]?.publisher?.id
+
+  // Whether this account may spend the publisher's money. The button is hidden
+  // rather than shown failing for an editor who cannot buy — the server checks
+  // again either way, so this is a courtesy and never the gate.
+  const { data: held } = useQuery({
+    queryKey: ['business-permissions', publisherId],
+    queryFn: () => api.businessPermissions(publisherId!),
+    enabled: Boolean(publisherId),
+  })
+  const mayPromote = (held ?? []).includes('finance:view')
+
+  // What is already running, so a card can say so instead of offering to sell
+  // the same slot twice.
+  const { data: promotions } = useQuery({
+    queryKey: ['promotions', publisherId],
+    queryFn: () => api.businessPromotions(publisherId!),
+    enabled: Boolean(publisherId) && mayPromote,
+  })
+  const promotionFor = (postId: string) =>
+    (promotions ?? []).find(
+      (row) =>
+        row.experienceId === postId &&
+        (row.status === 'active' || row.status === 'pending_payment'),
+    )
 
   // Kept apart from the ordinary actions because it is the one that cannot be
   // undone, and because it is the one that can be refused - a listing somebody
@@ -250,10 +281,20 @@ export function MyPostsPage() {
               busy={action.isPending || remove.isPending}
               onAction={(act) => action.mutate({ id: post.id, act })}
               onDelete={() => remove.mutate(post.id)}
+              promotion={promotionFor(post.id)}
+              onPromote={mayPromote ? () => setPromoting(post) : undefined}
             />
           </li>
         ))}
       </ul>
+
+      {promoting && publisherId && (
+        <PromoteDialog
+          post={promoting}
+          publisherId={publisherId}
+          onClose={() => setPromoting(null)}
+        />
+      )}
     </div>
   )
 }
@@ -263,11 +304,16 @@ function PostCard({
   busy,
   onAction,
   onDelete,
+  promotion,
+  onPromote,
 }: {
   post: OwnPost
   busy: boolean
   onAction: (act: 'publish' | 'unpublish' | 'archive' | 'restore') => void
   onDelete: () => void
+  promotion?: BusinessPromotion
+  /** Absent when this account may not spend the publisher's money. */
+  onPromote?: () => void
 }) {
   // Two taps, in place. A confirm() blocks the whole page and a modal for one
   // sentence is more ceremony than this needs - but a single tap that destroys
@@ -417,6 +463,23 @@ function PostCard({
                     </Button>
                   </Link>
                 )}
+                {/* Only a published post: promoting a draft is refused by
+                    the server, and offering it here would be a button that
+                    returns 409. */}
+                {onPromote &&
+                  (promotion ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-sand-200 px-2.5 py-1.5 text-xs font-medium text-sand-700">
+                      <Megaphone className="size-3.5" aria-hidden />
+                      {promotion.status === 'active'
+                        ? `Promoted · ${promotion.impressions} shown`
+                        : 'Promotion awaiting payment'}
+                    </span>
+                  ) : (
+                    <Button variant="ghost" size="sm" onClick={onPromote}>
+                      <Megaphone className="size-3.5" aria-hidden />
+                      Promote
+                    </Button>
+                  ))}
                 <Button
                   variant="ghost"
                   size="sm"

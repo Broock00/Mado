@@ -40,7 +40,9 @@ from app.domains.commerce.checkout import CheckoutService, Line
 from app.domains.commerce.door import DoorService
 from app.domains.commerce.models import Order, TicketType
 from app.domains.commerce.tickets import TicketTypeService
+from app.domains.promotion.service import PromotionService
 from app.domains.publisher.models import Publisher
+from app.domains.publisher.subscriptions import SubscriptionService
 from app.integrations import payments
 
 logger = get_logger("mado.commerce.routes")
@@ -679,7 +681,26 @@ async def payment_callback(request: Request, session: SessionDep) -> Response:
     service = CheckoutService(session)
     order = await service.by_reference(reference)
     if order is None:
-        logger.warning("payment_callback_unknown_order", reference=reference)
+        # Not every payment is a ticket. A business buying a plan starts a
+        # payment through the same providers and comes back through this same
+        # callback, so a reference that is not an order is tried as a
+        # subscription before it is called unknown - otherwise a paid plan sits
+        # pending until somebody reloads the page and the return leg catches it.
+        subscriptions = SubscriptionService(session)
+        subscription = await subscriptions.by_reference(reference)
+        if subscription is not None:
+            await subscriptions.settle(subscription)
+            await session.commit()
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+        promotions = PromotionService(session)
+        promotion = await promotions.by_reference(reference)
+        if promotion is not None:
+            await promotions.settle(promotion)
+            await session.commit()
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+        logger.warning("payment_callback_unknown_reference", reference=reference)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     await service.settle(

@@ -16,13 +16,15 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Building2, Mail, Trash2, UserPlus } from 'lucide-react'
+import { Building2, Mail, Trash2, UserPlus, Wallet } from 'lucide-react'
 
 import { ApiError, api } from '@/lib/api'
 import type { Business, BusinessMember } from '@/lib/types'
 import { BUSINESS_TYPES } from '@/lib/business'
+import { money } from '@/lib/money'
 import { Badge, Button, Card, EmptyState, Input, Skeleton } from '@/design-system/primitives'
 import { BusinessGallerySection } from './BusinessGallerySection'
+import { BusinessPlanSection } from './BusinessPlanSection'
 import { SocialIcon } from './SocialIcon'
 import { SOCIAL_PLATFORMS, normaliseSocialUrl } from './social'
 
@@ -432,6 +434,105 @@ function TeamSection({ businessId }: { businessId: string }) {
   )
 }
 
+/**
+ * What the business has taken, and what Mado still owes it.
+ *
+ * Every ticket is paid into Mado's own merchant account, so the business's
+ * share is a debt rather than money already in its bank. That is the one thing
+ * this section has to be honest about: it shows the commission as a named
+ * deduction and says outright that the balance is paid out by hand, because a
+ * figure labelled "earnings" that never arrives is worse than no figure.
+ */
+function EarningsSection({ businessId }: { businessId: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['business-earnings', businessId],
+    queryFn: () => api.businessEarnings(businessId),
+    enabled: Boolean(businessId),
+  })
+
+  if (isLoading) return <Skeleton className="h-40 w-full rounded-xl" />
+  if (!data) return null
+
+  // Basis points to a readable percentage. Trailing zeroes trimmed, so 500
+  // reads as "5%" rather than "5.00%" while 250 still reads as "2.5%".
+  const rate = `${Number((data.feeRateBps / 100).toFixed(2))}%`
+
+  return (
+    <Card className="space-y-4 p-5">
+      <div className="flex items-center gap-2">
+        <Wallet className="size-5 text-sand-500" aria-hidden />
+        <h2 className="text-lg font-semibold text-sand-900">Earnings</h2>
+      </div>
+
+      {data.totals.length === 0 ? (
+        <p className="text-sm text-sand-600">
+          No ticket sales yet. When somebody buys a ticket, what you have earned appears
+          here.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {data.totals.map((line) => (
+            <div key={line.currency} className="rounded-xl bg-sand-50 p-4">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="text-xl font-semibold text-sand-900">
+                  {money(line.netMinor, line.currency)}
+                </span>
+                <span className="text-sm text-sand-500">
+                  from {line.sales} {line.sales === 1 ? 'sale' : 'sales'}
+                </span>
+              </div>
+              {/* Spelled out rather than left as the difference between two
+                  numbers. A publisher who cannot see where the gap went
+                  assumes an error, and asks. */}
+              <dl className="mt-3 space-y-1 text-sm text-sand-600">
+                <div className="flex justify-between gap-4">
+                  <dt>Tickets sold</dt>
+                  <dd>{money(line.grossMinor, line.currency)}</dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt>Mado's commission ({rate})</dt>
+                  <dd>−{money(line.feeMinor, line.currency)}</dd>
+                </div>
+                <div className="flex justify-between gap-4 font-medium text-sand-900">
+                  <dt>Still to be paid to you</dt>
+                  <dd>{money(line.owingMinor, line.currency)}</dd>
+                </div>
+              </dl>
+            </div>
+          ))}
+          <p className="text-sm text-sand-500">
+            Payouts are sent by hand while Mado is young — we will be in touch about
+            where to send yours.
+          </p>
+        </div>
+      )}
+
+      {data.payouts.length > 0 && (
+        <div className="space-y-2 border-t border-sand-200 pt-4">
+          <h3 className="text-sm font-medium text-sand-900">Payouts</h3>
+          {data.payouts.map((payout) => (
+            <div
+              key={payout.id}
+              className="flex flex-wrap items-center justify-between gap-2 text-sm"
+            >
+              <span className="text-sand-700">
+                {money(payout.totalMinor, payout.currency)}
+                <span className="text-sand-500">
+                  {' '}
+                  · {payout.entryCount} {payout.entryCount === 1 ? 'sale' : 'sales'}
+                </span>
+              </span>
+              <Badge tone={payout.status === 'paid' ? 'success' : 'neutral'}>
+                {payout.status === 'paid' ? 'Sent' : 'Being prepared'}
+              </Badge>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  )
+}
+
 export function BusinessDashboardPage() {
   const { businessId = '' } = useParams()
 
@@ -518,6 +619,11 @@ export function BusinessDashboardPage() {
       {can('profile:edit') && (
         <BusinessGallerySection businessId={business.id} slug={business.slug} />
       )}
+      {/* Its own permission, not `analytics:view`: an analyst is shown how the
+          posts are doing, which is a different decision from being shown what
+          the business took. */}
+      {can('finance:view') && <BusinessPlanSection businessId={business.id} />}
+      {can('finance:view') && <EarningsSection businessId={business.id} />}
       {can('team:manage') && <TeamSection businessId={business.id} />}
 
       {!can('profile:edit') && !can('team:manage') && (

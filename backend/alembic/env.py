@@ -28,7 +28,15 @@ target_metadata = Base.metadata
 
 # Schemas the application owns. Anything outside this set (postgis's own tables,
 # for instance) must be invisible to autogenerate or every run emits spurious drops.
-MADO_SCHEMAS = {"identity", "publisher", "catalog", "explorer", "ai", "commerce"}
+MADO_SCHEMAS = {
+    "identity",
+    "publisher",
+    "catalog",
+    "explorer",
+    "ai",
+    "commerce",
+    "promotion",
+}
 
 
 # Indexes created by raw SQL because SQLAlchemy's metadata cannot express them:

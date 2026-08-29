@@ -13,7 +13,7 @@ dependency.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Request, Response, status
 from pydantic import Field
@@ -24,6 +24,7 @@ from app.core.errors import NotFoundError
 from app.domains.catalog.schemas import CamelModel
 from app.domains.developer import keys as key_module
 from app.domains.developer import sdk as sdk_module
+from app.domains.developer import usage
 from app.domains.developer import webhooks as webhook_module
 from app.domains.developer.keys import ApiKeyService
 from app.domains.developer.webhooks import WebhookService
@@ -228,6 +229,56 @@ async def whoami(request: Request, user: ApiKeyUser) -> Envelope[WhoAmIOut]:
     return Envelope(
         data=WhoAmIOut(
             key_id=key.id, key_name=key.name, scopes=key.scopes, owner_id=user.id
+        )
+    )
+
+
+# ------------------------------------------------------------------- usage
+
+
+class UsageDayOut(CamelModel):
+    day: date
+    calls: int
+
+
+class UsageOut(CamelModel):
+    plan: str
+    plan_name: str
+    calls_this_month: int
+    # Null is unmetered, which is what an enterprise agreement buys. Zero would
+    # read as "no calls allowed", which is the opposite.
+    monthly_allowance: int | None = None
+    # The day the current allowance resets, so a developer who has run out knows
+    # whether to wait or to buy.
+    resets_on: date
+    daily: list[UsageDayOut]
+
+
+@router.get(
+    "/developer/usage",
+    response_model=Envelope[UsageOut],
+    summary="How many API calls this account has made",
+    description=(
+        "Counted per key per UTC day and summed here. A quota is not a rate "
+        "limit: running out returns `QUOTA_EXCEEDED` and waiting will not help "
+        "until the first of the month, whereas `RATE_LIMIT_EXCEEDED` means slow "
+        "down and try again shortly."
+    ),
+)
+async def api_usage(session: SessionDep, user: CurrentUser) -> Envelope[UsageOut]:
+    account = await usage.account_for(session, user.id)
+    plan = usage.plan_for(account.plan if account else None)
+    return Envelope(
+        data=UsageOut(
+            plan=plan.key,
+            plan_name=plan.name,
+            calls_this_month=await usage.calls_this_month(session, user.id),
+            monthly_allowance=await usage.allowance_for(session, user.id),
+            resets_on=usage.next_month_start(),
+            daily=[
+                UsageDayOut(day=day, calls=calls)
+                for day, calls in await usage.daily_breakdown(session, user.id)
+            ],
         )
     )
 

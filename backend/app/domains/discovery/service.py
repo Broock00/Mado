@@ -9,7 +9,7 @@ empty rail is worse than one fewer rail.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,6 +41,7 @@ from app.domains.discovery.ranking import (
     weekend_window,
 )
 from app.domains.explorer.learning import InferredPreferences
+from app.domains.promotion.service import PromotionService
 from app.integrations.search import SearchUnavailable, get_search_client
 from app.integrations.weather import DailyWeather
 
@@ -92,6 +93,13 @@ class SearchOutcome:
     # True when vector retrieval contributed, so the client can distinguish
     # "matched your words" from "understood what you meant".
     semantic: bool = False
+    # Everything the query actually retrieved, which is wider than `items`
+    # because ranking then cuts to a page. Carried so a promotion can be
+    # required to be in it: a paid slot may lift a listing this query would have
+    # returned anyway, and may never introduce one it would not - otherwise a
+    # promotion is an advertisement for something nobody asked about, which
+    # BUSINESS-90.01 §16 rules out in as many words.
+    candidate_ids: set[uuid.UUID] = field(default_factory=set)
 
 
 class DiscoveryService:
@@ -148,6 +156,92 @@ class DiscoveryService:
             )
             for item in ranked
         ]
+
+    async def with_sponsored(
+        self,
+        items: list[ExperienceSummary],
+        ctx: RankingContext,
+        *,
+        area: Area | None,
+        eligible_ids: set[uuid.UUID],
+        category_slugs: list[str] | None = None,
+        experience_type: str | None = None,
+    ) -> list[ExperienceSummary]:
+        """Put at most one paid listing into an already-ranked list.
+
+        Applied *after* ranking rather than inside it, which is the whole design.
+        The ranker's explanation is generated from the signals that produced the
+        score, so a sponsorship weight would have to be explained as "because
+        they paid" or hidden - and hiding it is the first thing BUSINESS-90.01
+        §7 forbids.
+
+        **A promotion buys position, never relevance.** `eligible_ids` is
+        everything this query actually retrieved - wider than `items`, which
+        ranking has already cut to a page - and a promoted listing has to be in
+        it. So a paid slot can lift something the explorer's own search found
+        and ranked eleventh, and can never introduce something the search did
+        not find at all. Without that, a campaign for a nightclub would appear
+        under a search for a quiet cafe, which is the "advertising that feels
+        like discovery" principle inverted.
+
+        **Position 1 is never sold.** The card inserts at index 1, so whatever
+        the platform genuinely thinks is the best answer stays first however
+        much anybody has paid.
+
+        The promoted listing goes through `to_summary` with the same `wanted`
+        list every other card gets, so it hedges about what it has not claimed
+        exactly as an organic one does. `PromotionService.slot_for` has already
+        refused it if it fails a hard requirement.
+        """
+        # An empty result set gets no sponsor. A page whose only content is an
+        # advertisement is not discovery, and "we found nothing, but here is
+        # somebody who paid" is the worst answer to a search.
+        if not items:
+            return items
+
+        service = PromotionService(self.session)
+        chosen = await service.slot_for(
+            area=area,
+            required_suitability=ctx.required_suitability,
+            category_slugs=category_slugs,
+            experience_type=experience_type,
+            # Only what this query itself retrieved. A promotion lifts; it never
+            # introduces.
+            eligible_ids=eligible_ids,
+            # Only the top result is excluded, and only because there is nothing
+            # to sell somebody who is already first - a label there would cost
+            # them credibility and buy them no position.
+            #
+            # Everything below it is fair game *and is moved rather than
+            # copied*: a listing that ranked seventh and appears in the paid
+            # slot must not also still be seventh, or the explorer sees the same
+            # thing twice and the publisher has bought a duplicate.
+            exclude_ids={items[0].id},
+        )
+        if chosen is None:
+            return items
+
+        promotion, experience = chosen
+        card = to_summary(
+            experience,
+            # Says what it is, in its own words. Never an organic-sounding
+            # "popular near you" - that would be a lie in the platform's voice.
+            reason="Promoted by the business",
+            distance_km=None,
+            is_saved=str(experience.id) in ctx.saved_experience_ids,
+            is_reposted=str(experience.id) in ctx.reposted_experience_ids,
+            wanted=sorted(ctx.wanted_suitability),
+        )
+        card.sponsored = True
+        card.promotion_id = promotion.id
+
+        await service.record_impression(promotion.id)
+
+        # Position 1 is never sold, and the organic results keep their order
+        # relative to one another. The only thing money moves is the listing
+        # that was paid for.
+        rest = [item for item in items[1:] if item.id != experience.id]
+        return [items[0], card, *rest]
 
     async def _pool(self, ctx: RankingContext | None = None, *, area: Area, **filters) -> list:
         """Candidates for one rail, looking close in before looking further out.
@@ -466,7 +560,11 @@ class DiscoveryService:
                     weights=SEARCH_WEIGHTS,
                 )
                 return SearchOutcome(
-                    items=items, total=len(experiences), query=query, degraded=True
+                    items=items,
+                    total=len(experiences),
+                    query=query,
+                    degraded=True,
+                    candidate_ids={exp.id for exp in experiences},
                 )
 
             candidates = await catalog_repo.query_experiences(
@@ -489,7 +587,13 @@ class DiscoveryService:
             items = self.summarize(
                 matched, ctx, limit=limit, diversify=False, weights=SEARCH_WEIGHTS
             )
-            return SearchOutcome(items=items, total=len(matched), query=query, degraded=True)
+            return SearchOutcome(
+                items=items,
+                total=len(matched),
+                query=query,
+                degraded=True,
+                candidate_ids={exp.id for exp in matched},
+            )
 
         keyword_ids: list[uuid.UUID] = []
         for hit in response.hits:
@@ -522,7 +626,13 @@ class DiscoveryService:
         # Semantic hits the keyword index never saw are genuine extra results, so
         # the reported total has to account for them.
         total = max(response.estimated_total, len(ordered_ids))
-        return SearchOutcome(items=items, total=total, query=query, semantic=bool(vector_ids))
+        return SearchOutcome(
+            items=items,
+            total=total,
+            query=query,
+            semantic=bool(vector_ids),
+            candidate_ids={exp.id for exp in experiences},
+        )
 
     async def _vector_candidates(
         self, query: str, *, city_slug: str | None

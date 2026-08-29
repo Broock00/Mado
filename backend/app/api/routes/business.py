@@ -26,17 +26,27 @@ and what is on.
 from __future__ import annotations
 
 import uuid
+from dataclasses import asdict
+from datetime import datetime
 
 from fastapi import APIRouter, File, Form, Request, UploadFile, status
+from pydantic import Field
+from sqlalchemy import select
 
 from app.api.deps import CurrentUser, OptionalUser, SessionDep
 from app.core import rate_limit
+from app.core.config import get_settings
 from app.core.envelope import CollectionEnvelope, Envelope
-from app.core.errors import NotFoundError, ValidationError
-from app.domains.catalog.schemas import ExperienceSummary
+from app.core.errors import NotFoundError, PermissionDeniedError, ValidationError
+from app.domains.catalog.schemas import CamelModel, ExperienceSummary
 from app.domains.catalog.serializers import to_summary
+from app.domains.commerce import fees
+from app.domains.commerce.payouts import PayoutService
+from app.domains.promotion import models as promotion_models
+from app.domains.promotion import service as promotion_service
+from app.domains.promotion.service import PromotionService
 from app.domains.publisher import business as business_vocab
-from app.domains.publisher import permissions
+from app.domains.publisher import entitlements, permissions, plans
 from app.domains.publisher.models import (
     GALLERY_IMAGE,
     GALLERY_VIDEO,
@@ -59,7 +69,8 @@ from app.domains.publisher.schemas import (
     UpdateBusinessRequest,
 )
 from app.domains.publisher.service import PublishingService
-from app.integrations import media_storage
+from app.domains.publisher.subscriptions import SubscriptionService
+from app.integrations import media_storage, payments
 
 router = APIRouter(tags=["business"])
 
@@ -295,6 +306,627 @@ async def my_permissions(
     if not held:
         raise NotFoundError("Business not found.", code="PUBLISHER_NOT_FOUND")
     return Envelope(data=sorted(held))
+
+
+# ----------------------------------------------------------------------- plans
+
+
+class EntitlementsOut(CamelModel):
+    """Null means no limit, and never zero — see `plans.py`."""
+
+    max_live_listings: int | None = None
+    max_team_members: int | None = None
+    analytics_window_days: int
+    ai_assistant: bool
+    api_access: bool
+
+
+class PlanOut(CamelModel):
+    key: str
+    name: str
+    tagline: str
+    entitlements: EntitlementsOut
+    # What this plan costs in the currency asked for, or null where it is not
+    # sold in that currency. Never a converted figure: a price arrived at
+    # through this morning's exchange rate is one nobody decided to charge.
+    price_minor: int | None = None
+    currency: str | None = None
+    purchasable: bool
+
+
+class SubscriptionOut(CamelModel):
+    # What is in force. Not what was last clicked: an account buying an upgrade
+    # keeps the plan it is still paying for until the new one is paid.
+    plan: str
+    plan_name: str
+    status: str
+    current_period_end: datetime | None = None
+    # What is being bought, while a purchase is waiting on the provider.
+    pending_plan: str | None = None
+    # Where to go to pay. Cleared the moment the purchase settles, so a stale
+    # link cannot be followed into a second charge.
+    checkout_url: str | None = None
+
+
+class PlansOut(CamelModel):
+    current: SubscriptionOut
+    plans: list[PlanOut]
+    # What these prices are quoted in, resolved from the business's own city
+    # unless it asked for something else.
+    currency: str
+    # Every currency a plan is priced in, so the interface can offer a change
+    # without hard-coding a list that drifts from the price lists.
+    sold_in: list[str]
+
+
+class StartSubscriptionRequest(CamelModel):
+    plan: str
+    # Omitted means "whatever you quoted me", which is resolved from the
+    # business's city - so a client that forgets cannot silently buy in birr.
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+
+
+async def _currency_for(session, publisher_id: uuid.UUID, asked: str | None) -> str:
+    """What to quote this business in.
+
+    Its own city decides, not the client and not a constant. CLAUDE.md already
+    records this going wrong once - "every plan used to quote ETB in every
+    city" - and it went wrong the same way here, because the client sent a
+    default of ETB and the server believed it. A business in London seeing birr
+    is being shown a price it cannot act on.
+
+    The city comes from where the business actually operates: its venues first,
+    then its listings. A brand new business has neither, and falls back to the
+    deployment's default city rather than guessing from an IP address - a wrong
+    guess here quotes somebody a price in a currency they do not use, which is
+    worse than a familiar default they can change.
+
+    An explicit `?currency=` still wins, so a business selling across a border
+    can ask. It is honoured only where a plan is actually priced in it: the
+    alternative is quoting a converted figure, which is a number nobody decided
+    to charge.
+    """
+    if asked:
+        wanted = asked.upper()
+        if wanted in plans.sold_in():
+            return wanted
+
+    from app.domains.catalog.models import City, Experience, Venue
+
+    for model in (Venue, Experience):
+        found = (
+            await session.execute(
+                select(City.currency)
+                .join(model, model.city_id == City.id)
+                .where(model.publisher_id == publisher_id)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if found and found.upper() in plans.sold_in():
+            return found.upper()
+
+    fallback = (
+        await session.execute(
+            select(City.currency).where(City.slug == get_settings().default_city_slug)
+        )
+    ).scalar_one_or_none()
+    return (fallback or "ETB").upper()
+
+
+def _plan_out(plan: plans.Plan, currency: str) -> PlanOut:
+    return PlanOut(
+        key=plan.key,
+        name=plan.name,
+        tagline=plan.tagline,
+        entitlements=EntitlementsOut(**asdict(plan.entitlements)),
+        price_minor=plans.price_for(plan.key, currency),
+        currency=currency if plan.prices_minor else None,
+        purchasable=plans.is_purchasable(plan.key),
+    )
+
+
+def _subscription_out(subscription, effective: plans.Plan) -> SubscriptionOut:
+    """What the account is on **now**, which is not always what the row says.
+
+    `effective` comes from `entitlements.plan_of`, which reads through the
+    period end - so an account whose month ran out yesterday is shown as free
+    today without anything having had to run on a timer to say so. When the two
+    disagree the status is reported as active, because free is not `past_due`:
+    the row's status describes the subscription that lapsed, and repeating it
+    against the free plan would say something untrue about the free plan.
+    """
+    if subscription is None:
+        return SubscriptionOut(
+            plan=effective.key, plan_name=effective.name, status=plans.STATUS_ACTIVE
+        )
+    return SubscriptionOut(
+        plan=effective.key,
+        plan_name=effective.name,
+        status=(
+            subscription.status
+            if effective.key == subscription.plan
+            else plans.STATUS_ACTIVE
+        ),
+        current_period_end=(
+            subscription.current_period_end if effective.key == subscription.plan else None
+        ),
+        pending_plan=subscription.pending_plan,
+        checkout_url=subscription.checkout_url,
+    )
+
+
+@router.get(
+    "/businesses/{business_id}/plans",
+    response_model=Envelope[PlansOut],
+    summary="What this business is on, and what it could be on",
+    description=(
+        "Asks the provider what happened when a purchase is still waiting, so "
+        "somebody who has just come back from paying gets an answer rather than "
+        "a spinner waiting on a webhook — the same thing `GET /orders/{id}` "
+        "does for a ticket."
+    ),
+)
+async def business_plans(
+    business_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+    currency: str | None = None,
+) -> Envelope[PlansOut]:
+    await PublishingService(session).assert_can_manage(
+        user, business_id, permission=permissions.PROFILE_VIEW
+    )
+    service = SubscriptionService(session)
+    subscription = await service.of(business_id)
+
+    # Only while something is actually being bought. Verifying on every read
+    # would spend a provider call each time anybody opened the dashboard, and
+    # `settle` returns immediately when there is no pending purchase anyway -
+    # this guard is about not paying for the round trip, not about correctness.
+    #
+    # Here rather than left to the client calling `/plans/settle`: a webhook
+    # cannot reach a development machine, so the return leg is the only path,
+    # and a separate endpoint the interface has to remember to call is one it
+    # eventually does not - which is exactly how this shipped stuck at pending.
+    if subscription is not None and subscription.pending_plan is not None:
+        subscription = await service.settle(subscription)
+        await session.commit()
+
+    effective = await entitlements.plan_of(session, business_id)
+    quoted = await _currency_for(session, business_id, currency)
+    return Envelope(
+        data=PlansOut(
+            current=_subscription_out(subscription, effective),
+            plans=[_plan_out(plans.PLANS[key], quoted) for key in plans.PLAN_ORDER],
+            currency=quoted,
+            sold_in=plans.sold_in(),
+        )
+    )
+
+
+@router.post(
+    "/businesses/{business_id}/plans",
+    response_model=Envelope[SubscriptionOut],
+    status_code=status.HTTP_201_CREATED,
+    summary="Buy a plan",
+    description=(
+        "Returns a checkout URL. Nothing is granted until the payment provider "
+        "confirms the money arrived — a browser returning with `?status=success` "
+        "proves only that it can follow a link.\n\n"
+        "A period is prepaid and does not renew itself. Nothing in this "
+        "deployment can charge a second time, and a subscription that renewed "
+        "into a period nobody paid for would read as active while no money ever "
+        "moved."
+    ),
+)
+async def start_subscription(
+    business_id: uuid.UUID,
+    payload: StartSubscriptionRequest,
+    user: CurrentUser,
+    session: SessionDep,
+    request: Request,
+) -> Envelope[SubscriptionOut]:
+    # Buying is spending the business's money, so it takes the same permission
+    # as seeing what it earned rather than the one for editing the profile.
+    publisher = await PublishingService(session).assert_can_manage(
+        user, business_id, permission=permissions.FINANCE_VIEW
+    )
+    settings = get_settings()
+    service = SubscriptionService(session)
+    subscription = await service.start(
+        user,
+        publisher,
+        plan_key=payload.plan,
+        currency=await _currency_for(session, business_id, payload.currency),
+        return_url=f"{settings.web_base_url.rstrip('/')}/businesses/{business_id}/manage",
+        # Resolved from the request rather than from a setting, the same way
+        # checkout does it: the app can sit behind a proxy on a different host
+        # from the one the publisher is looking at.
+        callback_url=str(request.url_for("payment_callback")),
+    )
+    effective = await entitlements.plan_of(session, business_id)
+    view = _subscription_out(subscription, effective)
+    await session.commit()
+    return Envelope(data=view)
+
+
+@router.post(
+    "/businesses/{business_id}/plans/settle",
+    response_model=Envelope[SubscriptionOut],
+    summary="Check whether a plan payment came through",
+    description=(
+        "The return leg, kept because a webhook can be minutes late and "
+        "somebody staring at a spinner deserves an answer. It verifies with the "
+        "provider rather than believing the browser."
+    ),
+)
+async def settle_subscription(
+    business_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> Envelope[SubscriptionOut]:
+    await PublishingService(session).assert_can_manage(
+        user, business_id, permission=permissions.FINANCE_VIEW
+    )
+    service = SubscriptionService(session)
+    subscription = await service.of(business_id)
+    if subscription is None:
+        raise NotFoundError("There is nothing to settle.", code="NO_SUBSCRIPTION")
+    subscription = await service.settle(subscription)
+    effective = await entitlements.plan_of(session, business_id)
+    view = _subscription_out(subscription, effective)
+    await session.commit()
+    return Envelope(data=view)
+
+
+@router.post(
+    "/businesses/{business_id}/plans/simulate",
+    response_model=Envelope[SubscriptionOut],
+    summary="Settle a stub plan payment (development only)",
+    description=(
+        "The counterpart of `/payments/simulate/{reference}` for subscriptions, "
+        "and it exists for the same reason: the stub provider refuses to invent "
+        "a payment, so development has to say one happened. Refused outright "
+        "unless the stub is the configured provider."
+    ),
+)
+async def simulate_subscription_payment(
+    business_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> Envelope[SubscriptionOut]:
+    await PublishingService(session).assert_can_manage(
+        user, business_id, permission=permissions.FINANCE_VIEW
+    )
+    service = SubscriptionService(session)
+    subscription = await service.of(business_id)
+    if subscription is None or subscription.reference is None:
+        raise NotFoundError("There is nothing to settle.", code="NO_SUBSCRIPTION")
+
+    provider = payments.provider_named(subscription.provider)
+    if not isinstance(provider, payments.StubPayments):
+        raise PermissionDeniedError(
+            "Payments are handled by a real provider here.", code="NOT_SIMULATED"
+        )
+    try:
+        provider.settle(subscription.reference, paid=True)
+    except payments.PaymentError as exc:
+        raise ValidationError(str(exc), code="NO_STUB_PAYMENT") from exc
+
+    subscription = await service.settle(subscription)
+    effective = await entitlements.plan_of(session, business_id)
+    view = _subscription_out(subscription, effective)
+    await session.commit()
+    return Envelope(data=view)
+
+
+@router.delete(
+    "/businesses/{business_id}/plans",
+    response_model=Envelope[SubscriptionOut],
+    summary="Cancel a plan",
+    description=(
+        "The period already paid for is not cut short. Keeping the money and "
+        "withdrawing the thing it bought would be theft with extra steps."
+    ),
+)
+async def cancel_subscription(
+    business_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> Envelope[SubscriptionOut]:
+    await PublishingService(session).assert_can_manage(
+        user, business_id, permission=permissions.FINANCE_VIEW
+    )
+    subscription = await SubscriptionService(session).cancel(business_id)
+    effective = await entitlements.plan_of(session, business_id)
+    view = _subscription_out(subscription, effective)
+    await session.commit()
+    return Envelope(data=view)
+
+
+# ------------------------------------------------------------------ promotions
+
+
+class PromotionOut(CamelModel):
+    id: uuid.UUID
+    experience_id: uuid.UUID
+    experience_title: str | None = None
+    city_slug: str | None = None
+    starts_at: datetime
+    ends_at: datetime
+    status: str
+    amount_minor: int
+    currency: str
+    checkout_url: str | None = None
+    # Reporting only. Nothing about what is shown depends on these, which is
+    # what stops the counter becoming a reason to show something.
+    impressions: int = 0
+    clicks: int = 0
+
+
+class StartPromotionRequest(CamelModel):
+    experience_id: uuid.UUID
+    days: int = Field(ge=promotion_models.MIN_DAYS, le=promotion_models.MAX_DAYS)
+    currency: str = Field(default="ETB", min_length=3, max_length=3)
+    # Where it reaches: a city, or a point and a radius. One of the two is
+    # required - a promotion with no place would either reach nowhere or reach
+    # everywhere, and the second is one business standing in front of a planet.
+    city_slug: str | None = None
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    radius_km: float | None = Field(default=None, gt=0, le=200)
+
+
+class PromotionPricingOut(CamelModel):
+    currency: str
+    # Null where promotions are not sold in this currency. Never a converted
+    # figure - the same rule the plan prices follow.
+    daily_minor: int | None = None
+    min_days: int
+    max_days: int
+
+
+@router.get(
+    "/promotions/pricing",
+    response_model=Envelope[PromotionPricingOut],
+    summary="What a promoted slot costs",
+    description=(
+        "So the dialog can show a total before anybody is sent to pay. A price "
+        "somebody discovers on the payment page is a price they did not agree to."
+    ),
+)
+async def promotion_pricing(
+    user: CurrentUser,
+    session: SessionDep,
+    business_id: uuid.UUID | None = None,
+    currency: str | None = None,
+) -> Envelope[PromotionPricingOut]:
+    # Resolved the same way a plan is, from the business's own city, so a
+    # promotion and a subscription never quote the same account in different
+    # money.
+    quoted = (
+        await _currency_for(session, business_id, currency)
+        if business_id
+        else (currency or "ETB").upper()
+    )
+    return Envelope(
+        data=PromotionPricingOut(
+            currency=quoted,
+            daily_minor=promotion_service.DAILY_PRICE_MINOR.get(quoted),
+            min_days=promotion_models.MIN_DAYS,
+            max_days=promotion_models.MAX_DAYS,
+        )
+    )
+
+
+@router.get(
+    "/businesses/{business_id}/promotions",
+    response_model=CollectionEnvelope[PromotionOut],
+    summary="Promotions this business has bought",
+)
+async def list_promotions(
+    business_id: uuid.UUID, user: CurrentUser, session: SessionDep
+) -> CollectionEnvelope[PromotionOut]:
+    await PublishingService(session).assert_can_manage(
+        user, business_id, permission=permissions.FINANCE_VIEW
+    )
+    service = PromotionService(session)
+    rows = await service.for_publisher(business_id)
+    titles = await _experience_titles(session, [row.experience_id for row in rows])
+
+    out = []
+    for row in rows:
+        impressions, clicks = await service.performance(row.id)
+        out.append(
+            PromotionOut(
+                id=row.id,
+                experience_id=row.experience_id,
+                experience_title=titles.get(row.experience_id),
+                city_slug=row.city_slug,
+                starts_at=row.starts_at,
+                ends_at=row.ends_at,
+                status=row.status,
+                amount_minor=row.amount_minor,
+                currency=row.currency,
+                checkout_url=row.checkout_url,
+                impressions=impressions,
+                clicks=clicks,
+            )
+        )
+    return CollectionEnvelope(data=out)
+
+
+@router.post(
+    "/businesses/{business_id}/promotions",
+    response_model=Envelope[PromotionOut],
+    status_code=status.HTTP_201_CREATED,
+    summary="Promote one of this business's posts",
+    description=(
+        "Buys one clearly-labelled slot in discovery for a number of days. It "
+        "does not change how anything is ranked: the promoted card is inserted "
+        "second, never first, and only where the listing would have been "
+        "allowed to appear anyway — it still has to match the place, the "
+        "filters and every accessibility or dietary requirement the explorer "
+        "asked for. Nothing runs until the payment provider confirms."
+    ),
+)
+async def start_promotion(
+    business_id: uuid.UUID,
+    payload: StartPromotionRequest,
+    user: CurrentUser,
+    session: SessionDep,
+    request: Request,
+) -> Envelope[PromotionOut]:
+    publisher = await PublishingService(session).assert_can_manage(
+        user, business_id, permission=permissions.FINANCE_VIEW
+    )
+    settings = get_settings()
+    promotion = await PromotionService(session).start(
+        user,
+        publisher,
+        experience_id=payload.experience_id,
+        days=payload.days,
+        currency=payload.currency,
+        city_slug=payload.city_slug,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        radius_km=payload.radius_km,
+        return_url=f"{settings.web_base_url.rstrip('/')}/businesses/{business_id}/manage",
+        callback_url=str(request.url_for("payment_callback")),
+    )
+    view = PromotionOut(
+        id=promotion.id,
+        experience_id=promotion.experience_id,
+        city_slug=promotion.city_slug,
+        starts_at=promotion.starts_at,
+        ends_at=promotion.ends_at,
+        status=promotion.status,
+        amount_minor=promotion.amount_minor,
+        currency=promotion.currency,
+        checkout_url=promotion.checkout_url,
+    )
+    await session.commit()
+    return Envelope(data=view)
+
+
+@router.post(
+    "/businesses/{business_id}/promotions/{promotion_id}/simulate",
+    response_model=Envelope[PromotionOut],
+    summary="Settle a stub promotion payment (development only)",
+)
+async def simulate_promotion_payment(
+    business_id: uuid.UUID,
+    promotion_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+) -> Envelope[PromotionOut]:
+    await PublishingService(session).assert_can_manage(
+        user, business_id, permission=permissions.FINANCE_VIEW
+    )
+    service = PromotionService(session)
+    promotion = await session.get(promotion_models.Promotion, promotion_id)
+    if promotion is None or promotion.publisher_id != business_id or not promotion.reference:
+        raise NotFoundError("Promotion not found.", code="PROMOTION_NOT_FOUND")
+
+    provider = payments.provider_named(promotion.provider)
+    if not isinstance(provider, payments.StubPayments):
+        raise PermissionDeniedError(
+            "Payments are handled by a real provider here.", code="NOT_SIMULATED"
+        )
+    try:
+        provider.settle(promotion.reference, paid=True)
+    except payments.PaymentError as exc:
+        raise ValidationError(str(exc), code="NO_STUB_PAYMENT") from exc
+
+    promotion = await service.settle(promotion)
+    view = PromotionOut(
+        id=promotion.id,
+        experience_id=promotion.experience_id,
+        city_slug=promotion.city_slug,
+        starts_at=promotion.starts_at,
+        ends_at=promotion.ends_at,
+        status=promotion.status,
+        amount_minor=promotion.amount_minor,
+        currency=promotion.currency,
+        checkout_url=promotion.checkout_url,
+    )
+    await session.commit()
+    return Envelope(data=view)
+
+
+async def _experience_titles(
+    session: SessionDep, ids: list[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """One lookup for the page, rather than one per promotion."""
+    if not ids:
+        return {}
+    from sqlalchemy import select
+
+    from app.domains.catalog.models import Experience
+
+    result = await session.execute(
+        select(Experience.id, Experience.title).where(Experience.id.in_(set(ids)))
+    )
+    return {experience_id: title for experience_id, title in result.all()}
+
+
+# -------------------------------------------------------------------- earnings
+
+
+class EarningsLineOut(CamelModel):
+    """One currency's worth of what a business has taken."""
+
+    currency: str
+    gross_minor: int
+    fee_minor: int
+    net_minor: int
+    owing_minor: int
+    sales: int
+
+
+class PayoutOut(CamelModel):
+    id: uuid.UUID
+    currency: str
+    total_minor: int
+    entry_count: int
+    period_start: datetime
+    period_end: datetime
+    status: str
+    paid_at: datetime | None = None
+    reference: str | None = None
+
+
+class EarningsOut(CamelModel):
+    # The commission this business pays, so the dashboard can state it rather
+    # than leaving the difference between gross and net to be inferred from
+    # arithmetic. A fee nobody can find is indistinguishable from a mistake.
+    fee_rate_bps: int
+    totals: list[EarningsLineOut]
+    payouts: list[PayoutOut]
+
+
+@router.get(
+    "/businesses/{business_id}/earnings",
+    response_model=Envelope[EarningsOut],
+    summary="What this business has earned",
+    description=(
+        "Gross is what explorers paid, fee is Mado's commission, net is what "
+        "the business is owed, and owing is the part not yet paid out. Money "
+        "is not analytics: this needs `finance:view`, which an analyst does "
+        "not hold."
+    ),
+)
+async def business_earnings(
+    business_id: uuid.UUID,
+    user: CurrentUser,
+    session: SessionDep,
+) -> Envelope[EarningsOut]:
+    publisher = await PublishingService(session).assert_can_manage(
+        user, business_id, permission=permissions.FINANCE_VIEW
+    )
+    service = PayoutService(session)
+    totals = await service.totals_for(business_id)
+    history = await service.history_for(business_id)
+    return Envelope(
+        data=EarningsOut(
+            fee_rate_bps=fees.rate_for(publisher),
+            totals=[EarningsLineOut(**asdict(line)) for line in totals],
+            payouts=[PayoutOut.model_validate(payout) for payout in history],
+        )
+    )
 
 
 # ------------------------------------------------------------------------ team

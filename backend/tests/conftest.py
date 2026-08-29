@@ -102,6 +102,39 @@ def _remove_what_the_tests_made():
         print(f"\n[tests] removed {summary}\n")
 
 
+def make_moderator(email: str) -> None:
+    """Grant moderator rights to an account, by reaching past the API.
+
+    There is deliberately no endpoint that appoints the first moderator - that
+    is what `test_moderator_rights_cannot_be_self_granted` protects - so a test
+    needing one has to write the column. Shared here rather than copied into
+    each module because the awkward part is not the SQL: it is that psycopg
+    cannot drive Windows' default ProactorEventLoop, so this has to run on a
+    selector loop of its own (see `app/core/asyncio_compat.py`).
+
+    The account is an ordinary `mado-qa.example.org` one, so the session
+    teardown removes it with everything else.
+    """
+    import asyncio
+
+    from sqlalchemy import text
+
+    from app.core.database import SessionFactory
+
+    async def promote() -> None:
+        async with SessionFactory() as session:
+            await session.execute(
+                text(
+                    "UPDATE identity.users SET is_moderator = true WHERE id = "
+                    "(SELECT user_id FROM identity.user_profiles WHERE email = :email)"
+                ),
+                {"email": email},
+            )
+            await session.commit()
+
+    asyncio.run(promote(), loop_factory=asyncio.SelectorEventLoop)
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     """Pin anyio to asyncio so async tests do not also try trio."""

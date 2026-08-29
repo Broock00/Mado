@@ -14,12 +14,19 @@ from datetime import datetime
 
 from fastapi import APIRouter, Query, Request, status
 from pydantic import Field
+from sqlalchemy import select
 
 from app.api.deps import CurrentUser, SessionDep
 from app.core import rate_limit
 from app.core.envelope import CollectionEnvelope, Envelope
+from app.core.errors import ValidationError
 from app.core.logging import get_request_id
 from app.domains.catalog.schemas import CamelModel
+from app.domains.commerce.payouts import PayoutService
+from app.domains.developer import usage
+from app.domains.publisher import plans
+from app.domains.publisher.models import Publisher
+from app.domains.publisher.subscriptions import SubscriptionService
 from app.domains.trust.administration import (
     AdministrationService,
     require_moderator,
@@ -364,3 +371,248 @@ async def audit_trail(
         action=action, subject_id=subject, since=window_since(days), limit=limit
     )
     return CollectionEnvelope(data=[AuditEntryOut.model_validate(e) for e in entries])
+
+
+# ------------------------------------------------------------------- payouts
+#
+# Mado sells through its own merchant account, so every ticket payment arrives
+# here and the publisher's share is a debt. These three endpoints are how that
+# debt is seen, batched and marked settled. None of them moves money: a transfer
+# is made by a person, in a bank, and recorded here afterwards.
+
+
+class OwingOut(CamelModel):
+    publisher_id: uuid.UUID
+    publisher_name: str | None = None
+    currency: str
+    net_minor: int
+    sales: int
+
+
+class AdminPayoutOut(CamelModel):
+    id: uuid.UUID
+    publisher_id: uuid.UUID
+    currency: str
+    total_minor: int
+    entry_count: int
+    period_start: datetime
+    period_end: datetime
+    status: str
+    paid_at: datetime | None = None
+    reference: str | None = None
+    note: str | None = None
+
+
+class BuildPayoutRequest(CamelModel):
+    publisher_id: uuid.UUID
+    currency: str = Field(min_length=3, max_length=3)
+    # Cuts the batch at a date, so a run on the 1st settles last month without
+    # sweeping in this morning's sales.
+    up_to: datetime | None = None
+
+
+class MarkPaidRequest(CamelModel):
+    # Required, not optional. The value of the record is that it reconciles
+    # against a bank statement, and one with nothing to match is a claim.
+    reference: str = Field(min_length=1, max_length=120)
+    note: str | None = Field(default=None, max_length=300)
+
+
+@router.get(
+    "/admin/payouts/owing",
+    response_model=CollectionEnvelope[OwingOut],
+    summary="What Mado owes, by publisher and currency",
+    description=(
+        "Grouped by currency because a business selling in two countries earns "
+        "in two, and one figure adding them together would mean nothing."
+    ),
+)
+async def payouts_owing(session: SessionDep, user: CurrentUser) -> CollectionEnvelope[OwingOut]:
+    require_moderator(user)
+    rows = await PayoutService(session).outstanding()
+    names = await _publisher_names(session, [publisher_id for publisher_id, _, _, _ in rows])
+    return CollectionEnvelope(
+        data=[
+            OwingOut(
+                publisher_id=publisher_id,
+                publisher_name=names.get(publisher_id),
+                currency=currency,
+                net_minor=total,
+                sales=count,
+            )
+            for publisher_id, currency, total, count in rows
+        ]
+    )
+
+
+@router.post(
+    "/admin/payouts",
+    response_model=Envelope[AdminPayoutOut],
+    status_code=status.HTTP_201_CREATED,
+    summary="Batch what is owed to one publisher into a payout",
+)
+async def build_payout(
+    payload: BuildPayoutRequest, session: SessionDep, user: CurrentUser
+) -> Envelope[AdminPayoutOut]:
+    require_moderator(user)
+    payout = await PayoutService(session).build(
+        payload.publisher_id, payload.currency, up_to=payload.up_to
+    )
+    view = AdminPayoutOut.model_validate(payout)
+    await session.commit()
+    return Envelope(data=view)
+
+
+@router.post(
+    "/admin/payouts/{payout_id}/paid",
+    response_model=Envelope[AdminPayoutOut],
+    summary="Record that a payout was actually sent",
+    description=(
+        "Mado does not disburse: this marks a transfer somebody made, with "
+        "their reference. Marking one paid twice is not an error - two people "
+        "confirming the same transfer is ordinary, and the first reference is "
+        "the one that matches the bank."
+    ),
+)
+async def mark_payout_paid(
+    payout_id: uuid.UUID,
+    payload: MarkPaidRequest,
+    session: SessionDep,
+    user: CurrentUser,
+) -> Envelope[AdminPayoutOut]:
+    require_moderator(user)
+    payout = await PayoutService(session).mark_paid(
+        payout_id, reference=payload.reference, note=payload.note
+    )
+    view = AdminPayoutOut.model_validate(payout)
+    await session.commit()
+    return Envelope(data=view)
+
+
+# --------------------------------------------------------- publisher plans
+#
+# Enterprise is negotiated rather than bought - BUSINESS-06 says so, and
+# `plans.py` carries no price for it precisely because a number here would be
+# one the sales conversation contradicts. This is how an agreement reached in
+# that conversation is actually applied. Without it, enterprise was a tier
+# nobody could be put on: a plan that exists in the catalogue, is rendered on the
+# upgrade page, and that no code path could ever grant.
+
+
+class GrantedPlanOut(CamelModel):
+    publisher_id: uuid.UUID
+    plan: str
+    plan_name: str
+    status: str
+    current_period_end: datetime | None = None
+
+
+class GrantPlanRequest(CamelModel):
+    plan: str
+    # Days the agreement runs for. Null leaves no end date, which is what an
+    # open-ended arrangement actually is - it ends when somebody ends it, not
+    # when a date passes unnoticed.
+    days: int | None = Field(default=None, ge=1, le=3650)
+
+
+@router.put(
+    "/admin/publisher-plans/{publisher_id}",
+    response_model=Envelope[GrantedPlanOut],
+    summary="Put a business on a plan without a payment",
+    description=(
+        "For negotiated agreements, invoiced outside Mado, and for putting "
+        "something right. Nothing is charged here and no invoice is written — "
+        "the subscription carries no price, so the invoices and the row cannot "
+        "disagree about what was paid."
+    ),
+)
+async def grant_publisher_plan(
+    publisher_id: uuid.UUID,
+    payload: GrantPlanRequest,
+    session: SessionDep,
+    user: CurrentUser,
+) -> Envelope[GrantedPlanOut]:
+    require_moderator(user)
+    subscription = await SubscriptionService(session).grant(
+        publisher_id, plan_key=payload.plan, days=payload.days
+    )
+    view = GrantedPlanOut(
+        publisher_id=publisher_id,
+        plan=subscription.plan,
+        plan_name=plans.get(subscription.plan).name,
+        status=subscription.status,
+        current_period_end=subscription.current_period_end,
+    )
+    await session.commit()
+    return Envelope(data=view)
+
+
+# --------------------------------------------------------- developer plans
+#
+# API plans are sold by conversation rather than self-service - BUSINESS-90.01
+# §13 has usage-based pricing and enterprise contracts, neither of which is a
+# button. This is how an account is actually put on one. Without it `pro` and
+# `enterprise` would be plans nobody could be on, which is the same lie as a
+# scope nothing enforces.
+
+
+class DeveloperPlanOut(CamelModel):
+    user_id: uuid.UUID
+    plan: str
+    plan_name: str
+    monthly_allowance: int | None = None
+    calls_this_month: int
+
+
+class SetDeveloperPlanRequest(CamelModel):
+    plan: str
+    # An allowance agreed with one customer, overriding the plan's. Enterprise
+    # contracts are negotiated, and encoding each one as a new plan would mean a
+    # deploy per customer.
+    monthly_calls_override: int | None = Field(default=None, ge=0)
+
+
+@router.put(
+    "/admin/developer-plans/{user_id}",
+    response_model=Envelope[DeveloperPlanOut],
+    summary="Put an account on an API plan",
+)
+async def set_developer_plan(
+    user_id: uuid.UUID,
+    payload: SetDeveloperPlanRequest,
+    session: SessionDep,
+    user: CurrentUser,
+) -> Envelope[DeveloperPlanOut]:
+    require_moderator(user)
+    if payload.plan not in usage.DEVELOPER_PLANS:
+        raise ValidationError(f"There is no {payload.plan} API plan.", code="UNKNOWN_PLAN")
+
+    account = await usage.account_for(session, user_id)
+    if account is None:
+        account = usage.DeveloperAccount(user_id=user_id, plan=payload.plan)
+        session.add(account)
+    account.plan = payload.plan
+    account.monthly_calls_override = payload.monthly_calls_override
+    await session.flush()
+
+    view = DeveloperPlanOut(
+        user_id=user_id,
+        plan=account.plan,
+        plan_name=usage.plan_for(account.plan).name,
+        monthly_allowance=await usage.allowance_for(session, user_id),
+        calls_this_month=await usage.calls_this_month(session, user_id),
+    )
+    await session.commit()
+    return Envelope(data=view)
+
+
+async def _publisher_names(
+    session: SessionDep, publisher_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """One lookup for the whole page, rather than one per row."""
+    if not publisher_ids:
+        return {}
+    result = await session.execute(
+        select(Publisher.id, Publisher.name).where(Publisher.id.in_(set(publisher_ids)))
+    )
+    return {publisher_id: name for publisher_id, name in result.all()}

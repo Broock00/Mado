@@ -177,6 +177,18 @@ export interface ExperienceSummary {
   /** The count comes off the listing itself, so a card costs no extra query. */
   repostCount: number
   isReposted: boolean
+  /**
+   * A business paid for this position.
+   *
+   * Never inferable from anything else on the card, and never true for a
+   * listing that merely ranked well — sponsorship is a separate labelled slot,
+   * not a weight on the ranking. The card must show the label whenever this is
+   * set, including in the compact layout: it is the condition paid placement is
+   * sold under, not a decoration.
+   */
+  sponsored?: boolean
+  /** Set alongside `sponsored`, so a click can be attributed to the campaign. */
+  promotionId?: string | null
 }
 
 /** The state of the repost toggle after it was pressed. */
@@ -1009,6 +1021,149 @@ export interface Business {
   verificationStatus: string
   trustLevel: number
   createdAt?: string | null
+}
+
+/**
+ * What a business has taken, in one currency.
+ *
+ * Four figures rather than one, because they answer different questions and
+ * deriving any of them here would be a second opinion about money: gross is
+ * what explorers paid, fee is Mado's commission, net is what the business is
+ * owed, and owing is the part of that net not yet paid out.
+ *
+ * One row per currency. A business selling in Addis and in Nairobi earns in
+ * two, and a single figure adding birr to shillings would mean nothing.
+ */
+export interface EarningsLine {
+  currency: string
+  grossMinor: number
+  feeMinor: number
+  netMinor: number
+  owingMinor: number
+  sales: number
+}
+
+export interface BusinessPayout {
+  id: string
+  currency: string
+  totalMinor: number
+  entryCount: number
+  periodStart: string
+  periodEnd: string
+  status: 'owing' | 'paid'
+  paidAt?: string | null
+  reference?: string | null
+}
+
+/**
+ * How much of the API allowance an account has used.
+ *
+ * `monthlyAllowance` is null for an unmetered agreement — never zero, which
+ * would read as "no calls allowed", the opposite of what it means.
+ */
+export interface ApiUsageSummary {
+  plan: string
+  planName: string
+  callsThisMonth: number
+  monthlyAllowance: number | null
+  /** The day the allowance resets, so somebody who has run out knows whether to
+   * wait or to ask for more. */
+  resetsOn: string
+  daily: { day: string; calls: number }[]
+}
+
+export interface PlanEntitlementsOut {
+  maxLiveListings: number | null
+  maxTeamMembers: number | null
+  analyticsWindowDays: number
+  aiAssistant: boolean
+  apiAccess: boolean
+}
+
+export interface BusinessPlan {
+  key: string
+  name: string
+  tagline: string
+  entitlements: PlanEntitlementsOut
+  /** Null where the plan is not sold in the currency asked for — never a
+   * converted figure, which would be a price nobody decided to charge. */
+  priceMinor?: number | null
+  currency?: string | null
+  purchasable: boolean
+}
+
+export interface BusinessSubscription {
+  /** What is in force now, which is not always what was bought: a period that
+   * has run out reads as free without anything having to expire it, and an
+   * account part-way through buying an upgrade still holds what it paid for. */
+  plan: string
+  planName: string
+  status: string
+  currentPeriodEnd?: string | null
+  /** What is being bought, while a purchase waits on the provider. */
+  pendingPlan?: string | null
+  /** Cleared the moment the purchase settles, so a stale link cannot become a
+   * second charge. */
+  checkoutUrl?: string | null
+}
+
+export interface BusinessPlans {
+  current: BusinessSubscription
+  plans: BusinessPlan[]
+  /** What these prices are quoted in — the business's own city, unless asked. */
+  currency: string
+  /** Every currency a plan is sold in, so the switcher is never a stale list. */
+  soldIn: string[]
+}
+
+/**
+ * A paid slot a business bought, and what it did.
+ *
+ * `impressions` and `clicks` are reporting only. Nothing about what is shown
+ * depends on them — a counter that fed back into placement would become a
+ * reason to show a listing to somebody it does not suit.
+ */
+export interface BusinessPromotion {
+  id: string
+  experienceId: string
+  experienceTitle?: string | null
+  citySlug?: string | null
+  startsAt: string
+  endsAt: string
+  status: 'pending_payment' | 'active' | 'ended' | 'refused'
+  amountMinor: number
+  currency: string
+  checkoutUrl?: string | null
+  impressions: number
+  clicks: number
+}
+
+export interface PromotionPricing {
+  currency: string
+  /** Null where promotions are not sold in this currency — never converted. */
+  dailyMinor: number | null
+  minDays: number
+  maxDays: number
+}
+
+export interface StartPromotionInput {
+  experienceId: string
+  days: number
+  currency?: string
+  citySlug?: string
+  latitude?: number
+  longitude?: number
+  radiusKm?: number
+}
+
+export interface BusinessEarnings {
+  /**
+   * Stated outright, so the gap between gross and net is never left to be
+   * inferred from arithmetic — a deduction nobody can name reads as a mistake.
+   */
+  feeRateBps: number
+  totals: EarningsLine[]
+  payouts: BusinessPayout[]
 }
 
 /**

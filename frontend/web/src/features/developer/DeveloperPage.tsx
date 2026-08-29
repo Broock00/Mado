@@ -256,6 +256,63 @@ function NewKey({ onCreated }: { onCreated: (secret: string) => void }) {
   )
 }
 
+function Usage() {
+  const { data } = useQuery({ queryKey: ['api-usage'], queryFn: () => api.apiUsage() })
+  if (!data) return null
+
+  const allowance = data.monthlyAllowance
+  const proportion = allowance ? Math.min(1, data.callsThisMonth / allowance) : 0
+  // Only once it is worth knowing about. A bar that is always red-adjacent
+  // teaches people to ignore it, which is the one thing it must not do.
+  const tight = allowance !== null && proportion >= 0.8
+
+  return (
+    <section className="mb-10">
+      <SectionHeading
+        title="Usage"
+        subtitle={
+          allowance === null
+            ? 'Your agreement sets the limit rather than a monthly allowance.'
+            : `Calls this month, against the ${data.planName} allowance. Resets on ${new Date(
+                data.resetsOn,
+              ).toLocaleDateString()}.`
+        }
+      />
+
+      <Card className="mt-4 space-y-3 p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <span className="text-2xl font-semibold text-sand-900">
+            {data.callsThisMonth.toLocaleString()}
+          </span>
+          {allowance !== null && (
+            <span className="text-sm text-sand-500">of {allowance.toLocaleString()}</span>
+          )}
+        </div>
+
+        {allowance !== null && (
+          <div className="h-2 w-full overflow-hidden rounded-full bg-sand-200">
+            <div
+              className={`h-full rounded-full ${tight ? 'bg-rust-500' : 'bg-brand-500'}`}
+              style={{ width: `${Math.max(2, proportion * 100)}%` }}
+            />
+          </div>
+        )}
+
+        {tight && (
+          // Said in the words the refusal will use, so somebody who then hits it
+          // recognises what happened. Running out is not a rate limit and
+          // waiting a minute will not clear it.
+          <p className="text-sm text-sand-600">
+            Close to the limit. Calls past it are refused with{' '}
+            <code className="rounded bg-sand-100 px-1">QUOTA_EXCEEDED</code> until the
+            allowance resets — get in touch if you need more before then.
+          </p>
+        )}
+      </Card>
+    </section>
+  )
+}
+
 function Keys() {
   const [revealed, setRevealed] = useState<string | null>(null)
   const { data: keys } = useQuery({ queryKey: ['api-keys'], queryFn: () => api.apiKeys() })
@@ -783,6 +840,7 @@ export function DeveloperPage() {
       </p>
 
       <div className="mt-8">
+        <Usage />
         <Keys />
         <Sdks />
         <Webhooks />

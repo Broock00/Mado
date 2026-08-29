@@ -136,6 +136,13 @@ class Order(Base, UUIDPrimaryKey, Timestamps):
     __table_args__ = (
         UniqueConstraint("reference", name="uq_order_reference"),
         CheckConstraint("amount_minor >= 0", name="ck_order_amount_not_negative"),
+        # The fee is a deduction from what the buyer paid, never an addition to
+        # it. A fee larger than the order would make the publisher's net
+        # negative, which is not a discount - it is a bug that bills somebody.
+        CheckConstraint(
+            "platform_fee_minor >= 0 AND platform_fee_minor <= amount_minor",
+            name="ck_order_fee_within_amount",
+        ),
         Index("ix_orders_user_created", "user_id", "created_at"),
         Index("ix_orders_occurrence", "event_instance_id"),
         # Finding holds to expire. Partial, because pending is a small minority
@@ -164,6 +171,20 @@ class Order(Base, UUIDPrimaryKey, Timestamps):
     currency: Mapped[str] = mapped_column(String(3), default="ETB", nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
+    # Who sold this. Denormalised deliberately: a payout must not depend on
+    # reading the experience back, which can be withdrawn, retitled or moved to
+    # a different publisher long before the money is sent on.
+    publisher_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), default=None, index=True
+    )
+    # The commission, in basis points, copied at checkout for the same reason
+    # `amount_minor` is: changing the platform's rate must not change what a
+    # publisher was already owed on a sale made last month.
+    fee_rate_bps: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # What that rate came to on this order. Stored rather than recomputed, so a
+    # rounding change can never restate a settled figure.
+    platform_fee_minor: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+
     provider: Mapped[str | None] = mapped_column(String(32), default=None)
     provider_reference: Mapped[str | None] = mapped_column(String(120), default=None)
     checkout_url: Mapped[str | None] = mapped_column(Text, default=None)
@@ -187,6 +208,11 @@ class Order(Base, UUIDPrimaryKey, Timestamps):
     @property
     def is_free(self) -> bool:
         return self.amount_minor == 0
+
+    @property
+    def net_minor(self) -> int:
+        """What the publisher is owed out of this order."""
+        return self.amount_minor - self.platform_fee_minor
 
 
 class OrderLine(Base, UUIDPrimaryKey, Timestamps):
@@ -277,3 +303,112 @@ class PaymentEvent(Base, UUIDPrimaryKey, Timestamps):
     currency: Mapped[str | None] = mapped_column(String(3), default=None)
     # What the provider actually said, for the morning after.
     payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+PAYOUT_OWING = "owing"
+PAYOUT_PAID = "paid"
+
+
+class LedgerEntry(Base, UUIDPrimaryKey, Timestamps):
+    """What one paid order came to: gross in, fee kept, net owed.
+
+    Mado sells through its own merchant account - one set of Chapa and Stripe
+    keys, no per-publisher connected accounts - so every santim of every ticket
+    arrives here and the publisher's share is a debt, not a transfer that
+    already happened. Before this table there was no record of that debt at all:
+    the platform was holding the whole of every sale with nothing saying whose
+    it was.
+
+    One row per paid order, written when the money is confirmed and never
+    afterwards. The three amounts are stored rather than derived because a later
+    change to the rate, or to how it rounds, must not restate what a publisher
+    was told they had earned.
+
+    An unpaid order has no row. A hold that expired, an order that failed
+    verification, and a free ticket all represent no money received, and a
+    ledger that records intentions rather than receipts cannot be reconciled
+    against a bank statement.
+    """
+
+    __tablename__ = "ledger_entries"
+    __table_args__ = (
+        # One order, one entry. The mechanism rather than a check first: settle
+        # races itself between a webhook and a return, and only the database can
+        # decide which one wrote.
+        UniqueConstraint("order_id", name="uq_ledger_entry_order"),
+        CheckConstraint(
+            "gross_minor >= 0 AND fee_minor >= 0 AND net_minor >= 0",
+            name="ck_ledger_amounts_not_negative",
+        ),
+        CheckConstraint("fee_minor + net_minor = gross_minor", name="ck_ledger_balances"),
+        # Building a payout: everything owing for one publisher in one currency.
+        Index(
+            "ix_ledger_entries_unpaid",
+            "publisher_id",
+            "currency",
+            postgresql_where="payout_id IS NULL",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey(f"{SCHEMA}.orders.id", ondelete="RESTRICT"), nullable=False
+    )
+    publisher_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+
+    gross_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    fee_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    net_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    fee_rate_bps: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+
+    # When the money arrived, not when this row was written. A payout covers a
+    # period, and the period a sale belongs to is the day it was paid for.
+    earned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    # NULL until the entry is swept into a payout. That is the whole of "is this
+    # still owed", which keeps the question a single index lookup rather than a
+    # sum over two tables.
+    payout_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.payouts.id", ondelete="SET NULL"),
+        default=None,
+    )
+
+
+class Payout(Base, UUIDPrimaryKey, Timestamps):
+    """A batch of ledger entries settled to one publisher, in one currency.
+
+    **A payout records a transfer; it does not make one.** Sending money needs a
+    verified bank account per publisher and a provider disbursement API, neither
+    of which exists yet, so the row is marked paid by whoever actually sent it
+    and carries their reference. A status that moved itself to `paid` would be a
+    stub inventing a result - the publisher would read "paid" and have no money.
+
+    Currency is per payout rather than per publisher: a business selling in two
+    cities earns in two currencies, and one row summing them would be a number
+    that means nothing.
+    """
+
+    __tablename__ = "payouts"
+    __table_args__ = (
+        CheckConstraint("total_minor >= 0", name="ck_payout_total_not_negative"),
+        Index("ix_payouts_publisher", "publisher_id", "created_at"),
+        {"schema": SCHEMA},
+    )
+
+    publisher_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    total_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    entry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # The window the entries were drawn from, kept so a publisher can be told
+    # what a figure covers rather than just what it is.
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    status: Mapped[str] = mapped_column(String(16), default=PAYOUT_OWING, nullable=False)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # The bank or provider reference for the transfer somebody actually sent.
+    reference: Mapped[str | None] = mapped_column(String(120), default=None)
+    note: Mapped[str | None] = mapped_column(String(300), default=None)

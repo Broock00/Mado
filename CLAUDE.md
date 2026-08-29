@@ -62,6 +62,19 @@ the server reports `ai: unknown` on `/health/ready` rather than `ai: disabled`.
 Set `MADO_WEATHER_PROVIDER=none` too. With a real provider, a ranking assertion
 depends on the actual weather in whatever city the fixture invented.
 
+Set **`MADO_PAYMENT_PROVIDER=stub` and `MADO_STRIPE_ENABLED=0`** as well. Everything
+Mado sells needs a settled payment to test, and Chapa rejects the
+`mado-qa.example.org` addresses the teardown identifies test data by — every purchase
+comes back `PAYMENT_UNAVAILABLE` before there is anything to check.
+
+**Both, not just the first.** `provider_for()` reads currency before it reads
+`MADO_PAYMENT_PROVIDER`: with Stripe enabled, ETB plus a Chapa key routes to Chapa
+whatever the provider setting says. `.env` here sets `chapa` *and*
+`MADO_STRIPE_ENABLED=true`, so overriding only the provider looks like it worked and
+silently still calls Chapa. `/health/ready` is the check that settles it — `ai:
+disabled` means the stubs are really in force, `ai: unknown` means a real provider is
+configured and the payment path probably is too.
+
 Test data cleans itself up: a session teardown in `conftest.py` deletes everything
 owned by an account at `mado-qa.example.org`. Do not remove it. Before it existed
 the database reached 3,038 accounts and 1,626 listings against 30 real ones, and the
@@ -76,15 +89,21 @@ tables; a foreign key into `identity.users` is the accepted exception.
 | Schema | Domain | Holds |
 |---|---|---|
 | `identity` | identity, trust/audit | users, sessions, tokens, audit log |
-| `publisher` | publisher, developer | publishers, API keys, webhooks |
+| `publisher` | publisher, developer | publishers, API keys, webhooks, subscriptions, API usage |
 | `catalog` | catalog | cities, venues, experiences, events, media |
 | `explorer` | explorer | saved items, reviews, reservations, itineraries, notifications |
-| `commerce` | commerce | ticket types, orders, tickets, payment events |
+| `commerce` | commerce | ticket types, orders, tickets, payment events, ledger, payouts |
+| `promotion` | promotion | paid placements and their daily tallies |
 | `ai` | ai | conversations, messages, memories |
 
 `app/models.py` imports every model. Alembic autogenerate and the test fixtures both
 depend on it — a domain no route happens to import would silently vanish from
 migrations otherwise.
+
+A **new schema needs three things**, and missing any one fails quietly: the models, an
+entry in `MADO_SCHEMAS` in `alembic/env.py` (autogenerate only compares schemas it is
+told about, so it reports no changes at all rather than an error), and a
+`CREATE SCHEMA` in the migration, which autogenerate does not emit.
 
 ### Vendors are held behind interfaces in `app/integrations/`
 
@@ -288,6 +307,17 @@ for its per-publisher rate limit and passes the id down — so it must call
 `publisher_for` too. It called `personal_publisher`, and a business account's
 posts silently came out under the owner's own name while every check passed.
 
+**Venue creation had the same bug and kept it longer.** `create_venue` fell back to
+`personal_publisher`, so a business adding a venue created a second publisher for its
+owner that held the buildings while the business held the posts — two identities for
+one account, which is the thing this model exists to prevent, and invisible because
+both belong to the same person. It surfaced through the analytics dashboard: that
+resolved "your publisher" with an unordered `.first()` over both rows, so once a plan
+entitlement was read off the result, a business that had paid for a longer analytics
+window got its free one about half the time. Anything resolving a publisher from a
+user goes through `publisher_for`, or through `business_of` first when it must not
+create one.
+
 A choice appears in exactly one case: somebody **invited to another business**.
 `GET /me/publishing-identities` returns it, filtered to roles that can actually
 create something, so the composer never offers a button that returns 403.
@@ -463,6 +493,57 @@ Payments are hosted-checkout only and there is deliberately no code path that ac
 a card. Settlement always verifies with the provider that holds the money
 (`provider_named(order.provider)`); a browser returning with `?status=success` proves
 nothing. Stripe is fully built and disabled behind `MADO_STRIPE_ENABLED`.
+
+### Four things Mado sells, and one rule each
+
+Tickets, plans, API calls and placement all take money through the same hosted
+checkout and the same `/payments/callback`. **That route resolves a reference as an
+order, then a subscription, then a promotion** — anything added later has to be added
+there too, or a paid thing sits pending until somebody reloads the page.
+
+**Commission.** Every ticket settles into Mado's *own* merchant account, so the
+publisher's share is a debt, not a transfer that happened. `commerce/fees.py` writes
+one `ledger_entries` row per paid order inside `_mark_paid`, and `payouts.py` batches
+what is owed. The rate is basis points, copied onto the order at checkout for the same
+reason the price is: changing it must not restate a sale already made. It floors, so
+the fraction goes to the publisher. **Mado records payouts; it never sends one** —
+disbursing needs a verified bank account per publisher and a provider API, and a status
+that advanced itself would tell somebody they had been paid when nothing moved.
+
+**Plans.** `publisher/plans.py` is the catalogue (in code, mirrored to
+`lib/plans.ts`, with a drift test). `entitlements.py` is a **second gate beside
+`assert_can_manage`, never inside it**: one asks whether this person may, the other
+whether this account bought it, and a single 403 meaning both sends somebody to ask for
+a bigger role that will not help. A period is prepaid and does not renew — nothing here
+can charge twice, and a subscription that renewed itself would read active while no
+money arrived. Two things that bit: `cancelled` still grants until the period ends
+(keeping the money and withdrawing the thing is theft with extra steps), and `plan` is
+what is in force while `pending_plan` is what is being bought — conflating them demoted
+a paying customer to free the moment they clicked upgrade.
+
+**API metering.** `developer/usage.py`, enforced in `api_key_caller` where the key is
+already resolved. The plan is on the **account**, not the key, or a second key is a
+free upgrade. A quota is not a rate limit: `QUOTA_EXCEEDED` means buy more,
+`RATE_LIMIT_EXCEEDED` means slow down, and a developer who cannot tell them apart backs
+off from one and never fixes the other. Counting never fails a call.
+
+**Promotion.** `domains/promotion/` sells one labelled slot. The rules are the design,
+and every one of them is a test in `test_promotions.py`:
+
+- **Never a ranking signal.** Nothing is added to `BROWSE_WEIGHTS` or `SEARCH_WEIGHTS`.
+  The explanation is generated from the signals that scored the listing, so a paid
+  weight would have to be explained as "because they paid" or hidden.
+- **It buys position, never relevance.** `slot_for` takes `eligible_ids` — what the
+  caller's query actually retrieved — and can only lift something already in it. Without
+  that, a nightclub campaign turns up under a search for a quiet cafe.
+- **Position 1 is never sold**, and the promoted listing is *moved* rather than copied,
+  so the other results keep their order relative to each other.
+- **It cannot bypass a requirement.** Unknown is excluded along with contradicted,
+  exactly as everywhere else. Money is not a reason to show an unanswered kitchen to
+  somebody with an allergy.
+- **Nothing sponsored reaches the concierge.** The gateway phrases facts from tools, and
+  a paid item in that stream becomes the assistant's own recommendation with the label
+  gone. The spec allows it; Mado has no mechanism that keeps a label through a model.
 
 ## Environment
 

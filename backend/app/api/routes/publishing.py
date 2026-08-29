@@ -37,6 +37,7 @@ from app.domains.commerce import plan as commerce_plan
 from app.domains.commerce.bookings import sold_for_experience
 from app.domains.discovery.embedding_service import embed_experience
 from app.domains.discovery.indexer import index_experience, remove_experience
+from app.domains.publisher import entitlements
 from app.domains.publisher.assistant import ContentAssistant
 from app.domains.publisher.schemas import (
     AddEventRequest,
@@ -679,6 +680,14 @@ async def assist(
             "The writing assistant is switched off at the moment.",
             code="FEATURE_UNAVAILABLE",
         )
+
+    # Two gates that look alike and are not. The flag above is Mado deciding
+    # whether this feature is on at all; this is whether the account bought it.
+    # An account refused by the flag has nothing to buy, so the order matters:
+    # offering an upgrade for something switched off platform-wide would sell
+    # somebody a feature they still could not use.
+    publisher = await PublishingService(session).publisher_for(user)
+    await entitlements.assert_has_ai_assistant(session, publisher.id)
 
     # A model call per press, so it shares the concierge's budget rather than
     # the free draft limit.

@@ -59,7 +59,7 @@ from app.domains.identity.models import (
     UserProfile,
 )
 from app.domains.publisher import business as business_vocab
-from app.domains.publisher import permissions
+from app.domains.publisher import entitlements, permissions
 from app.domains.publisher.models import (
     GALLERY_IMAGE,
     GALLERY_VIDEO,
@@ -463,6 +463,13 @@ class PublishingService:
 
         invitee = await self._user_by_email(address)
         existing = await self._membership_for(publisher_id, address, invitee)
+
+        # Seats are checked only for somebody new. Re-inviting a person who is
+        # already on the team - a lapsed invitation being sent again - takes no
+        # seat that is not already theirs, and refusing it would strand an
+        # account at its limit with an invitation it cannot resend.
+        if existing is None:
+            await entitlements.assert_can_add_member(self.session, publisher_id)
 
         now = datetime.now(UTC)
         expires = now + timedelta(days=INVITATION_TTL_DAYS)
@@ -1192,6 +1199,23 @@ class PublishingService:
                 details={"problems": problems},
             )
 
+        # A second gate, and deliberately not part of `_load_owned` above. That
+        # one asked whether this person may publish; this asks whether the
+        # account has bought the room to. Conflating them would refuse an editor
+        # with a message about their role, and widening their role would not
+        # help.
+        #
+        # Checked after readiness so somebody is told their post is unfinished
+        # before they are told to pay - being asked for money to publish
+        # something that would have been refused anyway is the worse order.
+        #
+        # Skipped when it is already live. Publishing a published listing is a
+        # no-op, and the count it would be checked against already includes it -
+        # so an account exactly at its limit could not re-save one of its own
+        # posts.
+        if experience.publisher_id is not None and experience.status != STATUS_PUBLISHED:
+            await entitlements.assert_can_publish_another(self.session, experience.publisher_id)
+
         experience.status = STATUS_PUBLISHED
         if experience.published_at is None:
             experience.published_at = datetime.now(UTC)
@@ -1546,10 +1570,16 @@ class PublishingService:
         otherwise used: the coordinates remain the location, and a venue with no
         identifier is a perfectly ordinary venue.
         """
+        # `publisher_for`, not `personal_publisher`. This is the same mistake
+        # `POST /posts` made and that CLAUDE.md records: a business account
+        # creating a venue filed it under a *personal* publisher created for the
+        # owner on the spot, so the business quietly acquired a second identity
+        # that owned its buildings while the business owned its posts. Every
+        # check passed, because both rows belong to the same person.
         publisher = (
             await self.assert_can_publish_as(user, publisher_id)
             if publisher_id
-            else await self.personal_publisher(user)
+            else await self.publisher_for(user)
         )
 
         # Validated before anything is resolved: a bad coordinate should be

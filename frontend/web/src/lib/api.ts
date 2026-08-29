@@ -9,11 +9,18 @@
 import type {
   AccountTypeState,
   ApiErrorBody,
+  ApiUsageSummary,
   Business,
+  BusinessEarnings,
   BusinessInvitation,
   BusinessMedia,
   BusinessMember,
+  BusinessPlans,
+  BusinessPromotion,
+  PromotionPricing,
   BusinessRole,
+  BusinessSubscription,
+  StartPromotionInput,
   CreateBusinessInput,
   CreatePostInput,
   CreateVenueInput,
@@ -166,9 +173,22 @@ function currentLanguage(): string | null {
   }
 }
 
-function buildHeaders(extra?: HeadersInit): Headers {
+function buildHeaders(extra?: HeadersInit, body?: BodyInit | null): Headers {
   const headers = new Headers(extra)
   headers.set('Accept', 'application/json')
+  // A JSON body has to say so, or `fetch` labels it `text/plain` and FastAPI
+  // rejects it with a bare "The request failed validation" that names no field —
+  // the body never reached the endpoint, so nothing it would have complained
+  // about was ever read.
+  //
+  // Set here rather than at each call site, which is how it was done and which
+  // failed the way an every-time convention does: the one method that forgot
+  // worked in tests, because httpx sets the header itself, and broke only in a
+  // browser. Strings only, so a FormData upload keeps the multipart boundary the
+  // browser generates for it.
+  if (typeof body === 'string' && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
   headers.set('X-Mado-Anonymous-Id', anonymousId())
   headers.set('X-Mado-Platform', 'web')
   // What this device is currently reading in. The server prefers a stated
@@ -245,7 +265,7 @@ async function refreshTokens(): Promise<boolean> {
 async function request<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     ...init,
-    headers: buildHeaders(init.headers),
+    headers: buildHeaders(init.headers, init.body),
   })
 
   if (response.status === 401 && retry && tokenStore.refresh) {
@@ -559,6 +579,67 @@ export const api = {
     request<Envelope<string[]>>(`/api/v1/businesses/${businessId}/permissions`).then(
       (r) => r.data,
     ),
+
+  /** Needs `finance:view`, which an analyst does not hold: money is not analytics. */
+  businessEarnings: (businessId: string) =>
+    request<Envelope<BusinessEarnings>>(`/api/v1/businesses/${businessId}/earnings`).then(
+      (r) => r.data,
+    ),
+
+  /**
+   * A session, not a key. Reading the bill is an account question, and a
+   * machine credential should not be able to see it.
+   */
+  apiUsage: () =>
+    request<Envelope<ApiUsageSummary>>('/api/v1/developer/usage').then((r) => r.data),
+
+  /** So a total can be shown before anybody is sent to pay. */
+  /**
+   * `businessId` so the server can quote the business's own city currency.
+   * Omitting the currency is the point — a client default is how every plan
+   * came to be priced in birr.
+   */
+  promotionPricing: (businessId?: string, currency?: string) =>
+    request<Envelope<PromotionPricing>>(
+      `/api/v1/promotions/pricing${query({ businessId, currency })}`,
+    ).then((r) => r.data),
+
+  businessPromotions: (businessId: string) =>
+    request<CollectionEnvelope<BusinessPromotion>>(
+      `/api/v1/businesses/${businessId}/promotions`,
+    ).then((r) => r.data),
+
+  /** Returns somewhere to pay. Nothing is shown to anybody until it settles. */
+  startPromotion: (businessId: string, input: StartPromotionInput) =>
+    request<Envelope<BusinessPromotion>>(`/api/v1/businesses/${businessId}/promotions`, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }).then((r) => r.data),
+
+  /** No currency by default: the server quotes the business's own city. */
+  businessPlans: (businessId: string, currency?: string) =>
+    request<Envelope<BusinessPlans>>(
+      `/api/v1/businesses/${businessId}/plans${query({ currency })}`,
+    ).then((r) => r.data),
+
+  /** Returns somewhere to pay. Nothing is granted until the provider confirms. */
+  startSubscription: (businessId: string, plan: string, currency?: string) =>
+    request<Envelope<BusinessSubscription>>(`/api/v1/businesses/${businessId}/plans`, {
+      method: 'POST',
+      body: JSON.stringify({ plan, currency }),
+    }).then((r) => r.data),
+
+  /** The return leg. Verifies with the provider rather than believing the browser. */
+  settleSubscription: (businessId: string) =>
+    request<Envelope<BusinessSubscription>>(
+      `/api/v1/businesses/${businessId}/plans/settle`,
+      { method: 'POST' },
+    ).then((r) => r.data),
+
+  cancelSubscription: (businessId: string) =>
+    request<Envelope<BusinessSubscription>>(`/api/v1/businesses/${businessId}/plans`, {
+      method: 'DELETE',
+    }).then((r) => r.data),
 
   businessMembers: (businessId: string) =>
     request<CollectionEnvelope<BusinessMember>>(

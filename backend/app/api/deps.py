@@ -150,6 +150,7 @@ async def api_key_caller(
     declare that with :func:`caller_with_scope`.
     """
     from app.core.rate_limit import API_KEY_LIMIT, check
+    from app.domains.developer import usage
     from app.domains.developer.keys import ApiKeyService
 
     if not x_mado_api_key:
@@ -166,21 +167,35 @@ async def api_key_caller(
 
     key, owner = resolved
 
+    # Two different questions, asked here because the key is already resolved
+    # and neither is worth a second lookup elsewhere.
+    #
+    # The quota is checked *before* the call is counted, so a caller who is over
+    # is not charged for being told so - and so the refusal is not itself the
+    # thing that pushes them over.
+    await usage.assert_within_quota(session, owner.id)
+    await usage.record_call(session, api_key_id=key.id, owner_user_id=owner.id)
+
     # `authenticate` stamped last_used_at, and dependencies run before the
-    # handler - so the session holds that and nothing else, and committing it
-    # here cannot commit anything a handler was building. Handlers own their own
-    # transaction (see `get_session`), and a read-only endpoint should not have
-    # to commit merely to record that a key was used.
+    # handler - so the session holds that and the usage counter and nothing
+    # else, and committing here cannot commit anything a handler was building.
+    # Handlers own their own transaction (see `get_session`), and a read-only
+    # endpoint should not have to commit merely to record that a key was used.
     #
     # Committed even when the request goes on to fail: a rejected call still
-    # proves the key is live, which is the question "when was this last used"
-    # is asked in order to answer.
-    if session.is_modified(key, include_collections=False):
-        try:
-            await session.commit()
-        except Exception as exc:  # noqa: BLE001 - a timestamp must not fail a request
-            logger.warning("api_key_touch_failed", error=str(exc))
-            await session.rollback()
+    # proves the key is live, which is the question "when was this last used" is
+    # asked in order to answer - and it still consumed the allowance, which is
+    # what makes a failing integration visible on a bill rather than free.
+    #
+    # Unconditional, not `is_modified(key)`. The usage counter is a statement
+    # rather than an attribute change, so nothing on the key reflects it, and
+    # the condition that used to guard this would drop every count on an
+    # endpoint that happened not to touch `last_used_at`.
+    try:
+        await session.commit()
+    except Exception as exc:  # noqa: BLE001 - metering must not fail a request
+        logger.warning("api_key_touch_failed", error=str(exc))
+        await session.rollback()
 
     # Limited per key, not per account: an integration that runs away should
     # exhaust its own allowance rather than lock its owner out of the website.

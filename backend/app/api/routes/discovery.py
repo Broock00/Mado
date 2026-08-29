@@ -421,8 +421,9 @@ async def search(
 ) -> Envelope[SearchOut]:
     ctx = await _context(session, user, params)
     explorer = ExplorerService(session)
+    discovery = DiscoveryService(session)
 
-    outcome = await DiscoveryService(session).search_experiences(
+    outcome = await discovery.search_experiences(
         q,
         ctx,
         city_slug=params.city,
@@ -430,6 +431,20 @@ async def search(
         free_only=free,
         experience_type=experience_type,
         limit=clamp_limit(params.limit * 2),
+    )
+
+    # After ranking, and only ever one card, labelled, never first. A promotion
+    # buys position beside the results, never a place in how they were ordered -
+    # see `PromotionService`.
+    results = await discovery.with_sponsored(
+        outcome.items,
+        ctx,
+        area=Area(city_slug=params.city) if params.city else None,
+        # Only what this search itself retrieved. A promotion lifts a listing
+        # the explorer's own query found; it never introduces one it did not.
+        eligible_ids=outcome.candidate_ids,
+        category_slugs=category,
+        experience_type=experience_type,
     )
 
     await explorer.record_interaction(
@@ -442,7 +457,7 @@ async def search(
 
     return Envelope(
         data=SearchOut(
-            results=outcome.items,
+            results=results,
             meta=SearchMeta(
                 query=q,
                 total=outcome.total,

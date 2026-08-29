@@ -26,12 +26,14 @@ from app.core.envelope import Envelope
 from app.core.errors import NotFoundError
 from app.domains.catalog.schemas import CamelModel
 from app.domains.explorer.summary import ExplorerSummaryService
+from app.domains.publisher import entitlements
 from app.domains.publisher.analytics import (
     DEFAULT_WINDOW,
     MIN_RATE_SAMPLE,
     PublisherAnalyticsService,
 )
-from app.domains.publisher.models import Publisher
+from app.domains.publisher.models import TYPE_INDIVIDUAL, Publisher
+from app.domains.publisher.service import PublishingService
 from app.domains.trust.reputation import for_publisher
 
 router = APIRouter(tags=["analytics"])
@@ -97,20 +99,44 @@ async def publisher_analytics(
     user: CurrentUser,
     window: int = Query(default=DEFAULT_WINDOW, description="Days: 7, 30 or 90."),
 ) -> Envelope[PublisherAnalyticsOut]:
-    # Looked up, never created. `personal_publisher` makes one on first call,
-    # which is right when someone is about to post and wrong as a side effect of
-    # opening a dashboard.
-    publisher = (
-        await session.execute(select(Publisher).where(Publisher.owner_user_id == user.id))
-    ).scalars().first()
+    # Looked up, never created. `publisher_for` makes a personal publisher on
+    # first call, which is right when someone is about to post and wrong as a
+    # side effect of opening a dashboard.
+    #
+    # The business first, and explicitly. This was an unordered `.first()` over
+    # every publisher the account owns, which is fine while nothing depends on
+    # which one comes back and wrong the moment something does: an account that
+    # owns both a business and a stray personal publisher got whichever the
+    # database felt like, and the plan window below is read from it.
+    service = PublishingService(session)
+    publisher = await service.business_of(user)
+    if publisher is None:
+        publisher = (
+            await session.execute(
+                select(Publisher).where(
+                    Publisher.owner_user_id == user.id,
+                    Publisher.type == TYPE_INDIVIDUAL,
+                    Publisher.deleted_at.is_(None),
+                )
+            )
+        ).scalars().first()
     if publisher is None:
         raise NotFoundError(
             "Publish something first - there is nothing to report on yet.",
             code="NO_PUBLISHER",
         )
 
+    # What the account bought, applied to what it asked for. Clamped rather than
+    # refused: a free account asking for a year gets thirty days of a working
+    # screen, which is a better answer than an error about a plan - and the
+    # response says `windowDays`, so the client can show what it actually got.
+    #
+    # Enforced here rather than trusted to the client, for the reason
+    # `entitlements.py` exists at all: a limit nothing checks is the same lie as
+    # a permission nothing checks, and this one is sold.
+    allowed = await entitlements.analytics_window_for(session, publisher.id)
     overview = await PublisherAnalyticsService(session).overview(
-        publisher, window_days=window
+        publisher, window_days=min(window, allowed)
     )
     return Envelope(
         data=PublisherAnalyticsOut(

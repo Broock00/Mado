@@ -10,7 +10,7 @@
  */
 
 import { Link } from 'react-router-dom'
-import { BadgeCheck, Bookmark, Building2, Clock, MapPin, Sparkles, Star } from 'lucide-react'
+import { BadgeCheck, Bookmark, Building2, Clock, MapPin, Megaphone, Sparkles, Star } from 'lucide-react'
 import type { ExperienceSummary } from '@/lib/types'
 import { Badge } from '@/design-system/primitives'
 import { cn, formatDistance, formatPrice, formatWhen, isStartingSoon } from '@/lib/utils'
@@ -159,12 +159,27 @@ export function ExperienceCard({
         )}
 
         {/* The explanation. Spec DISC-003 requires the explorer to understand why
-            an item appeared without exposing the inference behind it. */}
-        {experience.reason && !compact && (
-          <p className="flex items-start gap-1.5 text-xs text-mado-400">
-            <Sparkles className="mt-0.5 size-3 shrink-0" aria-hidden />
-            <span className="line-clamp-1">{experience.reason}</span>
+            an item appeared without exposing the inference behind it.
+
+            A sponsored card gets its own mark rather than the Sparkles the
+            ranking uses, and shows it even in the compact layout — the label is
+            the condition BUSINESS-90.01 §7 sells paid placement under, so it is
+            the one thing on the card that must never be dropped to save space.
+            The reason text beside it says "Promoted", set by the server, not
+            an organic-sounding explanation this component invented. */}
+        {experience.sponsored ? (
+          <p className="flex items-start gap-1.5 text-xs text-sand-400">
+            <Megaphone className="mt-0.5 size-3 shrink-0" aria-hidden />
+            <span className="line-clamp-1">{experience.reason ?? 'Promoted'}</span>
           </p>
+        ) : (
+          experience.reason &&
+          !compact && (
+            <p className="flex items-start gap-1.5 text-xs text-mado-400">
+              <Sparkles className="mt-0.5 size-3 shrink-0" aria-hidden />
+              <span className="line-clamp-1">{experience.reason}</span>
+            </p>
+          )
         )}
 
         <div className={cn('mt-auto flex items-center justify-between gap-2', compact ? 'pt-0.5' : 'pt-1')}>

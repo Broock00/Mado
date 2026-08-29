@@ -53,7 +53,26 @@ STATEMENTS: list[tuple[str, str]] = [
         f"delete from commerce.order_lines where order_id in "
         f"(select id from commerce.orders where user_id in ({_ACCOUNTS}))",
     ),
+    # Before the orders, and by hand rather than by cascade. A ledger entry is a
+    # financial record and its foreign key is deliberately RESTRICT: in
+    # production nothing deletes an order, and an entry that vanished with one
+    # would take a publisher's earnings with it silently. Here the order is
+    # invented and so is the debt, so both go - in the order the constraint
+    # demands.
+    (
+        "ledger entries",
+        f"delete from commerce.ledger_entries where order_id in "
+        f"(select id from commerce.orders where user_id in ({_ACCOUNTS}))",
+    ),
     ("orders", f"delete from commerce.orders where user_id in ({_ACCOUNTS})"),
+    # Payouts point at a publisher rather than an order, so they survive the
+    # above and have to be named. Emptied after the entries that referenced them.
+    (
+        "payouts",
+        "delete from commerce.payouts where publisher_id in "
+        "(select p.id from publisher.publishers p "
+        "join identity.user_profiles up on up.user_id = p.owner_user_id where up.email like :m)",
+    ),
     (
         "ticket types",
         f"delete from commerce.ticket_types where experience_id in ({_OWNED_EXPERIENCES})",
@@ -79,7 +98,25 @@ STATEMENTS: list[tuple[str, str]] = [
         "(select p.id from publisher.publishers p "
         "join identity.user_profiles up on up.user_id = p.owner_user_id where up.email like :m)",
     ),
+    # Counted per key, so this has to go before the keys do.
+    ("api usage", f"delete from publisher.api_usage where owner_user_id in ({_ACCOUNTS})"),
     ("api keys", f"delete from publisher.api_keys where owner_user_id in ({_ACCOUNTS})"),
+    (
+        "developer accounts",
+        f"delete from publisher.developer_accounts where user_id in ({_ACCOUNTS})",
+    ),
+    (
+        "subscription invoices",
+        "delete from publisher.subscription_invoices where publisher_id in "
+        "(select p.id from publisher.publishers p "
+        "join identity.user_profiles up on up.user_id = p.owner_user_id where up.email like :m)",
+    ),
+    (
+        "subscriptions",
+        "delete from publisher.subscriptions where publisher_id in "
+        "(select p.id from publisher.publishers p "
+        "join identity.user_profiles up on up.user_id = p.owner_user_id where up.email like :m)",
+    ),
     ("publishers", f"delete from publisher.publishers where owner_user_id in ({_ACCOUNTS})"),
     ("accounts", f"delete from identity.users where id in ({_ACCOUNTS})"),
     # Cities materialised by a test posting somewhere the platform had never seen.

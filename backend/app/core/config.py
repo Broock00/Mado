@@ -177,6 +177,15 @@ class Settings(BaseSettings):
     # near-full event is not held empty by abandoned carts.
     payment_hold_minutes: int = 20
 
+    # Mado's commission on ticket sales, in basis points - 500 is 5%. Taken out
+    # of what the publisher is owed, never added to what the buyer pays, so
+    # changing it never changes a displayed price.
+    #
+    # Basis points rather than a percentage float because the multiplication has
+    # to stay in integers; see `commerce/fees.py`. A per-publisher rate on
+    # `publishers.fee_bps` overrides this for one account.
+    platform_fee_bps: int = 500
+
     # Whether publishing requires a confirmed email address.
     #
     # Off by default because it is only meaningful once mail actually sends: with

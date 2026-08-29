@@ -169,6 +169,14 @@ class ExperienceSummary(CamelModel):
     # `is_reposted` is filled in by the caller in one bulk lookup for the page.
     repost_count: int = 0
     is_reposted: bool = False
+    # A business paid for this position. Always rendered, never inferable from
+    # anything else on the card, and never true for a listing that only ranked
+    # well - sponsorship is a separate labelled slot, not a weight on the
+    # ranking (see `domains/promotion/service.py`).
+    sponsored: bool = False
+    # Set alongside `sponsored`, so a click can be attributed back to the
+    # campaign that paid for it. Null on every organic card.
+    promotion_id: uuid.UUID | None = None
 
 
 class ExperienceDetail(ExperienceSummary):

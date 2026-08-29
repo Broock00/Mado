@@ -132,6 +132,17 @@ class Publisher(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
         DateTime(timezone=True), default=None
     )
 
+    # The commission Mado keeps on this publisher's ticket sales, in basis
+    # points. NULL means the platform default, which is the case for almost
+    # every account: a column filled in for everybody would have to be migrated
+    # every time the default moved, and half of them would be missed.
+    #
+    # Present because a rate is negotiable - a tourism board bringing a season's
+    # programme does not pay what a one-off organiser pays - and encoding that
+    # as a plan tier would tie the rate to a subscription it has nothing to do
+    # with.
+    fee_bps: Mapped[int | None] = mapped_column(Integer, default=None)
+
     owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("identity.users.id", ondelete="SET NULL"),
@@ -307,3 +318,100 @@ class GalleryItem(Base, UUIDPrimaryKey, Timestamps):
     @property
     def is_video(self) -> bool:
         return self.kind == GALLERY_VIDEO
+
+
+class Subscription(Base, UUIDPrimaryKey, Timestamps):
+    """What a business is paying for, and until when.
+
+    **No row means the free plan.** Not an error and not unconfigured - almost
+    every account will never buy anything, and a model needing a row written for
+    the majority is a migration somebody forgets. `entitlements.py` reads the
+    absence as free and never has to repair it.
+
+    **A period is bought, not renewed silently.** Chapa has no recurring
+    billing and Stripe is off behind `MADO_STRIPE_ENABLED`, so a month is one
+    hosted checkout that expires on a date. Modelling it as auto-renewing when
+    nothing charges anybody again would be a stub inventing a result: the
+    account would read "active" and no money would ever move.
+
+    One row per publisher, replaced as the plan changes rather than appended to.
+    The history of what was paid lives in the invoices, which is the record that
+    has to be right; a second answer to "what plan is this account on" is the
+    thing that goes wrong.
+    """
+
+    __tablename__ = "subscriptions"
+    __table_args__ = (
+        UniqueConstraint("publisher_id", name="uq_subscription_publisher"),
+        {"schema": SCHEMA},
+    )
+
+    publisher_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.publishers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # What is paid for and in force. Never touched by starting a purchase.
+    plan: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    # What is being bought right now, if anything - kept apart from `plan`
+    # because they are different facts and conflating them had a specific,
+    # embarrassing consequence: an account already paying for Professional that
+    # clicked through to Business had its row overwritten with a pending
+    # purchase and dropped to free on the spot, losing the plan it had paid for
+    # before it had paid for anything else. Cleared when the purchase settles or
+    # is replaced.
+    pending_plan: Mapped[str | None] = mapped_column(String(32), default=None)
+
+    current_period_start: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    # When what was bought stops being granted. NULL for a plan that was granted
+    # rather than sold - an enterprise agreement, which ends by somebody ending
+    # it and not by a date passing unnoticed.
+    current_period_end: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+
+    currency: Mapped[str | None] = mapped_column(String(3), default=None)
+    price_minor: Mapped[int | None] = mapped_column(Integer, default=None)
+
+    provider: Mapped[str | None] = mapped_column(String(32), default=None)
+    provider_reference: Mapped[str | None] = mapped_column(String(120), default=None)
+    checkout_url: Mapped[str | None] = mapped_column(Text, default=None)
+    # Ours, generated before the provider is called, so starting the same
+    # purchase twice is one transaction rather than two charges - the same
+    # reason an order carries one.
+    reference: Mapped[str | None] = mapped_column(String(64), default=None, index=True)
+
+
+class SubscriptionInvoice(Base, UUIDPrimaryKey, Timestamps):
+    """One period, paid for. Append-only, like everything else about money.
+
+    Separate from the subscription because the subscription says what is true
+    now and this says what happened. Overwriting one period's record with the
+    next would leave an account that has paid for a year with a receipt for a
+    month.
+    """
+
+    __tablename__ = "subscription_invoices"
+    __table_args__ = (
+        UniqueConstraint("reference", name="uq_subscription_invoice_reference"),
+        Index("ix_subscription_invoices_publisher", "publisher_id", "created_at"),
+        {"schema": SCHEMA},
+    )
+
+    publisher_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    plan: Mapped[str] = mapped_column(String(32), nullable=False)
+    reference: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    provider: Mapped[str | None] = mapped_column(String(32), default=None)
+    provider_reference: Mapped[str | None] = mapped_column(String(120), default=None)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

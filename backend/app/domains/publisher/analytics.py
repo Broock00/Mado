@@ -46,7 +46,14 @@ ACTION_SAVE = "save"
 ACTION_UNSAVE = "unsave"
 
 # Windows offered. Anything longer starts to blur a listing's current form with
-# what it said three months ago.
+# what it said three months ago - a position `TestWindows` holds to directly, and
+# the reason `publisher/plans.py` sells a quarter at the top rather than the year
+# a subscription tier would happily advertise.
+#
+# Which of these an account may ask for is decided by its plan, in
+# `entitlements.analytics_window_for`. Anything longer is quietly clamped rather
+# than refused: the whole screen working and showing less is a better answer than
+# the screen refusing.
 WINDOWS = (7, 30, 90)
 DEFAULT_WINDOW = 30
 

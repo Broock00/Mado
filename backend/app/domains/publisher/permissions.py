@@ -41,6 +41,12 @@ EVENTS_MANAGE = "events:manage"
 
 ANALYTICS_VIEW = "analytics:view"
 
+# Money, which is not analytics. Kept separate because "let the marketing agency
+# see how the posts are doing" and "let them see what the business earned" are
+# different decisions, and one permission covering both would force whoever
+# grants the first to grant the second.
+FINANCE_VIEW = "finance:view"
+
 TEAM_MANAGE = "team:manage"
 
 # Only ever held by the owner. Kept as a named permission so the check reads the
@@ -57,6 +63,7 @@ PERMISSIONS: dict[str, str] = {
     CONTENT_DELETE: "Delete the business's posts.",
     EVENTS_MANAGE: "Add, reschedule and cancel dates on the business's posts.",
     ANALYTICS_VIEW: "See how the business's posts are performing.",
+    FINANCE_VIEW: "See ticket earnings, the platform's commission and payouts.",
     TEAM_MANAGE: "Invite people, change their roles and remove them.",
     OWNERSHIP_TRANSFER: "Hand the business to somebody else.",
     BUSINESS_DELETE: "Delete the business.",
@@ -94,6 +101,9 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         CONTENT_DELETE,
         EVENTS_MANAGE,
         ANALYTICS_VIEW,
+        # An administrator runs the business, which includes knowing what it
+        # took. They still cannot hand it away or delete it.
+        FINANCE_VIEW,
         TEAM_MANAGE,
     }),
     # Writes and publishes, but cannot delete the record of what was published
@@ -175,6 +185,7 @@ __all__ = [
     "CONTENT_EDIT",
     "CONTENT_PUBLISH",
     "EVENTS_MANAGE",
+    "FINANCE_VIEW",
     "OWNERSHIP_TRANSFER",
     "OWNER_ONLY",
     "PERMISSIONS",

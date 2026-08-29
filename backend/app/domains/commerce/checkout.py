@@ -61,6 +61,7 @@ from app.core.config import get_settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.domains.catalog.models import EventInstance, Experience
+from app.domains.commerce import fees
 from app.domains.commerce.models import (
     MAX_PER_ORDER,
     ORDER_CANCELLED,
@@ -218,6 +219,11 @@ class CheckoutService:
             await self._return_seats(occurrence, total_quantity)
             raise
 
+        # Read now and copied onto the order, never referenced later. The rate
+        # and the price are the same kind of fact: what was agreed at the moment
+        # of sale, which a later edit to either must not restate.
+        fee_rate_bps = await fees.rate_for_publisher(self.session, experience.publisher_id)
+
         order = Order(
             user_id=user.id,
             event_instance_id=occurrence.id,
@@ -229,6 +235,9 @@ class CheckoutService:
             amount_minor=amount_minor,
             currency=currency,
             quantity=total_quantity,
+            publisher_id=experience.publisher_id,
+            fee_rate_bps=fee_rate_bps,
+            platform_fee_minor=fees.fee_for(amount_minor, fee_rate_bps),
             expires_at=now + timedelta(minutes=self.settings.payment_hold_minutes),
         )
         order.lines = order_lines
@@ -523,6 +532,14 @@ class CheckoutService:
                     )
                 )
         await self.session.flush()
+
+        # Written here because this is the only place an order becomes paid, so
+        # the ledger records receipts rather than intentions - an expired hold
+        # or a failed verification never reaches it. It inherits the
+        # settle-once guarantee above it for free, and defends itself anyway:
+        # the entry is unique per order, because a redelivered webhook is
+        # normal.
+        await fees.record_sale(self.session, order)
 
     async def _release(self, order: Order, status: str, *, reason: str) -> None:
         """Put the places back and close the order."""
