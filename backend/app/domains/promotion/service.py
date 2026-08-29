@@ -79,6 +79,15 @@ def _reference() -> str:
     return f"mado-promo-{uuid.uuid4().hex}"
 
 
+def sold_in() -> list[str]:
+    """Every currency a promotion is priced in.
+
+    Read off the price list rather than kept beside it, so adding a country
+    cannot leave this saying otherwise.
+    """
+    return sorted(DAILY_PRICE_MINOR)
+
+
 def price_for(days: int, currency: str) -> int | None:
     """What a run of this length costs, or None where it is not sold.
 
@@ -511,4 +520,4 @@ def _distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return radius_of_earth_km * 2 * math.asin(math.sqrt(a))
 
 
-__all__ = ["DAILY_PRICE_MINOR", "PromotionService", "price_for"]
+__all__ = ["DAILY_PRICE_MINOR", "PromotionService", "price_for", "sold_in"]

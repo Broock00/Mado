@@ -1114,6 +1114,8 @@ export interface BusinessPlans {
   currency: string
   /** Every currency a plan is sold in, so the switcher is never a stale list. */
   soldIn: string[]
+  /** Who takes the money in that currency. See `PromotionPricing.provider`. */
+  provider: string
 }
 
 /**
@@ -1144,6 +1146,15 @@ export interface PromotionPricing {
   dailyMinor: number | null
   minDays: number
   maxDays: number
+  /** Every currency a promotion is sold in, so a switcher is never stale. */
+  soldIn: string[]
+  /**
+   * Who will take the money, decided by the currency. Named by the server
+   * because `provider_for` is the one thing that knows — a client
+   * reimplementing that rule would eventually tell somebody they are paying by
+   * card and then send them to Chapa.
+   */
+  provider: string
 }
 
 export interface StartPromotionInput {

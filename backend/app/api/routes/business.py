@@ -357,6 +357,8 @@ class PlansOut(CamelModel):
     # Every currency a plan is priced in, so the interface can offer a change
     # without hard-coding a list that drifts from the price lists.
     sold_in: list[str]
+    # Who takes the money in that currency. See `PromotionPricingOut.provider`.
+    provider: str
 
 
 class StartSubscriptionRequest(CamelModel):
@@ -499,6 +501,7 @@ async def business_plans(
             plans=[_plan_out(plans.PLANS[key], quoted) for key in plans.PLAN_ORDER],
             currency=quoted,
             sold_in=plans.sold_in(),
+            provider=payments.provider_for(quoted).name,
         )
     )
 
@@ -677,37 +680,53 @@ class PromotionPricingOut(CamelModel):
     daily_minor: int | None = None
     min_days: int
     max_days: int
+    # Every currency a promotion is priced in, so a switcher is never a stale
+    # list written beside the prices it is meant to describe.
+    sold_in: list[str]
+    # Who will actually take the money, which currency decides: Chapa settles
+    # birr and Stripe settles the rest. Named by the server because
+    # `provider_for` is the one thing that knows, and a client reimplementing
+    # that rule would eventually disagree with it - telling somebody they are
+    # paying by card and then sending them to Chapa.
+    provider: str
 
 
 @router.get(
-    "/promotions/pricing",
+    "/businesses/{business_id}/promotions/pricing",
     response_model=Envelope[PromotionPricingOut],
-    summary="What a promoted slot costs",
+    summary="What a promoted slot costs this business",
     description=(
         "So the dialog can show a total before anybody is sent to pay. A price "
-        "somebody discovers on the payment page is a price they did not agree to."
+        "somebody discovers on the payment page is a price they did not agree "
+        "to.\n\n"
+        "Quoted in the business's own city currency, the same way a plan is — "
+        "an account should never be shown two prices in two different monies."
     ),
 )
 async def promotion_pricing(
+    business_id: uuid.UUID,
     user: CurrentUser,
     session: SessionDep,
-    business_id: uuid.UUID | None = None,
     currency: str | None = None,
 ) -> Envelope[PromotionPricingOut]:
-    # Resolved the same way a plan is, from the business's own city, so a
-    # promotion and a subscription never quote the same account in different
-    # money.
-    quoted = (
-        await _currency_for(session, business_id, currency)
-        if business_id
-        else (currency or "ETB").upper()
+    # Under the business rather than beside it, and behind the same gate. As a
+    # bare `/promotions/pricing?businessId=`, the id never bound at all -
+    # FastAPI reads a query parameter by its declared name, and the camelCase
+    # aliasing that makes request *bodies* work does not apply - so every
+    # business silently got the fallback currency while the plans page beside it
+    # quoted them correctly.
+    await PublishingService(session).assert_can_manage(
+        user, business_id, permission=permissions.PROFILE_VIEW
     )
+    quoted = await _currency_for(session, business_id, currency)
     return Envelope(
         data=PromotionPricingOut(
             currency=quoted,
             daily_minor=promotion_service.DAILY_PRICE_MINOR.get(quoted),
             min_days=promotion_models.MIN_DAYS,
             max_days=promotion_models.MAX_DAYS,
+            sold_in=promotion_service.sold_in(),
+            provider=payments.provider_for(quoted).name,
         )
     )
 

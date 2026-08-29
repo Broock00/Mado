@@ -41,6 +41,7 @@ from app.domains.promotion.models import (
     STATUS_PENDING,
     Promotion,
 )
+from app.integrations import payments
 from tests.conftest import requires_api
 
 BASE_URL = os.environ.get("MADO_TEST_API_URL", "http://127.0.0.1:8000")
@@ -571,6 +572,130 @@ class TestTheConciergeIsNotForSale:
         assert not [c for c in cards if c.get("sponsored")], (
             "a promotion reached the concierge, where its label cannot survive"
         )
+
+
+class TestPromotionsAreQuotedInTheRightMoney:
+    """A promotion and a plan must never quote one account in two currencies.
+
+    They did: the pricing endpoint took the business as `?businessId=`, and
+    FastAPI reads a query parameter by its declared name - the camelCase
+    aliasing that makes request bodies work does not apply to query params - so
+    the id never bound, every business fell through to the fallback, and the
+    plans page beside it quoted them correctly the whole time.
+    """
+
+    def make_business_at(self, client, auth, address: str, lat: float, lon: float) -> str:
+        response = client.post(
+            "/api/v1/me/account-type/business",
+            headers=auth,
+            json={
+                "name": f"Priced {uuid.uuid4().hex[:6]}",
+                "businessType": "cafe",
+                "description": "A business invented to check what money it is quoted in.",
+            },
+        )
+        assert response.status_code == 201, response.text
+        business_id = response.json()["data"]["business"]["id"]
+        venue = client.post(
+            "/api/v1/posts/venues",
+            headers=auth,
+            json={
+                "name": f"Priced hall {uuid.uuid4().hex[:5]}",
+                "address": address,
+                "latitude": lat,
+                "longitude": lon,
+            },
+        )
+        assert venue.status_code == 201, venue.text
+        return business_id
+
+    def pricing(self, client, auth, business_id: str, **params) -> dict:
+        response = client.get(
+            f"/api/v1/businesses/{business_id}/promotions/pricing", headers=auth, params=params
+        )
+        assert response.status_code == 200, response.text
+        return response.json()["data"]
+
+    def test_a_promotion_is_quoted_where_the_business_is(self, client):
+        auth, _ = account(client, "londoner")
+        business_id = self.make_business_at(client, auth, "Soho, London", 51.5136, -0.1365)
+
+        assert self.pricing(client, auth, business_id)["currency"] == "GBP"
+
+    def test_it_agrees_with_the_plan_beside_it(self, client):
+        """The property that was broken. Two prices in two monies on one account
+        is the interface contradicting itself."""
+        auth, _ = account(client, "consistent")
+        business_id = self.make_business_at(
+            client, auth, "Westlands, Nairobi", -1.2673, 36.8065
+        )
+
+        plan_currency = client.get(
+            f"/api/v1/businesses/{business_id}/plans", headers=auth
+        ).json()["data"]["currency"]
+        assert self.pricing(client, auth, business_id)["currency"] == plan_currency
+
+    def test_asking_for_another_currency_is_honoured(self, client):
+        auth, _ = account(client, "chooser")
+        business_id = self.make_business_at(
+            client, auth, "Bole Road, Addis Ababa", 9.0055, 38.7810
+        )
+
+        quoted = self.pricing(client, auth, business_id, currency="USD")
+        assert quoted["currency"] == "USD"
+        assert quoted["dailyMinor"] == promotion_service.DAILY_PRICE_MINOR["USD"]
+
+    def test_the_currencies_offered_are_the_ones_actually_priced(self, client):
+        auth, _ = account(client, "switcher")
+        business_id = self.make_business_at(
+            client, auth, "Bole Road, Addis Ababa", 9.0055, 38.7810
+        )
+
+        quoted = self.pricing(client, auth, business_id)
+        assert quoted["soldIn"] == promotion_service.sold_in()
+        for code in quoted["soldIn"]:
+            assert promotion_service.price_for(1, code), f"{code} is offered with no price"
+
+    def test_it_names_who_will_take_the_money(self, client):
+        """The client must not work this out for itself: `provider_for` is the
+        one thing that knows, and a second opinion would promise somebody a card
+        form and then send them to Chapa.
+
+        Asserted as "a provider this build has", not by recomputing it here: the
+        server under test runs with its own settings, and comparing against
+        `provider_for` in the test process compares two different
+        configurations - which is a test that fails when the deployment is fine.
+        """
+        auth, _ = account(client, "payer")
+        business_id = self.make_business_at(
+            client, auth, "Bole Road, Addis Ababa", 9.0055, 38.7810
+        )
+
+        quoted = self.pricing(client, auth, business_id)
+        assert quoted["provider"] in {"chapa", "stripe", "stub"}, quoted
+
+    def test_the_provider_follows_the_currency(self):
+        """The rule the interface is being told about: birr settles through
+        Chapa and everything else through Stripe, which is why a currency choice
+        *is* the payment choice and there is no second dropdown."""
+        settings = payments.get_settings()
+        if not settings.stripe_enabled:
+            pytest.skip("Stripe is off here, so every currency routes the same way.")
+        assert payments.provider_for("ETB").name == "chapa"
+        for elsewhere in ("USD", "GBP", "EUR"):
+            assert payments.provider_for(elsewhere).name == "stripe"
+
+    def test_a_stranger_cannot_price_somebody_elses_business(self, client):
+        owner_auth, _ = account(client, "owner")
+        business_id = self.make_business_at(
+            client, owner_auth, "Bole Road, Addis Ababa", 9.0055, 38.7810
+        )
+
+        stranger_auth, _ = account(client, "stranger")
+        refused = client.get(
+            f"/api/v1/businesses/{business_id}/promotions/pricing", headers=stranger_auth
+        )
+        assert refused.status_code in (403, 404), refused.text
 
 
 class TestBuyingIsPrivileged:

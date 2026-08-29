@@ -599,9 +599,9 @@ export const api = {
    * Omitting the currency is the point — a client default is how every plan
    * came to be priced in birr.
    */
-  promotionPricing: (businessId?: string, currency?: string) =>
+  promotionPricing: (businessId: string, currency?: string) =>
     request<Envelope<PromotionPricing>>(
-      `/api/v1/promotions/pricing${query({ businessId, currency })}`,
+      `/api/v1/businesses/${businessId}/promotions/pricing${query({ currency })}`,
     ).then((r) => r.data),
 
   businessPromotions: (businessId: string) =>

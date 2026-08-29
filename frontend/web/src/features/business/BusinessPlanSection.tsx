@@ -22,6 +22,7 @@ import { Check, CreditCard } from 'lucide-react'
 import { ApiError, api } from '@/lib/api'
 import type { BusinessPlan } from '@/lib/types'
 import { money } from '@/lib/money'
+import { paymentMethod } from '@/lib/payment-providers'
 import { Badge, Button, Card, Skeleton } from '@/design-system/primitives'
 import { buttonClasses } from '@/design-system/button-styles'
 
@@ -91,6 +92,7 @@ export function BusinessPlanSection({ businessId }: { businessId: string }) {
   if (!data) return null
 
   const current = data.current
+  const method = paymentMethod(data.provider)
   const endsOn = current.currentPeriodEnd
     ? new Date(current.currentPeriodEnd).toLocaleDateString()
     : null
@@ -162,6 +164,13 @@ export function BusinessPlanSection({ businessId }: { businessId: string }) {
             </span>
           </div>
         </div>
+      )}
+
+      {/* What paying will actually involve, which the currency decides. */}
+      {method && (
+        <p className="text-sm text-sand-500">
+          Paid with {method.label} — {method.hint}.
+        </p>
       )}
 
       {error && <p className="text-sm text-rust-600">{error}</p>}

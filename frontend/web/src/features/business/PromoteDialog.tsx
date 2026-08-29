@@ -24,6 +24,7 @@ import { Megaphone, X } from 'lucide-react'
 import { ApiError, api } from '@/lib/api'
 import type { OwnPost } from '@/lib/types'
 import { money } from '@/lib/money'
+import { paymentMethod } from '@/lib/payment-providers'
 import { Button, Card } from '@/design-system/primitives'
 
 const DAY_CHOICES = [3, 7, 14, 30]
@@ -40,6 +41,9 @@ export function PromoteDialog({
   const queryClient = useQueryClient()
   const [days, setDays] = useState(7)
   const [error, setError] = useState<string | null>(null)
+  // Null means "whatever this business's own city uses", which is what the
+  // server answers with. Only set once somebody deliberately changes it.
+  const [currency, setCurrency] = useState<string | null>(null)
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -50,10 +54,10 @@ export function PromoteDialog({
   }, [onClose])
 
   const { data: pricing } = useQuery({
-    queryKey: ['promotion-pricing', publisherId],
+    queryKey: ['promotion-pricing', publisherId, currency],
     // The business's own city decides, so a promotion and a plan never quote
     // the same account in different money.
-    queryFn: () => api.promotionPricing(publisherId),
+    queryFn: () => api.promotionPricing(publisherId, currency ?? undefined),
   })
 
   const buy = useMutation({
@@ -61,7 +65,9 @@ export function PromoteDialog({
       api.startPromotion(publisherId, {
         experienceId: post.id,
         days,
-        currency: pricing?.currency ?? 'ETB',
+        // The currency that was quoted, so nobody is charged in money they
+        // were not shown a price in.
+        currency: pricing?.currency,
         // Where the post is. Promoting a place somewhere it is not would be
         // selling reach that cannot convert into anybody walking in.
         citySlug: post.citySlug ?? undefined,
@@ -76,6 +82,7 @@ export function PromoteDialog({
 
   const total =
     pricing?.dailyMinor != null ? pricing.dailyMinor * days : null
+  const method = paymentMethod(pricing?.provider)
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center p-4" role="dialog" aria-modal="true">
@@ -127,6 +134,27 @@ export function PromoteDialog({
             </div>
           </div>
 
+          {/* A currency, not a payment method: the currency decides who takes
+              the money, so offering both would be asking the same question
+              twice and letting the answers disagree. What it means is stated
+              underneath instead. */}
+          {pricing && pricing.soldIn.length > 1 && (
+            <label className="block text-sm">
+              <span className="mb-1.5 block text-sand-700">Pay in</span>
+              <select
+                value={pricing.currency}
+                onChange={(event) => setCurrency(event.target.value)}
+                className="w-full rounded-lg border border-sand-300 bg-sand-50 px-3 py-2 text-sand-900"
+              >
+                {pricing.soldIn.map((code) => (
+                  <option key={code} value={code}>
+                    {code}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
           <div className="rounded-xl bg-sand-50 p-4 text-sm">
             <div className="flex items-baseline justify-between gap-3">
               <span className="text-sand-600">Total</span>
@@ -134,6 +162,11 @@ export function PromoteDialog({
                 {total != null && pricing ? money(total, pricing.currency) : '—'}
               </span>
             </div>
+            {method && (
+              <p className="mt-1 text-sand-500">
+                {method.label} — {method.hint}.
+              </p>
+            )}
             {post.citySlug && (
               <p className="mt-1 text-sand-500">Shown to people looking in {post.citySlug}.</p>
             )}
