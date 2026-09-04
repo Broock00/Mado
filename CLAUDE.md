@@ -544,6 +544,27 @@ and every one of them is a test in `test_promotions.py`:
 - **Nothing sponsored reaches the concierge.** The gateway phrases facts from tools, and
   a paid item in that stream becomes the assistant's own recommendation with the label
   gone. The spec allows it; Mado has no mechanism that keeps a label through a model.
+- **The slot rotates.** `slot_for` shuffles the eligible campaigns rather than taking the
+  earliest `starts_at`, which gave the first business to buy in a city every impression
+  for its whole run while everybody after it paid for nothing and could not see it
+  happening. Never "fewest impressions so far": that makes serving depend on the
+  counters, and they are reporting that nothing reads back.
+
+Which surfaces sell it is a **per-call-site decision**, not a property of the rail.
+`GET /search`, `POST /search/visual` and the `tonight`, `trending` and `nearby` rails
+pass `sponsor=True`; `build_canvas` and `ai/tools.py` do not, and the default of `False`
+is what keeps a rail added later unsponsored until somebody says otherwise. The canvas
+is excluded deliberately — seven rails on one screen would mean up to seven
+advertisements, possibly all for one campaign, so "one per result set" stops meaning
+anything. Each surface passes **its own retrieval** as `eligible_ids` (the rail's pool,
+not the page it cut down to), and a route that sells the slot must `commit`: the
+impression is written inside the request and `get_session` commits nothing for a handler.
+
+`POST /promotions/{id}/click` is the other half of the report and is open to anybody, as
+a sponsored card is. It looks the promotion up before counting — `_bump` swallows its own
+failure so a statistic never fails a page, but a foreign key violation from an invented
+id poisons the transaction and takes the commit down with it. On the client the beacon
+lives on `ExperienceCard`'s link, not on each page, for the same reason the label does.
 
 ## Environment
 

@@ -11,6 +11,7 @@
 
 import { Link } from 'react-router-dom'
 import { BadgeCheck, Bookmark, Building2, Clock, MapPin, Megaphone, Sparkles, Star } from 'lucide-react'
+import { api } from '@/lib/api'
 import type { ExperienceSummary } from '@/lib/types'
 import { Badge } from '@/design-system/primitives'
 import { cn, formatDistance, formatPrice, formatWhen, isStartingSoon } from '@/lib/utils'
@@ -42,6 +43,30 @@ export function ExperienceCard({
   const cancelled = experience.nextEvent?.status === 'cancelled'
   const verified = experience.publisher?.verificationStatus === 'verified'
   const business = experience.publisher?.type === 'organization'
+
+  /**
+   * A click on a promoted card, counted for the business that paid for it.
+   *
+   * Here rather than on each page that renders results, for the reason the
+   * label is here: this one component backs the canvas rails, search, visual
+   * search and the saved list, so a surface added later reports without anybody
+   * remembering to make it. Wiring it per page is how impressions came to be
+   * counted everywhere and clicks nowhere.
+   *
+   * On the link rather than the article, so it means "opened" and only that.
+   * The title's `after:absolute inset-0` makes the whole card that link, so an
+   * ordinary click anywhere on it still counts — while the save button, which
+   * sits outside the anchor, does not. Counting a save as a click would inflate
+   * the one number a publisher renews on with something that is not it.
+   *
+   * Nothing is awaited and nothing is prevented: the navigation is what the
+   * explorer asked for.
+   */
+  const onOpen = () => {
+    if (experience.sponsored && experience.promotionId) {
+      void api.recordPromotionClick(experience.promotionId)
+    }
+  }
 
   return (
     <article
@@ -114,7 +139,11 @@ export function ExperienceCard({
             )}
           >
             {/* Whole-card link target, but only the title is the accessible name. */}
-            <Link to={`/experiences/${experience.id}`} className="after:absolute after:inset-0">
+            <Link
+              to={`/experiences/${experience.id}`}
+              onClick={onOpen}
+              className="after:absolute after:inset-0"
+            >
               {experience.title}
             </Link>
           </h3>

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -12,7 +13,7 @@ from app.api.deps import AnonymousId, CurrentUser, OptionalUser, SessionDep
 from app.core import rate_limit
 from app.core.config import get_settings
 from app.core.envelope import CollectionEnvelope, Envelope, clamp_limit
-from app.core.errors import PermissionDeniedError, ValidationError
+from app.core.errors import NotFoundError, PermissionDeniedError, ValidationError
 from app.domains.catalog import locate
 from app.domains.catalog import repository as catalog_repo
 from app.domains.catalog import suitability as suitability_vocab
@@ -26,6 +27,8 @@ from app.domains.catalog.schemas import CamelModel, ExperienceSummary
 from app.domains.discovery.service import DiscoveryService, build_context
 from app.domains.explorer.learning import infer_preferences
 from app.domains.explorer.service import ExplorerService
+from app.domains.promotion import models as promotion_models
+from app.domains.promotion.service import PromotionService
 from app.integrations import weather
 
 router = APIRouter(tags=["discovery"])
@@ -330,7 +333,18 @@ async def discover_tonight(
         # Nowhere resolved: an empty list rather than another city's evening.
         return CollectionEnvelope(data=[])
     ctx = await _context(session, user, params)
-    items = await DiscoveryService(session).tonight(ctx, area=params.area, limit=params.limit)
+    # A rail sells the same one labelled slot a search does, on the same terms:
+    # never first, and only a listing this rail itself retrieved. Browse is
+    # where most of the attention is on a local platform, and selling only
+    # keyword search meant a publisher's money reached whoever had already
+    # typed their way to them.
+    items = await DiscoveryService(session).tonight(
+        ctx, area=params.area, limit=params.limit, sponsor=True
+    )
+    # The slot records an impression, and `get_session` deliberately commits
+    # nothing for a handler - so without this a publisher's report stayed at
+    # zero however often the rail was served.
+    await session.commit()
     return CollectionEnvelope(data=items)
 
 
@@ -362,7 +376,13 @@ async def discover_trending(
         # Nowhere resolved: an empty list rather than another city's evening.
         return CollectionEnvelope(data=[])
     ctx = await _context(session, user, params)
-    items = await DiscoveryService(session).trending(ctx, area=params.area, limit=params.limit)
+    items = await DiscoveryService(session).trending(
+        ctx, area=params.area, limit=params.limit, sponsor=True
+    )
+    # The slot records an impression, and `get_session` deliberately commits
+    # nothing for a handler - so without this a publisher's report stayed at
+    # zero however often the rail was served.
+    await session.commit()
     return CollectionEnvelope(data=items)
 
 
@@ -379,8 +399,9 @@ async def discover_nearby(
 ) -> CollectionEnvelope[ExperienceSummary]:
     ctx = await _context(session, user, params)
     items = await DiscoveryService(session).nearby(
-        ctx, area=params.area, radius_km=radius_km, limit=params.limit
+        ctx, area=params.area, radius_km=radius_km, limit=params.limit, sponsor=True
     )
+    await session.commit()
     return CollectionEnvelope(data=items)
 
 
@@ -530,6 +551,52 @@ async def recommendation_feedback(
     return Envelope(data={"recorded": True, "action": action})
 
 
+@router.post(
+    "/promotions/{promotion_id}/click",
+    summary="Record a click on a promoted card",
+    description=(
+        "Reporting, and nothing else. Nothing about what is shown to anybody "
+        "depends on this number — a counter that fed back into placement would "
+        "become a reason to show a listing to somebody it does not suit.\n\n"
+        "Open to anybody, because a sponsored card is shown to anybody. The id "
+        "is only ever handed out on a card that was actually served, and the "
+        "count is what a publisher is shown rather than what they are charged, "
+        "so there is nothing here worth inflating."
+    ),
+)
+async def promotion_click(
+    promotion_id: uuid.UUID,
+    session: SessionDep,
+    user: OptionalUser,
+    request: Request,
+) -> Envelope[dict]:
+    """Close the loop on what a promotion bought.
+
+    Impressions were counted from the day the slot shipped and clicks never
+    were: `record_click` existed with nothing calling it, so every publisher's
+    report said "N shown" and stopped there. "Somebody saw it" is a weak thing
+    to renew on, and a business with no way to tell a slot that worked from one
+    that did not has no reason to buy a second.
+    """
+    await rate_limit.check(
+        rate_limit.identify(request, str(user.id) if user else None),
+        rate_limit.INTERACTION_LIMIT,
+    )
+
+    # Looked up first, rather than left to the insert. `_bump` swallows its own
+    # failure so a statistic can never fail a page, but a foreign key violation
+    # from an id somebody made up would poison the transaction and take the
+    # commit below down with it - failing the request for exactly the reason
+    # that guard exists to prevent.
+    promotion = await session.get(promotion_models.Promotion, promotion_id)
+    if promotion is None:
+        raise NotFoundError("No such promotion.", code="PROMOTION_NOT_FOUND")
+
+    await PromotionService(session).record_click(promotion_id)
+    await session.commit()
+    return Envelope(data={"recorded": True})
+
+
 class LookOut(CamelModel):
     """What the model made of the photograph, shown to the explorer verbatim."""
 
@@ -603,9 +670,23 @@ async def visual_search(
     # retrieval stack: whatever ranking and personalisation the text search
     # gained yesterday, this gets today.
     ctx = await _context(session, user, params)
-    outcome = await DiscoveryService(session).search_experiences(
+    discovery = DiscoveryService(session)
+    outcome = await discovery.search_experiences(
         look.query, ctx, city_slug=params.city, limit=clamp_limit(params.limit)
     )
+
+    # The same slot the typed search sells, on the same terms. A photograph is
+    # an input method rather than a second retrieval stack, and that has to hold
+    # for what a publisher bought too: a campaign that runs on the words
+    # "coffee ceremony" and goes dark on a photograph of one is a product whose
+    # reach depends on how the explorer happened to ask.
+    results = await discovery.with_sponsored(
+        outcome.items,
+        ctx,
+        area=Area(city_slug=params.city) if params.city else None,
+        eligible_ids=outcome.candidate_ids,
+    )
+    await session.commit()
 
     return Envelope(
         data=VisualSearchOut(
@@ -615,7 +696,7 @@ async def visual_search(
                 confidence=look.confidence,
                 unclear=False,
             ),
-            results=outcome.items,
+            results=results,
             meta=SearchMeta(
                 query=look.query,
                 total=outcome.total,

@@ -334,6 +334,19 @@ export const api = {
       `/api/v1/discover/${key}${query({ ...params })}`,
     ).then((r) => r.data),
 
+  /**
+   * Tell the server a promoted card was opened.
+   *
+   * Fire and forget, and deliberately swallowing its own failure: this is a
+   * line on a publisher's report, and nothing an explorer is doing should be
+   * interrupted — or even slowed — because a counter would not save. The
+   * navigation that follows is the point of the click.
+   */
+  recordPromotionClick: (promotionId: string) =>
+    request<Envelope<{ recorded: boolean }>>(`/api/v1/promotions/${promotionId}/click`, {
+      method: 'POST',
+    }).catch(() => undefined),
+
   forYou: (params: DiscoveryParams) =>
     request<CollectionEnvelope<ExperienceSummary>>(
       `/api/v1/recommendations/for-you${query({ ...params })}`,

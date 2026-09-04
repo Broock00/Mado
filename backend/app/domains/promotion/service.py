@@ -35,6 +35,7 @@ model, so it does not do it yet.
 
 from __future__ import annotations
 
+import random
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -178,7 +179,23 @@ class PromotionService:
         ).scalars().all()
 
         by_id = {experience.id: experience for experience in experiences}
-        for promotion in sorted(candidates, key=lambda p: p.starts_at):
+
+        # Shuffled, so every campaign eligible here has the same chance of the
+        # slot. Sorted by `starts_at` - which this was - the first business to
+        # buy in a city took every impression for the whole of its run, and
+        # everybody who bought after it paid the same price for nothing until it
+        # ended. Nobody could see that happening: their campaign read `active`
+        # and simply never appeared.
+        #
+        # A shuffle per request rather than "whoever has had the fewest
+        # impressions", which is the other obvious answer and the wrong one
+        # here: that makes what is served depend on the counters, and the whole
+        # position of this module is that they are reporting and nothing reads
+        # them back. Even shares in expectation is what is being sold, and it is
+        # what a shuffle gives.
+        order = list(candidates)
+        random.shuffle(order)
+        for promotion in order:
             experience = by_id.get(promotion.experience_id)
             if experience is None:
                 # Withdrawn, deleted or never published since it was bought. It

@@ -243,6 +243,45 @@ class DiscoveryService:
         rest = [item for item in items[1:] if item.id != experience.id]
         return [items[0], card, *rest]
 
+    async def _maybe_sponsor(
+        self,
+        items: list[ExperienceSummary],
+        ctx: RankingContext,
+        *,
+        area: Area | None,
+        pool: list[Experience],
+        sponsor: bool,
+    ) -> list[ExperienceSummary]:
+        """The paid slot for a browse rail, when the caller asked for one.
+
+        Opt-in per call site rather than built into the rail, because the same
+        rail methods serve three audiences that must not be treated alike. The
+        rail *endpoints* sell a slot. `build_canvas` does not: it stacks seven
+        rails on one screen, and a slot in each would put up to seven
+        advertisements on the home page and could put the same campaign in
+        several of them - "at most one promoted listing per result set" has to
+        mean per screen there, and that is a separate product decision rather
+        than a side effect of this one. `ai/tools.py` calls `nearby` for the
+        concierge, where nothing sponsored may go at all: the gateway phrases
+        facts from tools, and a paid item in that stream becomes the assistant's
+        own recommendation with the label gone.
+
+        A default of False is what makes those two safe. A rail added later is
+        unsponsored until somebody says otherwise, which is the direction that
+        fails harmlessly.
+
+        `pool` is the rail's own retrieval - up to `CANDIDATE_POOL`, already
+        narrowed to the area and to any hard requirement - and not the page of
+        `items`. Exactly as in search, a promotion may lift something this rail
+        genuinely found and cut off at the page boundary, and may never
+        introduce something it did not find.
+        """
+        if not sponsor:
+            return items
+        return await self.with_sponsored(
+            items, ctx, area=area, eligible_ids={experience.id for experience in pool}
+        )
+
     async def _pool(self, ctx: RankingContext | None = None, *, area: Area, **filters) -> list:
         """Candidates for one rail, looking close in before looking further out.
 
@@ -396,10 +435,11 @@ class DiscoveryService:
         return self.summarize(candidates, ctx, limit=limit)
 
     async def tonight(
-        self, ctx: RankingContext, *, area: Area, limit: int = 12
+        self, ctx: RankingContext, *, area: Area, limit: int = 12, sponsor: bool = False
     ) -> list[ExperienceSummary]:
         candidates = await self._pool(ctx, area=area, starts_between=tonight_window(ctx.now))
-        return self.summarize(candidates, ctx, limit=limit)
+        items = self.summarize(candidates, ctx, limit=limit)
+        return await self._maybe_sponsor(items, ctx, area=area, pool=candidates, sponsor=sponsor)
 
     async def weekend(
         self, ctx: RankingContext, *, area: Area, limit: int = 12
@@ -414,6 +454,7 @@ class DiscoveryService:
         area: Area | None = None,
         radius_km: float = 5.0,
         limit: int = 12,
+        sponsor: bool = False,
     ) -> list[ExperienceSummary]:
         """Close to the area being looked at, which is not always the explorer.
 
@@ -440,16 +481,18 @@ class DiscoveryService:
             or radius_km,
             limit=CANDIDATE_POOL,
         )
-        return self.summarize(candidates, ctx, limit=limit)
+        items = self.summarize(candidates, ctx, limit=limit)
+        return await self._maybe_sponsor(items, ctx, area=area, pool=candidates, sponsor=sponsor)
 
     async def trending(
-        self, ctx: RankingContext, *, area: Area, limit: int = 12
+        self, ctx: RankingContext, *, area: Area, limit: int = 12, sponsor: bool = False
     ) -> list[ExperienceSummary]:
         candidates = await self._pool(ctx, area=area)
         # Trend score is the point of this rail, so it is sorted on directly rather
         # than blended - but the full ranker still supplies reasons and distances.
         candidates.sort(key=lambda exp: float(exp.trend_score or 0), reverse=True)
-        return self.summarize(candidates[: limit * 2], ctx, limit=limit, diversify=False)
+        items = self.summarize(candidates[: limit * 2], ctx, limit=limit, diversify=False)
+        return await self._maybe_sponsor(items, ctx, area=area, pool=candidates, sponsor=sponsor)
 
     async def free_experiences(
         self, ctx: RankingContext, *, area: Area, limit: int = 12

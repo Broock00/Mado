@@ -299,6 +299,26 @@ export function MyPostsPage() {
   )
 }
 
+/**
+ * What a running promotion has actually done, in one line.
+ *
+ * Clicks and the rate beside them, not just "N shown". An impression count on
+ * its own is the weakest possible proof of value — it says the platform served
+ * the card and nothing about whether it worked — and a business with no way to
+ * tell a slot that earned attention from one that did not has no basis on which
+ * to buy a second.
+ *
+ * The rate is withheld until something has been served, rather than shown as
+ * 0%: a campaign that has had no impressions yet has no rate, and a zero there
+ * reads as a verdict on it.
+ */
+function promotionResult(promotion: BusinessPromotion): string {
+  const { impressions, clicks } = promotion
+  if (!impressions) return 'Promoted · not shown yet'
+  const rate = ((clicks / impressions) * 100).toFixed(clicks / impressions >= 0.1 ? 0 : 1)
+  return `Promoted · ${impressions} shown · ${clicks} opened (${rate}%)`
+}
+
 function PostCard({
   post,
   busy,
@@ -471,7 +491,7 @@ function PostCard({
                     <span className="inline-flex items-center gap-1.5 rounded-lg bg-sand-200 px-2.5 py-1.5 text-xs font-medium text-sand-700">
                       <Megaphone className="size-3.5" aria-hidden />
                       {promotion.status === 'active'
-                        ? `Promoted · ${promotion.impressions} shown`
+                        ? promotionResult(promotion)
                         : 'Promotion awaiting payment'}
                     </span>
                   ) : (

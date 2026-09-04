@@ -48,6 +48,29 @@ BASE_URL = os.environ.get("MADO_TEST_API_URL", "http://127.0.0.1:8000")
 PASSWORD = "discover-addis-2026"
 CITY = "addis-ababa"
 
+# Where the listings in these tests are put. Bole for everything that searches
+# by marker, which is isolation enough: a rare word means only that test's own
+# listings are ever retrieved.
+BOLE = (9.0055, 38.7810)
+
+# A rail has no marker to be isolated by - it is the whole catalogue near a
+# point - so each rail test gets a corner of Addis to itself instead, and buys
+# a point-and-radius slot rather than a city one. Two things follow. Every
+# city-wide campaign left running by another test is refused here, because a
+# city promotion needs an area with a city slug and these queries send only
+# coordinates. And the tests cannot reach each other: the corners are a good ten
+# kilometres apart, against a one-kilometre campaign and a two-kilometre rail.
+#
+# Without that, the slot rotates among whatever else is live and the test
+# asserts on somebody else's campaign - which is the correct behaviour being
+# reported as a failure.
+CORNERS = {
+    "labelled": (9.0500, 38.7000),
+    "never-first": (8.9600, 38.8400),
+    "once": (9.0600, 38.8500),
+    "canvas": (8.9500, 38.7000),
+}
+
 pytestmark = pytest.mark.anyio
 
 
@@ -161,7 +184,14 @@ def make_business(client, auth) -> str:
     return response.json()["data"]["business"]["id"]
 
 
-def publish(client, auth, *, marker: str, suitability: list[str] | None = None) -> str:
+def publish(
+    client,
+    auth,
+    *,
+    marker: str,
+    suitability: list[str] | None = None,
+    at: tuple[float, float] = BOLE,
+) -> str:
     """A published listing carrying a rare word, so a search can find just it."""
     venue = client.post(
         "/api/v1/posts/venues",
@@ -170,8 +200,8 @@ def publish(client, auth, *, marker: str, suitability: list[str] | None = None) 
             "name": f"Promo hall {uuid.uuid4().hex[:5]}",
             "address": "Bole Road, Addis Ababa",
             "citySlug": CITY,
-            "latitude": 9.0055,
-            "longitude": 38.7810,
+            "latitude": at[0],
+            "longitude": at[1],
         },
     )
     assert venue.status_code == 201, venue.text
@@ -237,6 +267,57 @@ def promote_lowest(client, auth, business_id: str, marker: str) -> str:
     assert len(ranked) >= 2, "need something above it for the slot to sit below"
     lowest = ranked[-1]["id"]
     buy_slot(client, auth, business_id, lowest)
+    return lowest
+
+
+def rail(client, key: str, at: tuple[float, float], **params) -> list[dict]:
+    """One browse rail, around a point.
+
+    Coordinates and no city, deliberately: that resolves an area with no city
+    slug, which every city-wide campaign is refused against, leaving only the
+    point promotion this test bought.
+    """
+    response = client.get(
+        f"/api/v1/discover/{key}",
+        params={"lat": at[0], "lng": at[1], **params},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def rail_listings(client, auth, at: tuple[float, float]) -> list[str]:
+    """Two listings in one corner, which is everything that corner contains."""
+    marker = f"rail{uuid.uuid4().hex[:6]}"
+    return [publish(client, auth, marker=marker, at=at) for _ in range(2)]
+
+
+def promote_lower_of_mine_in_rail(
+    client, auth, business_id: str, key: str, mine: list[str], at: tuple[float, float]
+) -> str:
+    """Promote whichever of this account's own listings ranks lower in a rail.
+
+    The lower of a pair rather than "whatever ranks last", which is what the
+    search helper can do: nothing here controls where a new listing lands, and
+    buying a slot for something already ranked first is a no-op by design. With
+    the other one above it there is a position to buy whatever the ranker
+    decides.
+
+    A point-and-radius campaign, not a city one - see `CORNERS`.
+    """
+    ranked = [item["id"] for item in rail(client, key, at, limit=50)]
+    placed = {listing: ranked.index(listing) for listing in mine if listing in ranked}
+    assert len(placed) == len(mine), f"published listings missing from the rail: {placed}"
+    lowest = max(placed, key=placed.__getitem__)
+    buy_slot(
+        client,
+        auth,
+        business_id,
+        lowest,
+        citySlug=None,
+        latitude=at[0],
+        longitude=at[1],
+        radiusKm=1,
+    )
     return lowest
 
 
@@ -769,3 +850,162 @@ class TestReporting:
             f"/api/v1/businesses/{business_id}/promotions", headers=auth
         ).json()["data"]
         assert listed[0]["impressions"] >= 2, listed
+
+
+class TestABrowseRailSellsTheSameSlot:
+    """Browse is where the attention is, and it used to be free.
+
+    `with_sponsored` ran on `GET /search` alone, so a publisher's money only
+    reached explorers who had already typed their way to them - which is the
+    smallest audience on a local platform and the one least in need of
+    persuading. The rails sell the same slot on the same terms.
+    """
+
+    def test_a_rail_shows_one_labelled_slot(self, client):
+        auth, _ = account(client, "railed")
+        business_id = make_business(client, auth)
+
+        at = CORNERS["labelled"]
+        mine = rail_listings(client, auth, at)
+        promoted = promote_lower_of_mine_in_rail(client, auth, business_id, "nearby", mine, at)
+
+        items = rail(client, "nearby", at, limit=50)
+        sponsored = [item for item in items if item["sponsored"]]
+        assert len(sponsored) == 1, [item["title"] for item in items]
+        assert sponsored[0]["id"] == promoted
+        assert "promoted" in (sponsored[0]["reason"] or "").lower()
+        assert sponsored[0]["promotionId"]
+
+    def test_the_first_rail_result_is_never_sold(self, client):
+        auth, _ = account(client, "rail-hopeful")
+        business_id = make_business(client, auth)
+
+        at = CORNERS["never-first"]
+        mine = rail_listings(client, auth, at)
+        organic_first = rail(client, "nearby", at, limit=50)[0]["id"]
+        promote_lower_of_mine_in_rail(client, auth, business_id, "nearby", mine, at)
+
+        items = rail(client, "nearby", at, limit=50)
+        assert items[0]["id"] == organic_first
+        assert not items[0]["sponsored"]
+
+    def test_a_promoted_listing_appears_once_in_a_rail(self, client):
+        """Moved into the slot, never copied into it - as in search."""
+        auth, _ = account(client, "rail-dupe")
+        business_id = make_business(client, auth)
+
+        at = CORNERS["once"]
+        mine = rail_listings(client, auth, at)
+        promoted = promote_lower_of_mine_in_rail(client, auth, business_id, "nearby", mine, at)
+
+        ids = [item["id"] for item in rail(client, "nearby", at, limit=50)]
+        assert ids.count(promoted) == 1, ids
+
+    def test_the_canvas_itself_is_not_sponsored(self, client):
+        """Seven rails on one screen, and no advertisement on any of them.
+
+        Deliberate, and the reason the slot is opted into per call site rather
+        than built into the rail: "at most one promoted listing per result set"
+        would mean up to seven of them on the home page, possibly all for the
+        same campaign. Selling the home page is a separate decision, not a side
+        effect of selling the rails.
+
+        Not vacuous - the same promotion is running and does appear when the
+        `nearby` rail is asked for directly, which the assertion below checks
+        before looking at the canvas.
+        """
+        auth, _ = account(client, "canvas")
+        business_id = make_business(client, auth)
+
+        at = CORNERS["canvas"]
+        mine = rail_listings(client, auth, at)
+        promoted = promote_lower_of_mine_in_rail(client, auth, business_id, "nearby", mine, at)
+        assert promoted in [
+            item["id"] for item in rail(client, "nearby", at, limit=50) if item["sponsored"]
+        ], "the promotion is not running, so the canvas proves nothing"
+
+        canvas = client.get(
+            "/api/v1/discover",
+            params={"lat": at[0], "lng": at[1], "limit": 50},
+        )
+        assert canvas.status_code == 200, canvas.text
+        for module in canvas.json()["data"]["modules"]:
+            assert not [item for item in module["items"] if item["sponsored"]], module["key"]
+
+
+class TestEveryCampaignGetsAShare:
+    def test_the_slot_rotates_rather_than_going_to_the_earliest(self, client):
+        """Two campaigns eligible for the same slot both get shown.
+
+        Sorted by `starts_at` - which this was - the first business to buy in a
+        city took every impression for its whole run, and everybody who bought
+        afterwards paid the same money for nothing. Their campaign read
+        `active` and simply never appeared, so nobody could see it happening.
+
+        Sixteen searches: with an even split, the chance of one campaign taking
+        all of them is about one in thirty thousand.
+        """
+        auth, _ = account(client, "sharing")
+        business_id = make_business(client, auth)
+
+        marker = f"kefel{uuid.uuid4().hex[:6]}"
+        for _ in range(4):
+            publish(client, auth, marker=marker)
+
+        ranked = [row["id"] for row in search(client, marker)]
+        assert len(ranked) >= 3
+        # Never the top result: there is no position to sell whoever is already
+        # first, so a campaign on it would be refused and prove nothing here.
+        bought = {ranked[-1], ranked[-2]}
+        for listing in bought:
+            buy_slot(client, auth, business_id, listing)
+
+        shown = set()
+        for _ in range(16):
+            for row in search(client, marker):
+                if row["sponsored"]:
+                    shown.add(row["id"])
+        assert shown == bought, shown
+
+
+class TestClicksAreCounted:
+    """Impressions shipped with the slot and clicks did not.
+
+    `record_click` existed with no route and no caller, so every publisher's
+    report read "N shown" and stopped there. "Somebody saw it" is the weakest
+    possible proof of value, and a business that cannot tell a slot that worked
+    from one that did not has no basis on which to buy a second.
+    """
+
+    def test_a_click_reaches_the_publishers_report(self, client):
+        auth, _ = account(client, "clicker")
+        business_id = make_business(client, auth)
+
+        marker = f"tinish{uuid.uuid4().hex[:6]}"
+        publish(client, auth, marker=marker)
+        publish(client, auth, marker=marker)
+        promote_lowest(client, auth, business_id, marker)
+
+        sponsored = [row for row in search(client, marker) if row["sponsored"]]
+        assert sponsored, "nothing was promoted, so there is no click to record"
+        promotion_id = sponsored[0]["promotionId"]
+
+        recorded = client.post(f"/api/v1/promotions/{promotion_id}/click")
+        assert recorded.status_code == 200, recorded.text
+
+        listed = client.get(
+            f"/api/v1/businesses/{business_id}/promotions", headers=auth
+        ).json()["data"]
+        mine = next(row for row in listed if row["id"] == promotion_id)
+        assert mine["clicks"] >= 1, mine
+
+    def test_a_click_on_nothing_is_refused(self, client):
+        """Rather than swallowed.
+
+        `_bump` swallows its own failure so a statistic can never fail a page,
+        but a foreign key violation from an invented id poisons the transaction
+        and takes the commit down with it - failing the request for exactly the
+        reason that guard exists to prevent.
+        """
+        refused = client.post(f"/api/v1/promotions/{uuid.uuid4()}/click")
+        assert refused.status_code == 404, refused.text
