@@ -38,6 +38,7 @@ import {
   Sun,
   Wifi,
   Wind,
+  X,
 } from 'lucide-react'
 
 import type { LucideIcon } from 'lucide-react'
@@ -450,6 +451,9 @@ export function ExperienceDetailPage() {
         selectedEvent={selectedEvent}
         requiresAuth={requiresAuth}
         onToggleSave={() => toggle(data)}
+        onReport={() => setReporting(true)}
+        mapUrl={mapUrl}
+        distance={distance}
       />
 
       {reporting && (
@@ -778,46 +782,123 @@ function MobileDock({
   selectedEvent,
   requiresAuth,
   onToggleSave,
+  onReport,
+  mapUrl,
+  distance,
 }: {
   data: ExperienceDetail
   selectedEvent: EventInstance | null
   requiresAuth: boolean
   onToggleSave: () => void
+  onReport: () => void
+  mapUrl: string | null
+  distance: string | null
 }) {
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = previous
+    }
+  }, [open])
+
   return (
-    <div className="fixed inset-x-0 bottom-16 z-40 border-t border-sand-100 bg-sand-100/95 shadow-[0_-1px_0_0_rgb(0_0_0/0.04),0_-8px_24px_rgb(0_0_0/0.07)] backdrop-blur-xl sm:bottom-0 lg:hidden">
-      <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-lg font-bold text-sand-950">{formatPrice(data.price)}</p>
-          {selectedEvent && (
-            <p className="truncate text-xs text-sand-500">
-              {formatWhen(selectedEvent.startTime) ?? formatLongDate(selectedEvent.startTime)}
+    <>
+      <div className="fixed inset-x-0 bottom-16 z-40 border-t border-sand-100 bg-sand-100/95 shadow-[0_-1px_0_0_rgb(0_0_0/0.04),0_-8px_24px_rgb(0_0_0/0.07)] backdrop-blur-xl sm:bottom-0 lg:hidden">
+        <div className="mx-auto flex max-w-6xl items-center gap-2 px-4 py-3 sm:gap-3">
+          {/* Price strip opens the full booking card as a sheet. Save and Reserve
+              stay as one-tap actions so the bar is not only a disclosure. */}
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            aria-haspopup="dialog"
+            aria-expanded={open}
+            className="min-w-0 flex-1 rounded-lg text-left transition-colors hover:bg-sand-200/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          >
+            <p className="truncate text-base font-bold text-sand-950 sm:text-lg">
+              {formatPrice(data.price)}
             </p>
+            <p className="truncate text-xs text-sand-500">
+              {selectedEvent
+                ? (formatWhen(selectedEvent.startTime) ?? formatLongDate(selectedEvent.startTime))
+                : 'Details & actions'}
+            </p>
+          </button>
+          <button
+            type="button"
+            onClick={onToggleSave}
+            disabled={requiresAuth}
+            aria-label={data.isSaved ? 'Saved' : 'Save'}
+            className={cn(
+              'grid size-11 shrink-0 place-items-center rounded-xl border border-sand-200 transition-colors hover:bg-sand-200 disabled:opacity-40',
+              data.isSaved ? 'border-brand-600 bg-brand-900/30 text-brand-400' : 'text-sand-600',
+            )}
+          >
+            <Bookmark className="size-5" fill={data.isSaved ? 'currentColor' : 'none'} aria-hidden />
+          </button>
+          {data.upcomingEvents.length > 0 ? (
+            <a href="#reserve" className="shrink-0">
+              <Button size="lg" className="shrink-0 px-5 sm:px-6">Reserve</Button>
+            </a>
+          ) : (
+            <Button size="lg" onClick={() => setOpen(true)} className="shrink-0">
+              Details
+            </Button>
           )}
         </div>
-        <button
-          type="button"
-          onClick={onToggleSave}
-          disabled={requiresAuth}
-          aria-label={data.isSaved ? 'Saved' : 'Save'}
-          className={cn(
-            'grid size-11 shrink-0 place-items-center rounded-xl border border-sand-200 transition-colors hover:bg-sand-200 disabled:opacity-40',
-            data.isSaved ? 'border-brand-600 bg-brand-900/30 text-brand-400' : 'text-sand-600',
-          )}
-        >
-          <Bookmark className="size-5" fill={data.isSaved ? 'currentColor' : 'none'} aria-hidden />
-        </button>
-        {data.upcomingEvents.length > 0 ? (
-          <a href="#reserve" className="shrink-0">
-            <Button size="lg" className="shrink-0 px-6">Reserve</Button>
-          </a>
-        ) : (
-          <Button size="lg" onClick={onToggleSave} disabled={requiresAuth} className="shrink-0">
-            Save
-          </Button>
-        )}
       </div>
-    </div>
+
+      {open && (
+        <div
+          className="fixed inset-0 z-50 lg:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Booking and actions"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 bg-sand-950/40 backdrop-blur-[2px]"
+            onClick={() => setOpen(false)}
+            aria-label="Close"
+          />
+          <div className="absolute inset-x-0 bottom-0 max-h-[min(90vh,40rem)] overflow-y-auto rounded-t-2xl bg-sand-50 shadow-lifted sm:inset-x-auto sm:left-1/2 sm:w-full sm:max-w-md sm:-translate-x-1/2">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-sand-200/80 bg-sand-50/95 px-4 py-3 backdrop-blur-sm">
+              <p className="text-sm font-semibold text-sand-950">Booking & details</p>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label="Close"
+                className="grid size-9 place-items-center rounded-full text-sand-500 transition-colors hover:bg-sand-200 hover:text-sand-800"
+              >
+                <X className="size-4" aria-hidden />
+              </button>
+            </div>
+            <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+              <BookingWidget
+                data={data}
+                selectedEvent={selectedEvent}
+                requiresAuth={requiresAuth}
+                onToggleSave={onToggleSave}
+                onReport={() => {
+                  setOpen(false)
+                  onReport()
+                }}
+                mapUrl={mapUrl}
+                distance={distance}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
