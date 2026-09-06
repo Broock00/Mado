@@ -17,7 +17,7 @@
 
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, CreditCard } from 'lucide-react'
+import { Check } from 'lucide-react'
 
 import { ApiError, api } from '@/lib/api'
 import type { BusinessPlan } from '@/lib/types'
@@ -98,11 +98,13 @@ export function BusinessPlanSection({ businessId }: { businessId: string }) {
     : null
 
   return (
-    <Card className="space-y-4 p-5">
+    <Card className="space-y-5 p-5 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <CreditCard className="size-5 text-sand-500" aria-hidden />
-          <h2 className="text-lg font-semibold text-sand-900">Plan</h2>
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight text-sand-900">Plan</h2>
+          <p className="mt-0.5 text-sm text-sand-500">
+            What you are on, and what else you could move to.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {/* Only when there is a choice to make. A select with one option is a

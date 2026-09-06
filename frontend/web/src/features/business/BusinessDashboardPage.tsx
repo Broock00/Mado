@@ -11,22 +11,41 @@
  * hard-coded caption here would eventually describe a role differently from the
  * thing that enforces it, and the person choosing would be reading a promise
  * nobody keeps.
+ *
+ * Sections live behind tabs rather than one long scroll. A team member who
+ * only holds `team:manage` should not have to page past a profile they cannot
+ * edit to reach the invite form; an owner editing social links should not lose
+ * their place under a wall of earnings and plan cards.
  */
 
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Building2, Mail, Trash2, UserPlus, Wallet } from 'lucide-react'
+import {
+  BadgeCheck,
+  Building2,
+  CreditCard,
+  ExternalLink,
+  Images,
+  PenSquare,
+  Trash2,
+  UserPlus,
+  Users,
+  Wallet,
+} from 'lucide-react'
 
 import { ApiError, api } from '@/lib/api'
 import type { Business, BusinessMember } from '@/lib/types'
 import { BUSINESS_TYPES } from '@/lib/business'
 import { money } from '@/lib/money'
+import { cn } from '@/lib/utils'
 import { Badge, Button, Card, EmptyState, Input, Skeleton } from '@/design-system/primitives'
 import { BusinessGallerySection } from './BusinessGallerySection'
 import { BusinessPlanSection } from './BusinessPlanSection'
 import { SocialIcon } from './SocialIcon'
 import { SOCIAL_PLATFORMS, normaliseSocialUrl } from './social'
+
+type ManageTab = 'profile' | 'gallery' | 'plan' | 'earnings' | 'team'
 
 function ProfileSection({ business }: { business: Business }) {
   const queryClient = useQueryClient()
@@ -93,8 +112,13 @@ function ProfileSection({ business }: { business: Business }) {
   })
 
   return (
-    <Card className="space-y-4 p-5">
-      <h2 className="text-sm font-medium text-sand-700">Profile</h2>
+    <Card className="space-y-5 p-5 sm:p-6">
+      <div>
+        <h2 className="text-lg font-semibold tracking-tight text-sand-900">Profile</h2>
+        <p className="mt-0.5 text-sm text-sand-500">
+          Name, kind of place, and the links explorers see on your public page.
+        </p>
+      </div>
 
       <div className="space-y-3">
         <div>
@@ -354,10 +378,10 @@ function TeamSection({ businessId }: { businessId: string }) {
   const chosen = roles?.find((r) => r.value === role)
 
   return (
-    <Card className="space-y-4 p-5">
+    <Card className="space-y-5 p-5 sm:p-6">
       <div>
-        <h2 className="text-sm font-medium text-sand-700">Team</h2>
-        <p className="mt-1 text-xs text-sand-500">
+        <h2 className="text-lg font-semibold tracking-tight text-sand-900">Team</h2>
+        <p className="mt-0.5 text-sm text-sand-500">
           People you invite can act for this business. They keep their own Mado account —
           you are giving them access, not sharing a login.
         </p>
@@ -458,10 +482,12 @@ function EarningsSection({ businessId }: { businessId: string }) {
   const rate = `${Number((data.feeRateBps / 100).toFixed(2))}%`
 
   return (
-    <Card className="space-y-4 p-5">
-      <div className="flex items-center gap-2">
-        <Wallet className="size-5 text-sand-500" aria-hidden />
-        <h2 className="text-lg font-semibold text-sand-900">Earnings</h2>
+    <Card className="space-y-5 p-5 sm:p-6">
+      <div>
+        <h2 className="text-lg font-semibold tracking-tight text-sand-900">Earnings</h2>
+        <p className="mt-0.5 text-sm text-sand-500">
+          What ticket sales have brought in, and what Mado still owes you.
+        </p>
       </div>
 
       {data.totals.length === 0 ? (
@@ -533,6 +559,203 @@ function EarningsSection({ businessId }: { businessId: string }) {
   )
 }
 
+/**
+ * One section at a time. Same roving-tabindex pattern as the public profile:
+ * one Tab stop for the strip, arrow keys move within it. Tabs the caller
+ * cannot use are omitted rather than disabled — a disabled "Team" tab still
+ * announces that the section exists, and for a role that should not know
+ * about inviting people that is information they do not need.
+ *
+ * Underline tabs rather than filled pills: this page already has enough
+ * orange from the brand actions, and a row of solid chips competed with the
+ * header. The active mark is a brand bar under the label so the strip reads
+ * as navigation, not as another button group.
+ */
+function ManageTabs({
+  tabs,
+  children,
+}: {
+  tabs: { id: ManageTab; label: string; icon: ReactNode }[]
+  children: (tab: ManageTab) => ReactNode
+}) {
+  const [tab, setTab] = useState<ManageTab>(tabs[0]?.id ?? 'profile')
+
+  if (tabs.length === 0) return null
+
+  // Derived rather than stored: permissions can arrive after the first paint,
+  // and a selected tab that is no longer in the list would leave an empty panel.
+  const active: ManageTab = tabs.some((entry) => entry.id === tab) ? tab : tabs[0].id
+
+  // A single section does not need a tablist — the strip would only restate
+  // the heading already on the card.
+  if (tabs.length === 1) {
+    return (
+      <div role="tabpanel" id={`manage-panel-${active}`} aria-label={tabs[0].label}>
+        {children(active)}
+      </div>
+    )
+  }
+
+  return (
+    <section aria-label="Manage sections" className="space-y-5">
+      <div className="sticky top-16 z-20 -mx-4 border-b border-sand-200 bg-sand-50/90 px-4 backdrop-blur-md sm:-mx-6 sm:px-6">
+        <div
+          role="tablist"
+          aria-label="Manage sections"
+          className="scrollbar-none flex gap-0 overflow-x-auto"
+        >
+          {tabs.map(({ id, label, icon }) => {
+            const selected = active === id
+            return (
+              <button
+                key={id}
+                role="tab"
+                type="button"
+                id={`manage-tab-${id}`}
+                aria-selected={selected}
+                aria-controls={`manage-panel-${id}`}
+                tabIndex={selected ? 0 : -1}
+                onClick={() => setTab(id)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
+                  const delta = event.key === 'ArrowRight' ? 1 : -1
+                  const from = tabs.findIndex((entry) => entry.id === active)
+                  const next = tabs[(from + delta + tabs.length) % tabs.length]
+                  setTab(next.id)
+                  document.getElementById(`manage-tab-${next.id}`)?.focus()
+                }}
+                className={cn(
+                  'relative flex shrink-0 items-center gap-2 px-3.5 py-3 text-sm font-medium transition-colors',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-sand-50',
+                  selected
+                    ? 'text-sand-950'
+                    : 'text-sand-500 hover:text-sand-800',
+                )}
+              >
+                <span
+                  className={cn(
+                    'grid size-7 place-items-center rounded-lg transition-colors',
+                    selected
+                      ? 'bg-brand-600/15 text-brand-500'
+                      : 'bg-sand-200/80 text-sand-500',
+                  )}
+                >
+                  {icon}
+                </span>
+                {label}
+                <span
+                  aria-hidden
+                  className={cn(
+                    'absolute inset-x-2 bottom-0 h-0.5 rounded-full transition-colors',
+                    selected ? 'bg-brand-500' : 'bg-transparent',
+                  )}
+                />
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      <div
+        role="tabpanel"
+        id={`manage-panel-${active}`}
+        aria-labelledby={`manage-tab-${active}`}
+        key={active}
+        className="motion-safe:animate-[managePanelIn_220ms_var(--ease-out-soft)]"
+      >
+        {children(active)}
+      </div>
+    </section>
+  )
+}
+
+function ManageHeader({ business }: { business: Business }) {
+  const verified = business.verificationStatus === 'verified'
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-sand-200 bg-sand-100 shadow-card">
+      {business.coverUrl ? (
+        <img
+          src={business.coverUrl}
+          alt=""
+          className="h-28 w-full object-cover sm:h-36"
+          loading="lazy"
+        />
+      ) : (
+        // Soft brand wash rather than a blank strip — manage is a working surface,
+        // and an empty grey band under the shell reads as unfinished layout.
+        <div
+          className="h-20 w-full bg-gradient-to-br from-brand-900/40 via-sand-100 to-sand-200 sm:h-24"
+          aria-hidden
+        />
+      )}
+
+      <div className="relative px-5 pb-5 pt-0 sm:px-6 sm:pb-6">
+        <div className="-mt-8 mb-4 flex flex-wrap items-end justify-between gap-3 sm:-mt-10">
+          {business.logoUrl ? (
+            <img
+              src={business.logoUrl}
+              alt=""
+              className="size-16 rounded-xl object-cover shadow-lifted ring-2 ring-sand-100 sm:size-[4.5rem]"
+              loading="lazy"
+            />
+          ) : (
+            <span className="grid size-16 place-items-center rounded-xl bg-sand-200 shadow-lifted ring-2 ring-sand-100 sm:size-[4.5rem]">
+              <Building2 className="size-7 text-brand-500" aria-hidden />
+            </span>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2 pb-0.5">
+            {/* No `?publisher=` for the owner: their account *is* this business, so
+                the composer resolves it without being told. The parameter still
+                exists for a team member, whose own account is somebody else. */}
+            <Link to="/compose">
+              <Button size="sm">
+                <PenSquare className="size-3.5" aria-hidden />
+                Write a post
+              </Button>
+            </Link>
+            <Link to={`/businesses/${business.slug}`}>
+              <Button variant="secondary" size="sm">
+                <ExternalLink className="size-3.5" aria-hidden />
+                Public page
+              </Button>
+            </Link>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <p className="text-xs font-medium uppercase tracking-wider text-sand-500">
+            Manage business
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight text-sand-950 sm:text-[1.75rem]">
+              {business.name}
+            </h1>
+            {verified ? (
+              <Badge tone="success" icon={<BadgeCheck className="size-3.5" aria-hidden />}>
+                Verified
+              </Badge>
+            ) : (
+              <Badge tone="neutral">Not verified by Mado</Badge>
+            )}
+          </div>
+          <p className="text-sm text-sand-500">
+            {business.businessTypeLabel ?? 'Business'}
+            <span className="text-sand-400"> · </span>
+            <Link
+              to="/posts"
+              className="text-sand-600 underline-offset-2 transition-colors hover:text-brand-500 hover:underline"
+            >
+              Your posts
+            </Link>
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function BusinessDashboardPage() {
   const { businessId = '' } = useParams()
 
@@ -542,7 +765,7 @@ export function BusinessDashboardPage() {
     enabled: Boolean(businessId),
   })
 
-  // What this caller may do. Drives which sections render; never the gate.
+  // What this caller may do. Drives which tabs render; never the gate.
   const { data: held } = useQuery({
     queryKey: ['business-permissions', businessId],
     queryFn: () => api.businessPermissions(businessId),
@@ -551,8 +774,9 @@ export function BusinessDashboardPage() {
 
   if (isLoading) {
     return (
-      <div className="mx-auto max-w-3xl space-y-4 px-4 py-6">
-        <Skeleton className="h-24 w-full rounded-xl" />
+      <div className="mx-auto max-w-3xl space-y-5 px-4 py-6 sm:px-6">
+        <Skeleton className="h-52 w-full rounded-2xl" />
+        <Skeleton className="h-12 w-full rounded-xl" />
         <Skeleton className="h-64 w-full rounded-xl" />
       </div>
     )
@@ -576,58 +800,89 @@ export function BusinessDashboardPage() {
   }
 
   const can = (permission: string) => (held ?? []).includes(permission)
+  // Permissions arrive after the business. Until then every `can` is false, and
+  // treating that as "read-only" flashes the wrong card for a frame.
+  const permissionsReady = held !== undefined
+
+  // Built in order, not looked up: the first entry the caller may open is the
+  // default tab, so an editor lands on Profile and a bookkeeper on Plan.
+  const tabs: { id: ManageTab; label: string; icon: ReactNode }[] = [
+    ...(can('profile:edit')
+      ? [
+          {
+            id: 'profile' as const,
+            label: 'Profile',
+            icon: <Building2 className="size-3.5" aria-hidden />,
+          },
+          // Same permission as Profile, and deliberately: the gallery *is* the
+          // profile. `permissions.py` holds that a scope nobody needs is worse
+          // than no scope, so there is no separate `gallery:manage`. Split into
+          // its own tab anyway — one long form plus a media grid was the scroll
+          // this layout exists to end.
+          {
+            id: 'gallery' as const,
+            label: 'Gallery',
+            icon: <Images className="size-3.5" aria-hidden />,
+          },
+        ]
+      : []),
+    // Its own permission, not `analytics:view`: an analyst is shown how the
+    // posts are doing, which is a different decision from being shown what
+    // the business took. Plan and earnings stay separate tabs so pricing and
+    // payouts are not fighting for the same viewport — they share the gate,
+    // not the screen.
+    ...(can('finance:view')
+      ? [
+          {
+            id: 'plan' as const,
+            label: 'Plan',
+            icon: <CreditCard className="size-3.5" aria-hidden />,
+          },
+          {
+            id: 'earnings' as const,
+            label: 'Earnings',
+            icon: <Wallet className="size-3.5" aria-hidden />,
+          },
+        ]
+      : []),
+    ...(can('team:manage')
+      ? [
+          {
+            id: 'team' as const,
+            label: 'Team',
+            icon: <Users className="size-3.5" aria-hidden />,
+          },
+        ]
+      : []),
+  ]
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-5 px-4 pb-24 pt-6 sm:px-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-sand-900">
-            {business.name}
-          </h1>
-          <p className="mt-1 text-sm text-sand-500">
-            {business.businessTypeLabel ?? 'Business'}
-            {business.verificationStatus !== 'verified' && ' · not verified by Mado'}
-          </p>
-        </div>
-        <Link to={`/businesses/${business.slug}`}>
-          <Button variant="secondary" size="sm">
-            View public page
-          </Button>
-        </Link>
-      </div>
+    <div className="mx-auto w-full max-w-3xl space-y-6 px-4 pb-24 pt-6 sm:px-6">
+      <ManageHeader business={business} />
 
-      <Card className="flex flex-wrap items-center gap-2 p-4">
-        {/* No `?publisher=` for the owner: their account *is* this business, so
-            the composer resolves it without being told. The parameter still
-            exists for a team member, whose own account is somebody else. */}
-        <Link to="/compose">
-          <Button size="sm">Write a post</Button>
-        </Link>
-        <Link to="/posts">
-          <Button variant="secondary" size="sm">
-            <Mail className="size-4" aria-hidden /> Your posts
-          </Button>
-        </Link>
-      </Card>
-
-      {can('profile:edit') && <ProfileSection business={business} />}
-      {/* Same permission as the profile above, and deliberately: the gallery
-          *is* the profile. `permissions.py` holds that a scope nobody needs is
-          worse than no scope, so there is no separate `gallery:manage` — an
-          editor writes posts, an administrator changes how the business
-          presents itself. */}
-      {can('profile:edit') && (
-        <BusinessGallerySection businessId={business.id} slug={business.slug} />
-      )}
-      {/* Its own permission, not `analytics:view`: an analyst is shown how the
-          posts are doing, which is a different decision from being shown what
-          the business took. */}
-      {can('finance:view') && <BusinessPlanSection businessId={business.id} />}
-      {can('finance:view') && <EarningsSection businessId={business.id} />}
-      {can('team:manage') && <TeamSection businessId={business.id} />}
-
-      {!can('profile:edit') && !can('team:manage') && (
-        <Card className="p-5 text-sm text-sand-600">
+      {!permissionsReady ? (
+        <Skeleton className="h-64 w-full rounded-xl" />
+      ) : tabs.length > 0 ? (
+        <ManageTabs tabs={tabs}>
+          {(tab) => {
+            switch (tab) {
+              case 'profile':
+                return <ProfileSection business={business} />
+              case 'gallery':
+                return (
+                  <BusinessGallerySection businessId={business.id} slug={business.slug} />
+                )
+              case 'plan':
+                return <BusinessPlanSection businessId={business.id} />
+              case 'earnings':
+                return <EarningsSection businessId={business.id} />
+              case 'team':
+                return <TeamSection businessId={business.id} />
+            }
+          }}
+        </ManageTabs>
+      ) : (
+        <Card className="p-5 text-sm text-sand-600 sm:p-6">
           Your role here is read-only. You can see this business and its numbers, but
           not change it.
         </Card>
