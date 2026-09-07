@@ -9,9 +9,13 @@
  * profile. Somebody looking at their pictures reaches for "add" right there,
  * and sending them to another page to do it is the friction that made this
  * feature look like it had no upload at all.
+ *
+ * **Tiles open the same stage the public page uses.** A manage grid that only
+ * deleted and never showed meant owners checked their upload by leaving manage
+ * for the public tab — and still could not walk between pictures once there.
  */
 
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Film, ImagePlus, Trash2 } from 'lucide-react'
 
@@ -19,15 +23,18 @@ import { api } from '@/lib/api'
 import type { BusinessMedia } from '@/lib/types'
 import { Button, Card, EmptyState } from '@/design-system/primitives'
 import { AddMedia, MEDIA_HINT } from './AddMedia'
+import { GalleryViewer, ordered } from './BusinessGallery'
 
 function Tile({
   item,
   businessId,
   slug,
+  onOpen,
 }: {
   item: BusinessMedia
   businessId: string
   slug: string
+  onOpen: () => void
 }) {
   const queryClient = useQueryClient()
   const [confirming, setConfirming] = useState(false)
@@ -45,11 +52,29 @@ function Tile({
 
   return (
     <li className="group relative aspect-square overflow-hidden rounded-xl bg-sand-200 ring-1 ring-sand-200">
-      {item.kind === 'video' ? (
-        <video src={item.url} muted playsInline preload="metadata" className="size-full object-cover" />
-      ) : (
-        <img src={item.url} alt={item.caption ?? ''} loading="lazy" className="size-full object-cover" />
-      )}
+      <button
+        type="button"
+        onClick={onOpen}
+        className="size-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
+        aria-label={item.caption ?? (item.kind === 'video' ? 'View video' : 'View photo')}
+      >
+        {item.kind === 'video' ? (
+          <video
+            src={item.url}
+            muted
+            playsInline
+            preload="metadata"
+            className="size-full object-cover"
+          />
+        ) : (
+          <img
+            src={item.url}
+            alt={item.caption ?? ''}
+            loading="lazy"
+            className="size-full object-cover"
+          />
+        )}
+      </button>
 
       {item.kind === 'video' && (
         <span
@@ -63,7 +88,7 @@ function Tile({
       {/* Two presses to delete, and the second one says what it does. There is
           no undo — the row is gone and the ordering closes over it — so a
           single mis-tap on a phone should not be able to spend it. */}
-      <div className="absolute inset-x-0 bottom-0 flex justify-end p-2">
+      <div className="absolute inset-x-0 bottom-0 z-10 flex justify-end p-2">
         {confirming ? (
           <div className="flex w-full gap-1.5">
             <Button
@@ -82,7 +107,10 @@ function Tile({
         ) : (
           <button
             type="button"
-            onClick={() => setConfirming(true)}
+            onClick={(event) => {
+              event.stopPropagation()
+              setConfirming(true)
+            }}
             aria-label={`Remove ${item.caption ?? (item.kind === 'video' ? 'video' : 'photo')}`}
             className="grid size-8 place-items-center rounded-full bg-black/60 text-white opacity-0 transition-opacity hover:bg-black/80 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 group-hover:opacity-100"
           >
@@ -106,6 +134,15 @@ export function BusinessGallerySection({
     queryFn: () => api.businessGallery(businessId),
     enabled: Boolean(businessId),
   })
+  const gallery = ordered(items)
+  const [openIndex, setOpenIndex] = useState<number | null>(null)
+
+  const close = useCallback(() => setOpenIndex(null), [])
+  const goTo = useCallback((next: number) => setOpenIndex(next), [])
+
+  // If the open item was deleted while the stage is up, close rather than
+  // pointing at a neighbour the owner did not ask to see.
+  const openItem = openIndex !== null ? gallery[openIndex] : null
 
   return (
     <Card className="space-y-5 p-5 sm:p-6">
@@ -129,7 +166,7 @@ export function BusinessGallerySection({
             <div key={index} className="aspect-square animate-pulse rounded-xl bg-sand-200" />
           ))}
         </div>
-      ) : items.length === 0 ? (
+      ) : gallery.length === 0 ? (
         <EmptyState
           icon={<ImagePlus className="size-8" />}
           title="No photos yet"
@@ -137,10 +174,20 @@ export function BusinessGallerySection({
         />
       ) : (
         <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-          {items.map((item) => (
-            <Tile key={item.id} item={item} businessId={businessId} slug={slug} />
+          {gallery.map((item, index) => (
+            <Tile
+              key={item.id}
+              item={item}
+              businessId={businessId}
+              slug={slug}
+              onOpen={() => setOpenIndex(index)}
+            />
           ))}
         </ul>
+      )}
+
+      {openItem && openIndex !== null && (
+        <GalleryViewer items={gallery} index={openIndex} onClose={close} onGoTo={goTo} />
       )}
     </Card>
   )
