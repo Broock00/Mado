@@ -2,8 +2,8 @@
  * Speaking and photographing a search (spec SRCH-004, SRCH-005).
  *
  * Both are input methods for the search that already exists, not new kinds of
- * search - which is why they live beside the text box and hand their result to
- * the same `runSearch`. Anything the text path gains, these gain.
+ * search - which is why they live inside the search field and hand their result
+ * to the same `runSearch`. Anything the text path gains, these gain.
  *
  * Both are behind flags (`search.voice`, `search.visual`) and both simply do
  * not render when switched off, rather than appearing and refusing. A control
@@ -24,6 +24,9 @@ import { useSpeech } from './useSpeech'
 /** Photographs bigger than this are refused before upload rather than after. */
 const MAX_BYTES = 12 * 1024 * 1024
 
+const iconActionClass =
+  'grid size-9 place-items-center rounded-full text-black transition-colors hover:bg-black/5 disabled:opacity-60'
+
 export function VoiceSearchButton({ onHeard }: { onHeard: (text: string) => void }) {
   const enabled = useFlag('search.voice')
   const { language, t } = useLanguage()
@@ -41,37 +44,42 @@ export function VoiceSearchButton({ onHeard }: { onHeard: (text: string) => void
   // one should not be invisible.
   if (state === 'unsupported-language') {
     return (
-      <p className="mt-2 text-xs text-sand-500">{t('search.voice.unsupportedLanguage')}</p>
+      <span className="px-1 text-[11px] leading-tight text-sand-400" title={t('search.voice.unsupportedLanguage')}>
+        {t('search.voice.unsupportedLanguage')}
+      </span>
     )
   }
 
   const listening = state === 'listening'
 
   return (
-    <div>
+    <div className="relative">
       <button
         type="button"
         onClick={listening ? stop : start}
         aria-pressed={listening}
         aria-label={listening ? t('search.voice.stop') : t('search.voice.start')}
         className={cn(
-          'grid size-9 place-items-center rounded-lg border transition-colors',
-          listening
-            ? 'border-red-500/60 bg-red-950 text-red-300'
-            : 'border-sand-300 bg-sand-100 text-sand-600 hover:bg-sand-200',
+          iconActionClass,
+          listening && 'bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700',
         )}
       >
         {state === 'denied' ? (
-          <MicOff className="size-4" aria-hidden />
+          <MicOff className="size-4 text-black" aria-hidden />
         ) : (
-          <Mic className={cn('size-4', listening && 'animate-pulse')} aria-hidden />
+          <Mic className={cn('size-4 text-black', listening && 'animate-pulse text-red-600')} aria-hidden />
         )}
       </button>
       {state === 'denied' && (
-        <p className="mt-2 text-xs text-sand-500">{t('search.voice.denied')}</p>
+        <p className="absolute right-0 top-full z-10 mt-1 w-max max-w-44 rounded-md bg-sand-100 px-2 py-1 text-xs text-sand-600 shadow-sm">
+          {t('search.voice.denied')}
+        </p>
       )}
       {listening && (
-        <p className="mt-2 text-xs text-sand-500" role="status">
+        <p
+          className="absolute right-0 top-full z-10 mt-1 w-max rounded-md bg-sand-100 px-2 py-1 text-xs text-sand-600 shadow-sm"
+          role="status"
+        >
           {t('search.voice.listening')}
         </p>
       )}
@@ -97,18 +105,18 @@ export function VisualSearchButton({
   if (!enabled) return null
 
   return (
-    <>
+    <div className="relative">
       <button
         type="button"
         onClick={() => input.current?.click()}
         disabled={search.isPending}
         aria-label={t('search.visual.button')}
-        className="grid size-9 place-items-center rounded-lg border border-sand-300 bg-sand-100 text-sand-600 transition-colors hover:bg-sand-200 disabled:opacity-60"
+        className={iconActionClass}
       >
         {search.isPending ? (
-          <Loader2 className="size-4 animate-spin" aria-hidden />
+          <Loader2 className="size-4 animate-spin text-black" aria-hidden />
         ) : (
-          <Camera className="size-4" aria-hidden />
+          <Camera className="size-4 text-black" aria-hidden />
         )}
       </button>
       <input
@@ -135,15 +143,15 @@ export function VisualSearchButton({
         }}
       />
       {tooBig && (
-        <p className="mt-2 text-xs text-red-300" role="alert">
+        <p className="absolute right-0 top-full z-10 mt-1 w-max max-w-44 rounded-md bg-sand-100 px-2 py-1 text-xs text-red-600 shadow-sm" role="alert">
           {t('search.visual.tooBig')}
         </p>
       )}
       {search.isError && (
-        <p className="mt-2 text-xs text-red-300" role="alert">
+        <p className="absolute right-0 top-full z-10 mt-1 w-max max-w-52 rounded-md bg-sand-100 px-2 py-1 text-xs text-red-600 shadow-sm" role="alert">
           {(search.error as Error).message}
         </p>
       )}
-    </>
+    </div>
   )
 }

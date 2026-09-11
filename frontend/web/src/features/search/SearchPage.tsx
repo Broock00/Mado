@@ -20,7 +20,7 @@ import { useDiscoveryParams, useToggleSave } from '@/app/hooks'
 import { useAppStore, isLocationReady } from '@/app/store'
 import { PlaceFilter } from '@/features/discover/PlaceFilter'
 import { ExperienceCard, ExperienceCardSkeleton } from '@/features/experiences/ExperienceCard'
-import { Badge, Button, EmptyState, Input } from '@/design-system/primitives'
+import { Badge, EmptyState } from '@/design-system/primitives'
 import { cn } from '@/lib/utils'
 import { useLanguage } from '@/app/language-context'
 import { VisualSearchButton, VoiceSearchButton } from './SearchInputs'
@@ -78,13 +78,31 @@ export function SearchPage() {
     setSearchParams(updated, { replace: true })
   }
 
+  function toggleFreeOnly() {
+    setFreeOnly((value) => {
+      const next = !value
+      // Re-run immediately: a filter that needs a second click to apply
+      // reads as broken. Defer so state has committed before we read URL.
+      setTimeout(() => {
+        const updated = new URLSearchParams(searchParams)
+        if (input.trim()) updated.set('q', input.trim())
+        else updated.delete('q')
+        if (next) updated.set('free', 'true')
+        else updated.delete('free')
+        setSearchParams(updated, { replace: true })
+        setSubmitted(input.trim())
+      }, 0)
+      return next
+    })
+  }
+
   const mappable = (data?.results ?? []).filter(
     (item) => item.venue?.latitude != null && item.venue?.longitude != null,
   )
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 pb-24 pt-6 sm:px-6 lg:px-8">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight text-sand-900">Search</h1>
         <PlaceFilter />
       </div>
@@ -94,51 +112,100 @@ export function SearchPage() {
           event.preventDefault()
           runSearch(input)
         }}
-        className="mb-4"
+        className="mb-5"
         role="search"
       >
-        <div className="relative">
-          <SearchIcon
-            className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-sand-400"
-            aria-hidden
-          />
-          <Input
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            placeholder="Try: somewhere with live music tonight"
-            aria-label="Search experiences"
-            className="h-12 pl-10 pr-28"
-          />
-          <Button type="submit" size="sm" className="absolute right-2 top-1/2 -translate-y-1/2">
-            Search
-          </Button>
-        </div>
+        {/*
+          One surface, not a row of separate controls. The field is the product;
+          voice, camera, free-only and submit are actions on that field. Mobile
+          keeps the same shell and moves submit + free-only onto a footer strip
+          inside it so thumbs still reach them without a button junk drawer.
+        */}
+        <div
+          className={cn(
+            'overflow-hidden rounded-2xl border border-sand-300 bg-white',
+            'shadow-[0_1px_2px_rgba(28,25,23,0.04)]',
+            'transition-[border-color,box-shadow] focus-within:border-brand-600',
+            'focus-within:shadow-[0_0_0_3px_rgba(234,88,12,0.15)]',
+          )}
+        >
+          <div className="flex items-center gap-1 pl-3.5 pr-1.5 sm:pr-2">
+            <SearchIcon className="size-4 shrink-0 text-black" aria-hidden />
+            <input
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder="Try: somewhere with live music tonight"
+              aria-label="Search experiences"
+              className="h-12 min-w-0 flex-1 bg-transparent text-[15px] text-black outline-none placeholder:text-neutral-400"
+            />
+            <div className="flex shrink-0 items-center gap-0.5">
+              <VoiceSearchButton
+                onHeard={(heard) => {
+                  // Filled in, not submitted. Recognition mishears, and a query
+                  // that runs before anybody has read it turns a misheard word
+                  // into results with no clue what went wrong.
+                  setInput(heard)
+                  setLook(null)
+                }}
+              />
+              <VisualSearchButton
+                onResult={(result) => {
+                  setLook(result.look)
+                  setInput(result.look.terms.join(' '))
+                  setSubmitted(result.look.unclear ? '' : result.look.terms.join(' '))
+                }}
+              />
+              <span className="mx-1 hidden h-5 w-px bg-neutral-200 sm:block" aria-hidden />
+              <button
+                type="button"
+                onClick={toggleFreeOnly}
+                aria-pressed={freeOnly}
+                className={cn(
+                  'hidden h-9 items-center gap-1.5 rounded-full px-3 text-sm transition-colors sm:inline-flex',
+                  freeOnly
+                    ? 'bg-brand-700 text-white'
+                    : 'text-black hover:bg-black/5',
+                )}
+              >
+                <SlidersHorizontal className="size-3.5" aria-hidden />
+                Free
+              </button>
+              <button
+                type="submit"
+                className="ml-0.5 hidden h-9 items-center rounded-full bg-brand-700 px-4 text-sm font-medium text-white transition-colors hover:bg-brand-800 sm:inline-flex"
+              >
+                Search
+              </button>
+            </div>
+          </div>
 
-        {/* Beside the box rather than inside it: both are alternatives to
-            typing, not decorations on the field, and a row of icons crammed
-            into the input leaves nowhere to explain what they did. */}
-        <div className="mt-2 flex flex-wrap items-start gap-2">
-          <VoiceSearchButton
-            onHeard={(heard) => {
-              // Filled in, not submitted. Recognition mishears, and a query
-              // that runs before anybody has read it turns a misheard word
-              // into results with no clue what went wrong.
-              setInput(heard)
-              setLook(null)
-            }}
-          />
-          <VisualSearchButton
-            onResult={(result) => {
-              setLook(result.look)
-              setInput(result.look.terms.join(' '))
-              setSubmitted(result.look.unclear ? '' : result.look.terms.join(' '))
-            }}
-          />
+          <div className="flex items-center gap-2 border-t border-sand-200 px-2.5 py-1.5 sm:hidden">
+            <button
+              type="button"
+              onClick={toggleFreeOnly}
+              aria-pressed={freeOnly}
+              className={cn(
+                'inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg text-xs font-medium transition-colors',
+                freeOnly
+                  ? 'bg-brand-700 text-white'
+                  : 'bg-neutral-100 text-black',
+              )}
+            >
+              <SlidersHorizontal className="size-3" aria-hidden />
+              Free only
+            </button>
+            <button
+              type="submit"
+              className="inline-flex h-8 flex-1 items-center justify-center rounded-lg bg-brand-700 text-xs font-medium text-white"
+            >
+              Search
+            </button>
+          </div>
         </div>
       </form>
 
       {look && (
-        <div className="mb-4 rounded-xl border border-sand-200 bg-sand-100 px-4 py-3">
+        <div className="mb-4 rounded-xl border border-sand-200 bg-sand-50 px-4 py-3">
           {look.unclear ? (
             <>
               <p className="text-sm font-medium text-sand-900">{t('search.visual.unclear')}</p>
@@ -161,28 +228,6 @@ export function SearchPage() {
           )}
         </div>
       )}
-
-      <div className="mb-6 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => {
-            setFreeOnly((value) => !value)
-            // Re-run immediately: a filter that needs a second click to apply
-            // reads as broken.
-            setTimeout(() => runSearch(input), 0)
-          }}
-          aria-pressed={freeOnly}
-          className={cn(
-            'inline-flex items-center gap-1.5 rounded-pill border px-3 py-1.5 text-sm transition-colors',
-            freeOnly
-              ? 'border-brand-500 bg-brand-900/40 text-brand-200'
-              : 'border-sand-300 bg-sand-100 text-sand-700 hover:bg-sand-200',
-          )}
-        >
-          <SlidersHorizontal className="size-3.5" aria-hidden />
-          Free only
-        </button>
-      </div>
 
       {!submitted && (
         <div>
