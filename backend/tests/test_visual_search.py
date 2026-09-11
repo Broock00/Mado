@@ -221,7 +221,7 @@ class TestItIsAnInputMethodNotASecondSearch:
         from app.api.routes import discovery
 
         source = inspect.getsource(discovery.visual_search)
-        assert "search_experiences" in source
+        assert "search_in_area" in source
         assert "_context" in source
 
     def test_it_is_behind_a_flag(self):

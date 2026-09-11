@@ -18,6 +18,7 @@ import {
 import { api } from '@/lib/api'
 import { useDiscoveryParams, useToggleSave } from '@/app/hooks'
 import { useAppStore, isLocationReady } from '@/app/store'
+import { PlaceFilter } from '@/features/discover/PlaceFilter'
 import { ExperienceCard, ExperienceCardSkeleton } from '@/features/experiences/ExperienceCard'
 import { Badge, Button, EmptyState, Input } from '@/design-system/primitives'
 import { cn } from '@/lib/utils'
@@ -83,7 +84,10 @@ export function SearchPage() {
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 pb-24 pt-6 sm:px-6 lg:px-8">
-      <h1 className="mb-4 text-2xl font-semibold tracking-tight text-sand-900">Search</h1>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight text-sand-900">Search</h1>
+        <PlaceFilter />
+      </div>
 
       <form
         onSubmit={(event) => {

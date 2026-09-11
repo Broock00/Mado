@@ -495,6 +495,11 @@ export interface Place {
   kind?: string | null
   /** How far around this place to look first - a road is not a borough. */
   suggestedRadiusKm: number
+  /**
+   * south, west, north, east when the place has real extent. Sent back on
+   * search so a borough is a box rather than a circle around its centre.
+   */
+  boundingBox?: number[] | null
   provider: string
   /** The provider's identifier, kept when saving a venue against this place. */
   placeId?: string | null

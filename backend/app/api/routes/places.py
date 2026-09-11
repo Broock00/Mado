@@ -79,6 +79,10 @@ class PlaceOut(CamelModel):
     # How far around this place it makes sense to look first. A street is a few
     # minutes' walk; a city is the whole evening.
     suggested_radius_km: float
+    # south, west, north, east - present when the place has real extent that a
+    # radius cannot represent (a borough, a region). Omitted for a country,
+    # whose box is the wrong tool, and for a street, which is a point.
+    bounding_box: list[float] | None = None
     provider: str
     # The provider's identifier for this place. Sent back so a client can save a
     # venue against it - the one part of a Google result that may be stored
@@ -147,6 +151,7 @@ def _out(place: places_module.Place) -> PlaceOut:
         postcode=place.postcode,
         kind=place.kind,
         suggested_radius_km=place.suggested_radius_km,
+        bounding_box=list(place.bounding_box) if place.bounding_box else None,
         provider=place.provider,
         place_id=place.place_id,
         attributions=list(place.attributions),

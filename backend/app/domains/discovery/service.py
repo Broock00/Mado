@@ -544,6 +544,126 @@ class DiscoveryService:
 
     # ----------------------------------------------------------------- search
 
+    async def search_in_area(
+        self,
+        query: str,
+        ctx: RankingContext,
+        *,
+        area: Area | None = None,
+        city_slug: str | None = None,
+        category_slugs: list[str] | None = None,
+        free_only: bool = False,
+        experience_type: str | None = None,
+        limit: int = 24,
+    ) -> SearchOutcome:
+        """Search that respects where the explorer asked to look.
+
+        Meilisearch can filter by ``city_slug`` only. When the area is a country,
+        a bounding box, or a point with a radius - shapes the index cannot
+        express - retrieval goes through Postgres ``scope_to_area`` and the
+        words are matched on the fields an explorer would read. Skipping that
+        branch is how a USA search returned listings from Addis and London.
+
+        A city slug (on the area, or resolved beside it) still uses hybrid
+        index + vector retrieval. Nowhere at all keeps the intentional global
+        keyword search.
+        """
+        geometric = area is not None and area.requires_geometric_search
+        if geometric:
+            return await self._search_experiences_in_geometry(
+                query,
+                ctx,
+                area=area,
+                category_slugs=category_slugs,
+                free_only=free_only,
+                experience_type=experience_type,
+                limit=limit,
+            )
+
+        slug = None
+        if area is not None and area.city_slug:
+            slug = area.city_slug
+        elif city_slug:
+            slug = city_slug
+
+        if query.strip():
+            return await self.search_experiences(
+                query,
+                ctx,
+                city_slug=slug,
+                category_slugs=category_slugs,
+                free_only=free_only,
+                experience_type=experience_type,
+                limit=limit,
+            )
+
+        # Empty query with a city still means "what is there" - browse the area
+        # rather than inventing a keyword. The HTTP search route always sends a
+        # query; the concierge sometimes does not.
+        experiences = await catalog_repo.query_experiences(
+            self.session,
+            area=area if area is not None else (Area(city_slug=slug) if slug else None),
+            category_slugs=category_slugs,
+            free_only=free_only,
+            experience_type=experience_type,
+            required_suitability=sorted(ctx.required_suitability),
+            limit=CANDIDATE_POOL,
+        )
+        items = self.summarize(
+            experiences, ctx, limit=limit, diversify=False, weights=SEARCH_WEIGHTS
+        )
+        return SearchOutcome(
+            items=items,
+            total=len(experiences),
+            query=query,
+            candidate_ids={exp.id for exp in experiences},
+        )
+
+    async def _search_experiences_in_geometry(
+        self,
+        query: str,
+        ctx: RankingContext,
+        *,
+        area: Area,
+        category_slugs: list[str] | None = None,
+        free_only: bool = False,
+        experience_type: str | None = None,
+        limit: int = 24,
+    ) -> SearchOutcome:
+        """Keyword match inside an Area the search index cannot filter."""
+        experiences = await catalog_repo.query_experiences(
+            self.session,
+            area=area,
+            category_slugs=category_slugs,
+            free_only=free_only,
+            experience_type=experience_type,
+            required_suitability=sorted(ctx.required_suitability),
+            # Wider than a page: ranking still needs room after the word filter.
+            limit=max(CANDIDATE_POOL, 120) if query.strip() else CANDIDATE_POOL,
+        )
+        if query.strip():
+            needle = query.casefold()
+            experiences = [
+                experience
+                for experience in experiences
+                if needle in (experience.title or "").casefold()
+                or needle in (experience.summary or "").casefold()
+                or needle in (experience.description or "").casefold()
+            ]
+        items = self.summarize(
+            experiences, ctx, limit=limit, diversify=False, weights=SEARCH_WEIGHTS
+        )
+        return SearchOutcome(
+            items=items,
+            total=len(experiences),
+            query=query,
+            # Honest: this path never consulted the index, by design - geography
+            # mattered more than hybrid retrieval. Not the same as "index down".
+            degraded=False,
+            semantic=False,
+            candidate_ids={exp.id for exp in experiences},
+        )
+
     async def search_experiences(
         self,
         query: str,
@@ -569,6 +689,9 @@ class DiscoveryService:
         Each retriever is optional. If the index is down we fall back to the
         database; if embeddings are missing the keyword ranking simply stands
         alone. Search degrades, it does not break.
+
+        Callers that have an :class:`Area` must use :meth:`search_in_area`
+        instead - this method only understands a city slug.
         """
         filters: list[str] = []
         if city_slug:
@@ -734,6 +857,7 @@ def build_context(
     now: datetime | None = None,
     timezone: str = "Africa/Addis_Ababa",
     inferred: InferredPreferences | None = None,
+    located_remotely: bool = False,
 ) -> RankingContext:
     """Assemble a :class:`RankingContext` from request and profile inputs.
 
@@ -778,4 +902,5 @@ def build_context(
         preferred_suitability=set(preferred_suitability or set()),
         saved_experience_ids=saved_ids or set(),
         reposted_experience_ids=reposted_ids or set(),
+        located_remotely=located_remotely,
     )

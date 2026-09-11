@@ -227,50 +227,19 @@ async def _search_experiences(
 ) -> ToolResult:
     service = DiscoveryService(session)
 
-    # The search index knows nothing about geometry: it can filter by city slug
-    # and nothing else. So an area that is a shape rather than a city - a
-    # borough, a country - goes to the database instead, which can.
-    #
-    # Skipping this is how "what coffee is there in Kenya" came back with a list
-    # of Addis Ababa cafes under the heading "here is what I found in Kenya".
-    # The index was asked with no filter at all, because the area had no city
-    # slug to give it.
-    geographic = area is not None and (area.has_box or bool(area.country_code))
-
-    if query.strip() and not geographic:
-        outcome = await service.search_experiences(
-            query,
-            ctx,
-            city_slug=area.city_slug if area else None,
-            category_slugs=categories,
-            free_only=free_only,
-            limit=limit,
-        )
-        items = outcome.items
-    else:
-        experiences = await catalog_repo.query_experiences(
-            session,
-            area=area,
-            category_slugs=categories,
-            free_only=free_only,
-            limit=120 if query.strip() else 60,
-        )
-        if query.strip():
-            # Matched here rather than by the index, on the fields an explorer
-            # would have read. Cruder than the hybrid retrieval, and it is
-            # scoped to the right part of the world, which matters more.
-            needle = query.casefold()
-            matched = [
-                experience
-                for experience in experiences
-                if needle in (experience.title or "").casefold()
-                or needle in (experience.summary or "").casefold()
-                or needle in (experience.description or "").casefold()
-            ]
-            # Nothing matched the words, but the area is still the answer to
-            # "what is there" - the caller decides whether that is useful.
-            experiences = matched
-        items = service.summarize(experiences, ctx, limit=limit)
+    # Same rule as GET /search: countries, boxes and radii go through the
+    # database; a city slug (or nowhere) uses the index. Kept as one method so
+    # the concierge and the search page cannot disagree about Kenya again.
+    outcome = await service.search_in_area(
+        query,
+        ctx,
+        area=area,
+        city_slug=area.city_slug if area else None,
+        category_slugs=categories,
+        free_only=free_only,
+        limit=limit,
+    )
+    items = outcome.items
 
     return ToolResult(
         tool="search_experiences",

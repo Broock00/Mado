@@ -293,6 +293,22 @@ class Area:
             and not self.city_slug
         )
 
+    @property
+    def requires_geometric_search(self) -> bool:
+        """True when Meilisearch cannot express this area.
+
+        The index filters by ``city_slug`` and nothing else. A country, a
+        bounding box, or a point-and-radius therefore cannot go through it:
+        asking with no city filter is how "coffee in the USA" returned cafes
+        in Addis Ababa and London, and asking with a nearest-city slug would
+        quietly replace a neighbourhood circle with a whole city.
+        """
+        if self.is_everywhere:
+            return False
+        if self.country_code or self.has_box:
+            return True
+        return self.has_point
+
     def widened(self, radius_km: float) -> Area:
         return Area(
             latitude=self.latitude,

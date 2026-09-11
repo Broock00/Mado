@@ -316,3 +316,47 @@ class TestNothingDefaultsToOneCityAnyMore:
         from app.api.routes import discovery
 
         assert "if not params.city:" not in inspect.getsource(discovery.search)
+
+    def test_search_scopes_by_the_request_area(self):
+        """USA selected used to reach the API as country=US and then be ignored:
+        Meilisearch was asked with no city filter and returned Addis and London.
+        The area the query built must be the area search retrieves in."""
+        import inspect
+
+        from app.api.routes import discovery
+
+        search_source = inspect.getsource(discovery.search)
+        assert "search_in_area" in search_source
+        assert "area=params.area" in search_source
+        # Not the old city-only sponsorship shape that dropped countries.
+        assert "Area(city_slug=params.city)" not in search_source
+
+        visual_source = inspect.getsource(discovery.visual_search)
+        assert "search_in_area" in visual_source
+        assert "area=params.area" in visual_source
+
+    def test_a_country_is_not_resolved_to_a_city_from_its_centroid(self):
+        """The geographic centre of the United States is in Kansas. Inventing a
+        city there would mislabel a country search and risk city-scoping it."""
+        import inspect
+
+        from app.api.routes import discovery
+
+        source = inspect.getsource(discovery.discovery_query)
+        assert "elif country:" in source
+        assert 'resolved_by = RESOLVED_BY_CHOSEN' in source
+
+    def test_geometric_areas_cannot_use_the_index_alone(self):
+        from app.domains.catalog.repository import Area
+
+        assert Area(country_code="US").requires_geometric_search
+        assert Area(
+            latitude=40.7,
+            longitude=-74.0,
+            bounding_box=(40.5, -74.3, 40.9, -73.7),
+        ).requires_geometric_search
+        assert Area(latitude=7.5, longitude=37.8, radius_km=5.0).requires_geometric_search
+        assert not Area(city_slug="addis-ababa").requires_geometric_search
+        assert not Area().requires_geometric_search
+        # Country without a radius is still geometric - has_point needs radius.
+        assert Area(latitude=39.8, longitude=-98.5, country_code="US").requires_geometric_search

@@ -132,6 +132,12 @@ export function PlaceFilter() {
         // something small enough to be a circle relies on the radius above.
         countryCode:
           (found.kind || '').toLowerCase() === 'country' ? found.countryCode : null,
+        bbox:
+          (found.kind || '').toLowerCase() !== 'country' &&
+          Array.isArray(found.boundingBox) &&
+          found.boundingBox.length === 4
+            ? found.boundingBox.join(',')
+            : null,
       })
       setTerm('')
       setOpen(false)

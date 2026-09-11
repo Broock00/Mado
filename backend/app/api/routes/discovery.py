@@ -137,7 +137,11 @@ async def discovery_query(
     area: Area | None = None
 
     if country:
-        area = Area(latitude=latitude, longitude=longitude, country_code=country)
+        area = Area(
+            latitude=latitude,
+            longitude=longitude,
+            country_code=country.upper(),
+        )
 
     if area is None and bbox and latitude is not None and longitude is not None:
         try:
@@ -184,6 +188,12 @@ async def discovery_query(
         # here would label a Brooklyn search with the city they are sitting in.
         resolved_by = RESOLVED_BY_CHOSEN
         city = None
+    elif country:
+        # The country *is* the place. A nearest-city guess from its centroid
+        # (Kansas for the United States) would mislabel the search and risk
+        # quietly city-scoping what must stay country-scoped.
+        resolved_by = RESOLVED_BY_CHOSEN
+        city = None
     else:
         # The city is still resolved, because the interface says where it is
         # showing and the seeded catalogue is organised that way. It no longer
@@ -228,6 +238,17 @@ async def _context(session, user, params: DiscoveryQuery):
     # that stays None rather than becoming "fine".
     today = await weather.forecast_for(params.latitude, params.longitude, days=1)
 
+    # A country, a box, or a place searched by name is somewhere they are asking
+    # about, not somewhere they are standing. Without this, cards and reasons
+    # read distances as "from you".
+    located_remotely = bool(
+        params.place_label
+        or (
+            params.area is not None
+            and (bool(params.area.country_code) or params.area.has_box)
+        )
+    )
+
     return build_context(
         latitude=params.latitude,
         longitude=params.longitude,
@@ -238,6 +259,7 @@ async def _context(session, user, params: DiscoveryQuery):
         required_suitability=set(params.requires),
         preferred_suitability=set(params.prefers),
         inferred=inferred,
+        located_remotely=located_remotely,
     )
 
 
@@ -444,9 +466,10 @@ async def search(
     explorer = ExplorerService(session)
     discovery = DiscoveryService(session)
 
-    outcome = await discovery.search_experiences(
+    outcome = await discovery.search_in_area(
         q,
         ctx,
+        area=params.area,
         city_slug=params.city,
         category_slugs=category,
         free_only=free,
@@ -460,7 +483,7 @@ async def search(
     results = await discovery.with_sponsored(
         outcome.items,
         ctx,
-        area=Area(city_slug=params.city) if params.city else None,
+        area=params.area,
         # Only what this search itself retrieved. A promotion lifts a listing
         # the explorer's own query found; it never introduces one it did not.
         eligible_ids=outcome.candidate_ids,
@@ -671,8 +694,12 @@ async def visual_search(
     # gained yesterday, this gets today.
     ctx = await _context(session, user, params)
     discovery = DiscoveryService(session)
-    outcome = await discovery.search_experiences(
-        look.query, ctx, city_slug=params.city, limit=clamp_limit(params.limit)
+    outcome = await discovery.search_in_area(
+        look.query,
+        ctx,
+        area=params.area,
+        city_slug=params.city,
+        limit=clamp_limit(params.limit),
     )
 
     # The same slot the typed search sells, on the same terms. A photograph is
@@ -683,7 +710,7 @@ async def visual_search(
     results = await discovery.with_sponsored(
         outcome.items,
         ctx,
-        area=Area(city_slug=params.city) if params.city else None,
+        area=params.area,
         eligible_ids=outcome.candidate_ids,
     )
     await session.commit()
