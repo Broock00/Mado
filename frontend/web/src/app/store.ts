@@ -10,12 +10,45 @@ import { persist } from 'zustand/middleware'
 import type { ChosenPlace, Me } from '@/lib/types'
 import { tokenStore } from '@/lib/api'
 
-interface LocationState {
+/**
+ * Lifecycle of "Use my location".
+ *
+ * `ready` is the only state whose coordinates may reach nearby APIs. Coarse
+ * network/IP successes land in `too_vague` rather than `ready`, so a wrong city
+ * cannot silently rank the feed. `denied` is permission only - timeouts and
+ * hardware failures are `unavailable`, so the explorer can try again.
+ */
+export type DeviceLocationStatus =
+  | 'idle'
+  | 'requesting'
+  | 'ready'
+  | 'denied'
+  | 'unavailable'
+  | 'too_vague'
+
+export interface LocationState {
   latitude: number | null
   longitude: number | null
-  /** Explicit consent, per spec PRODUCT-00 principle 9 - never assumed. */
-  granted: boolean
-  denied: boolean
+  /** Metres of uncertainty from the Geolocation API. Null when not ready. */
+  accuracyMetres: number | null
+  /** Explicit consent lifecycle, per spec PRODUCT-00 principle 9. */
+  status: DeviceLocationStatus
+}
+
+export const IDLE_LOCATION: LocationState = {
+  latitude: null,
+  longitude: null,
+  accuracyMetres: null,
+  status: 'idle',
+}
+
+/** Coordinates may be sent to discover / autocomplete / concierge only then. */
+export function isLocationReady(location: LocationState): boolean {
+  return (
+    location.status === 'ready' &&
+    location.latitude != null &&
+    location.longitude != null
+  )
 }
 
 interface AppState {
@@ -37,8 +70,11 @@ interface AppState {
   setUser: (user: Me | null) => void
   setCity: (slug: string | null) => void
   setPlace: (place: ChosenPlace | null) => void
-  setLocation: (latitude: number, longitude: number) => void
-  denyLocation: () => void
+  beginLocationRequest: () => void
+  setLocationReady: (latitude: number, longitude: number, accuracyMetres: number) => void
+  setLocationDenied: () => void
+  setLocationUnavailable: () => void
+  setLocationTooVague: (accuracyMetres: number | null) => void
   clearLocation: () => void
   toggleConcierge: (open?: boolean) => void
   signOut: () => void
@@ -50,18 +86,60 @@ export const useAppStore = create<AppState>()(
       user: null,
       citySlug: null,
       place: null,
-      location: { latitude: null, longitude: null, granted: false, denied: false },
+      location: { ...IDLE_LOCATION },
       conciergeOpen: false,
 
       setUser: (user) => set({ user }),
       setCity: (citySlug) => set({ citySlug }),
       setPlace: (place) => set({ place }),
-      setLocation: (latitude, longitude) =>
-        set({ location: { latitude, longitude, granted: true, denied: false } }),
-      denyLocation: () =>
-        set({ location: { latitude: null, longitude: null, granted: false, denied: true } }),
-      clearLocation: () =>
-        set({ location: { latitude: null, longitude: null, granted: false, denied: false } }),
+      beginLocationRequest: () =>
+        set({
+          // Clear coords while requesting so a previous ready fix cannot keep
+          // driving nearby APIs under a "finding you" banner.
+          location: {
+            latitude: null,
+            longitude: null,
+            accuracyMetres: null,
+            status: 'requesting',
+          },
+        }),
+      setLocationReady: (latitude, longitude, accuracyMetres) =>
+        set({
+          location: {
+            latitude,
+            longitude,
+            accuracyMetres,
+            status: 'ready',
+          },
+        }),
+      setLocationDenied: () =>
+        set({
+          location: {
+            latitude: null,
+            longitude: null,
+            accuracyMetres: null,
+            status: 'denied',
+          },
+        }),
+      setLocationUnavailable: () =>
+        set({
+          location: {
+            latitude: null,
+            longitude: null,
+            accuracyMetres: null,
+            status: 'unavailable',
+          },
+        }),
+      setLocationTooVague: (accuracyMetres) =>
+        set({
+          location: {
+            latitude: null,
+            longitude: null,
+            accuracyMetres,
+            status: 'too_vague',
+          },
+        }),
+      clearLocation: () => set({ location: { ...IDLE_LOCATION } }),
       toggleConcierge: (open) =>
         set((state) => ({ conciergeOpen: open ?? !state.conciergeOpen })),
       signOut: () => {

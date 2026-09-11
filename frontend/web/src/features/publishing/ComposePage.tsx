@@ -26,7 +26,7 @@ import {
   X,
 } from 'lucide-react'
 import { ApiError, api } from '@/lib/api'
-import { useAppStore } from '@/app/store'
+import { isLocationReady, useAppStore } from '@/app/store'
 import type { PickedLocation } from '@/features/map/LocationPicker'
 import { CityPicker } from '@/features/map/CityPicker'
 import { FALLBACK_CENTRE, isAreaPick } from '@/features/map/types'
@@ -249,14 +249,14 @@ export function ComposePage() {
    * used to cost the whole post.
    */
   const mapCentre = useMemo(() => {
-    if (explorerLocation.latitude != null && explorerLocation.longitude != null) {
-      return { latitude: explorerLocation.latitude, longitude: explorerLocation.longitude }
+    if (isLocationReady(explorerLocation)) {
+      return { latitude: explorerLocation.latitude!, longitude: explorerLocation.longitude! }
     }
     if (browsingPlace) {
       return { latitude: browsingPlace.latitude, longitude: browsingPlace.longitude }
     }
     return FALLBACK_CENTRE
-  }, [explorerLocation.latitude, explorerLocation.longitude, browsingPlace])
+  }, [explorerLocation, browsingPlace])
 
   // Where it is decides, unless the publisher says otherwise. Sending nothing
   // lets the server apply the same rule from the venue's own city, so the two

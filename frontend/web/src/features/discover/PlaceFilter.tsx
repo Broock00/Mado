@@ -30,7 +30,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Check, ChevronDown, Loader2, MapPin, Search, X } from 'lucide-react'
 
 import { api, newPlaceSessionToken } from '@/lib/api'
-import { useAppStore } from '@/app/store'
+import { isLocationReady, useAppStore } from '@/app/store'
 import { useLocationContext, useRequestLocation } from '@/app/hooks'
 import { cn } from '@/lib/utils'
 
@@ -50,6 +50,9 @@ export function PlaceFilter() {
   const [failed, setFailed] = useState(false)
   const container = useRef<HTMLDivElement>(null)
   const session = useRef(newPlaceSessionToken())
+
+  const ready = isLocationReady(location)
+  const requesting = location.status === 'requesting'
 
   // Typing is not a search. Each keystroke would be a request to somebody
   // else's service, which their terms of use would rightly object to - and
@@ -85,8 +88,9 @@ export function PlaceFilter() {
     }
   }, [open])
 
+  // Bias autocomplete only with a ready fix - never with a coarse network guess.
   const near =
-    location.granted && location.latitude != null && location.longitude != null
+    ready && location.latitude != null && location.longitude != null
       ? { lat: location.latitude, lng: location.longitude }
       : null
 
@@ -139,12 +143,22 @@ export function PlaceFilter() {
     }
   }
 
-  // What the button says. Never "near you" for somewhere the explorer is not.
+  const nearMeHint = (() => {
+    if (ready) return null
+    if (requesting) return 'Finding you…'
+    if (location.status === 'denied') return 'Location blocked — search a place'
+    if (location.status === 'too_vague') return 'Need a more precise location'
+    if (location.status === 'unavailable') return 'Location unavailable — try again'
+    return 'Needs your precise location'
+  })()
+
+  // What the button says. Never "near you" for somewhere the explorer is not,
+  // and never for a fix that failed the accuracy gate.
   const label = place
     ? place.label
     : context?.resolved && context.place
       ? `Near you · ${context.place.area || context.place.label}`
-      : location.granted
+      : ready
         ? 'Near you'
         : 'Anywhere'
 
@@ -157,7 +171,7 @@ export function PlaceFilter() {
         aria-haspopup="dialog"
         className="inline-flex max-w-[16rem] items-center gap-1.5 rounded-lg border border-sand-300 bg-sand-100 px-3 py-2 text-sm font-medium text-sand-800 hover:bg-sand-200"
       >
-        {resolving ? (
+        {resolving || requesting ? (
           <Loader2 className="size-4 shrink-0 animate-spin text-sand-500" aria-hidden />
         ) : (
           <MapPin className="size-4 shrink-0 text-sand-500" aria-hidden />
@@ -197,25 +211,26 @@ export function PlaceFilter() {
           <div className="mt-1 max-h-72 overflow-y-auto">
             <button
               type="button"
+              disabled={requesting}
               onClick={() => {
                 setPlace(null)
-                if (!location.granted) requestLocation()
+                if (!ready) requestLocation()
                 setOpen(false)
               }}
               className={cn(
-                'flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-sand-200',
-                !place && 'font-medium text-brand-400',
+                'flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-sand-200 disabled:opacity-60',
+                !place && ready && 'font-medium text-brand-400',
               )}
             >
               <span>
                 Near me
-                {!location.granted && (
+                {nearMeHint && (
                   <span className="block text-xs font-normal text-sand-500">
-                    Needs your location
+                    {nearMeHint}
                   </span>
                 )}
               </span>
-              {!place && <Check className="size-4 shrink-0" aria-hidden />}
+              {!place && ready && <Check className="size-4 shrink-0" aria-hidden />}
             </button>
 
             {debounced.length >= 2 && (

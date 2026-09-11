@@ -16,7 +16,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarClock, Route, Sparkles, Trash2, TriangleAlert } from 'lucide-react'
 
 import { api } from '@/lib/api'
-import { useAppStore } from '@/app/store'
+import { isLocationReady, useAppStore } from '@/app/store'
 import type { Plan, PlanRequestInput } from '@/lib/types'
 import { Button, Card, EmptyState, Input, SectionHeading } from '@/design-system/primitives'
 import { PlanSummary, PlanTimeline } from './PlanTimeline'
@@ -96,8 +96,8 @@ export function PlanPage() {
   const currentInput = (): PlanRequestInput => ({
     ...resolveWindow(windowKey),
     city: city ?? undefined,
-    latitude: location?.latitude ?? null,
-    longitude: location?.longitude ?? null,
+    latitude: isLocationReady(location) ? location.latitude : null,
+    longitude: isLocationReady(location) ? location.longitude : null,
     budget: freeOnly || budget === '' ? null : Number(budget),
     maxStops,
     freeOnly,
@@ -299,11 +299,11 @@ export function PlanPage() {
           </div>
         </div>
 
-        {/* The store always holds a location object, with null coordinates until
-            consent is given - so this checks for a real fix, not for the object. */}
-        {location.latitude == null && (
+        {/* Only a ready (accuracy-gated) fix counts - a too-vague network
+            estimate must not look like consent was already given. */}
+        {!isLocationReady(location) && (
           <p className="mt-4 text-sm text-sand-500">
-            Sharing your location lets the planner keep the stops close together.
+            Sharing your precise location lets the planner keep the stops close together.
           </p>
         )}
 

@@ -11,9 +11,15 @@
 
 import { Link } from 'react-router-dom'
 import { Compass, MapPin, Sparkles } from 'lucide-react'
-import { useCanvas, useLocationContext, useRequestLocation, useToggleSave } from '@/app/hooks'
+import {
+  useCanvas,
+  useLocationContext,
+  useLocationStatusMessage,
+  useRequestLocation,
+  useToggleSave,
+} from '@/app/hooks'
 import { PlaceFilter } from './PlaceFilter'
-import { useAppStore } from '@/app/store'
+import { isLocationReady, useAppStore } from '@/app/store'
 import { ExperienceCard, ExperienceCardSkeleton } from '@/features/experiences/ExperienceCard'
 import { Button, EmptyState } from '@/design-system/primitives'
 import type { FeedModule } from '@/lib/types'
@@ -24,9 +30,18 @@ export function DiscoverPage() {
   const chosen = useAppStore((s) => s.place)
   const location = useAppStore((s) => s.location)
   const requestLocation = useRequestLocation()
+  const statusMessage = useLocationStatusMessage()
   const { data: context } = useLocationContext()
 
-  const hasSomewhere = Boolean(chosen) || location.granted
+  const ready = isLocationReady(location)
+  const hasSomewhere = Boolean(chosen) || ready
+  const requesting = location.status === 'requesting'
+  const showIdlePrompt = location.status === 'idle' && !chosen
+  const showFailure =
+    !chosen &&
+    (location.status === 'denied' ||
+      location.status === 'unavailable' ||
+      location.status === 'too_vague')
 
   const where =
     chosen?.label ??
@@ -56,21 +71,41 @@ export function DiscoverPage() {
           <PlaceFilter />
         </header>
 
-        {/* Location prompt */}
-        {!location.granted && !location.denied && (
+        {showIdlePrompt && (
           <div className="mb-8 flex flex-col gap-3 rounded-xl border border-sand-200 bg-sand-100 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-start gap-3">
               <MapPin className="mt-0.5 size-5 shrink-0 text-brand-700" aria-hidden />
               <div>
                 <p className="text-sm font-medium text-white">Show me what is close by</p>
                 <p className="text-sm text-sand-500">
-                  Share your location and we will sort by walking distance.
+                  Share your precise location and we will sort by walking distance.
                 </p>
               </div>
             </div>
             <Button size="sm" onClick={requestLocation} className="shrink-0">
               Use my location
             </Button>
+          </div>
+        )}
+
+        {requesting && (
+          <div className="mb-8 flex items-start gap-3 rounded-xl border border-sand-200 bg-sand-100 p-4">
+            <MapPin className="mt-0.5 size-5 shrink-0 animate-pulse text-brand-700" aria-hidden />
+            <p className="text-sm text-sand-500">{statusMessage}</p>
+          </div>
+        )}
+
+        {showFailure && statusMessage && (
+          <div className="mb-8 flex flex-col gap-3 rounded-xl border border-sand-200 bg-sand-100 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <MapPin className="mt-0.5 size-5 shrink-0 text-sand-500" aria-hidden />
+              <p className="text-sm text-sand-500">{statusMessage}</p>
+            </div>
+            {location.status !== 'denied' && (
+              <Button size="sm" onClick={requestLocation} className="shrink-0">
+                Try again
+              </Button>
+            )}
           </div>
         )}
 
@@ -85,14 +120,19 @@ export function DiscoverPage() {
           />
         )}
 
-        {data && !hasSomewhere && (
+        {data && !hasSomewhere && !requesting && (
           <EmptyState
             icon={<Compass className="size-8 text-sand-500" />}
             title="We do not know where you are yet"
-            description="Share your location and Mado will show what is on around you, or search for anywhere above."
+            description={
+              statusMessage ??
+              'Share your precise location and Mado will show what is on around you, or search for anywhere above.'
+            }
             action={
-              !location.granted ? (
-                <Button onClick={requestLocation}>Use my location</Button>
+              location.status !== 'denied' ? (
+                <Button onClick={requestLocation}>
+                  {location.status === 'idle' ? 'Use my location' : 'Try again'}
+                </Button>
               ) : undefined
             }
           />

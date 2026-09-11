@@ -3,15 +3,21 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback } from 'react'
 import { api, tokenStore, type DiscoveryParams } from '@/lib/api'
-import { useAppStore } from '@/app/store'
+import { isLocationReady, useAppStore } from '@/app/store'
+import {
+  locationFailureMessage,
+  requestNearbyDeviceLocation,
+} from '@/lib/deviceLocation'
 import type { ExperienceSummary } from '@/lib/types'
 
 /**
  * Where discovery should look.
  *
  * A chosen place wins - somebody who searched for Brooklyn is asking about
- * Brooklyn, wherever they happen to be sitting. Otherwise the device's own
- * coordinates, which is the case that should need no interaction at all.
+ * Brooklyn, wherever they happen to be sitting. Otherwise a *ready* device
+ * fix: consented, fresh, and accurate enough for nearby. Coarse or failed
+ * geolocation must not send coordinates - that is how a network guess ranked
+ * somebody in the wrong city.
  *
  * The point is sent, never the place's name. Sending the text would re-resolve
  * it on every request, and a search that quietly resolved somewhere else the
@@ -21,6 +27,7 @@ export function useDiscoveryParams(limit = 12): DiscoveryParams {
   const citySlug = useAppStore((s) => s.citySlug)
   const place = useAppStore((s) => s.place)
   const location = useAppStore((s) => s.location)
+  const ready = isLocationReady(location)
 
   if (place) {
     return {
@@ -38,8 +45,8 @@ export function useDiscoveryParams(limit = 12): DiscoveryParams {
   }
   return {
     city: citySlug ?? undefined,
-    lat: location.granted ? location.latitude : undefined,
-    lng: location.granted ? location.longitude : undefined,
+    lat: ready ? location.latitude! : undefined,
+    lng: ready ? location.longitude! : undefined,
     limit,
   }
 }
@@ -55,9 +62,8 @@ export function useDiscoveryParams(limit = 12): DiscoveryParams {
 export function useLocationContext() {
   const location = useAppStore((s) => s.location)
   const place = useAppStore((s) => s.place)
-  const enabled = Boolean(
-    !place && location.granted && location.latitude != null && location.longitude != null,
-  )
+  const ready = isLocationReady(location)
+  const enabled = Boolean(!place && ready)
 
   return useQuery({
     queryKey: ['place-context', location.latitude, location.longitude],
@@ -200,20 +206,78 @@ export function useFlag(key: string): boolean {
   return data?.[key] ?? false
 }
 
-/** Request browser location, recording consent or refusal. */
+/**
+ * Request a fresh high-accuracy device fix for nearby surfaces.
+ *
+ * Only a precise enough result becomes `ready` and reaches APIs. Permission
+ * denial, timeouts, unsupported browsers, and too-vague (IP-grade) fixes each
+ * get their own status - never collapsed into "denied", and never accepted as
+ * a substitute location.
+ */
 export function useRequestLocation() {
-  const setLocation = useAppStore((s) => s.setLocation)
-  const denyLocation = useAppStore((s) => s.denyLocation)
+  const beginLocationRequest = useAppStore((s) => s.beginLocationRequest)
+  const setLocationReady = useAppStore((s) => s.setLocationReady)
+  const setLocationDenied = useAppStore((s) => s.setLocationDenied)
+  const setLocationUnavailable = useAppStore((s) => s.setLocationUnavailable)
+  const setLocationTooVague = useAppStore((s) => s.setLocationTooVague)
 
   return useCallback(() => {
-    if (!('geolocation' in navigator)) {
-      denyLocation()
-      return
-    }
-    navigator.geolocation.getCurrentPosition(
-      (position) => setLocation(position.coords.latitude, position.coords.longitude),
-      () => denyLocation(),
-      { enableHighAccuracy: false, timeout: 8000, maximumAge: 300_000 },
-    )
-  }, [setLocation, denyLocation])
+    beginLocationRequest()
+    void requestNearbyDeviceLocation().then((result) => {
+      if (result.ok) {
+        setLocationReady(
+          result.fix.latitude,
+          result.fix.longitude,
+          result.fix.accuracyMetres,
+        )
+        return
+      }
+      switch (result.failure.kind) {
+        case 'denied':
+          setLocationDenied()
+          return
+        case 'too_vague':
+          setLocationTooVague(
+            Number.isFinite(result.failure.accuracyMetres)
+              ? result.failure.accuracyMetres
+              : null,
+          )
+          return
+        case 'unsupported':
+        case 'unavailable':
+          setLocationUnavailable()
+          return
+      }
+    })
+  }, [
+    beginLocationRequest,
+    setLocationReady,
+    setLocationDenied,
+    setLocationUnavailable,
+    setLocationTooVague,
+  ])
+}
+
+/** User-facing sentence for the current non-ready location status. */
+export function useLocationStatusMessage(): string | null {
+  const location = useAppStore((s) => s.location)
+  switch (location.status) {
+    case 'requesting':
+      return 'Finding your precise location…'
+    case 'denied':
+      return locationFailureMessage({ kind: 'denied' })
+    case 'too_vague':
+      return locationFailureMessage({
+        kind: 'too_vague',
+        accuracyMetres: location.accuracyMetres ?? Number.POSITIVE_INFINITY,
+      })
+    case 'unavailable':
+      return locationFailureMessage({
+        kind: 'unavailable',
+        message:
+          'Your precise location is not available right now. Try again, or search for a place.',
+      })
+    default:
+      return null
+  }
 }

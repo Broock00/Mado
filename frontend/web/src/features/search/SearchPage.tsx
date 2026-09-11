@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useDiscoveryParams, useToggleSave } from '@/app/hooks'
-import { useAppStore } from '@/app/store'
+import { useAppStore, isLocationReady } from '@/app/store'
 import { ExperienceCard, ExperienceCardSkeleton } from '@/features/experiences/ExperienceCard'
 import { Badge, Button, EmptyState, Input } from '@/design-system/primitives'
 import { cn } from '@/lib/utils'
@@ -283,8 +283,8 @@ export function SearchPage() {
               <ExperienceMap
                 experiences={mappable}
                 origin={
-                  location.latitude != null && location.longitude != null
-                    ? { latitude: location.latitude, longitude: location.longitude }
+                  isLocationReady(location)
+                    ? { latitude: location.latitude!, longitude: location.longitude! }
                     : null
                 }
               />

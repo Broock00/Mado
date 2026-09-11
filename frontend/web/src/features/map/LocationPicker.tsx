@@ -38,6 +38,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Crosshair, LoaderCircle, MapPin, Search } from 'lucide-react'
 
 import { api, newPlaceSessionToken } from '@/lib/api'
+import { DEVICE_LOCATION_OPTIONS } from '@/lib/deviceLocation'
 import type { PlaceSuggestion } from '@/lib/types'
 import { Button, Input } from '@/design-system/primitives'
 import { PinMap } from './PinMap'
@@ -241,8 +242,9 @@ export function LocationPicker({
         )
       },
       // A venue pin needs street-level accuracy, and it is worth a few seconds
-      // to get it rather than dropping the pin on a cell tower.
-      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 0 },
+      // to get it rather than dropping the pin on a cell tower. Same fresh
+      // high-accuracy options as discover — the publisher still confirms the pin.
+      DEVICE_LOCATION_OPTIONS,
     )
   }
 

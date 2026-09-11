@@ -19,7 +19,7 @@ import { Link } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { MapPin, Send, Sparkles, X } from 'lucide-react'
 import { api } from '@/lib/api'
-import { useAppStore } from '@/app/store'
+import { isLocationReady, useAppStore } from '@/app/store'
 import { useRequestLocation } from '@/app/hooks'
 import { Badge, Button, Input } from '@/design-system/primitives'
 import { cn } from '@/lib/utils'
@@ -119,8 +119,16 @@ export function ConciergePanel() {
         // The chosen place wins over where the explorer is sitting. Without
         // this the concierge answered about their own city and told anyone who
         // had picked Kenya that it only knows Addis Ababa.
-        latitude: place ? place.latitude : location.granted ? location.latitude : null,
-        longitude: place ? place.longitude : location.granted ? location.longitude : null,
+        latitude: place
+          ? place.latitude
+          : isLocationReady(location)
+            ? location.latitude
+            : null,
+        longitude: place
+          ? place.longitude
+          : isLocationReady(location)
+            ? location.longitude
+            : null,
         radiusKm: place && !place.countryCode && !place.bbox ? place.radiusKm : null,
         bbox: place?.bbox ?? null,
         country: place?.countryCode ?? null,
@@ -371,13 +379,20 @@ export function ConciergePanel() {
               sentence with no button next to it, leaving the explorer told what
               was wrong and given no way to fix it. A chosen place counts, so
               this is only offered when there is neither. */}
-          {!location.granted && !place && (
+          {!isLocationReady(location) && !place && (
             <button
               type="button"
               onClick={() => requestLocation()}
-              className="mt-2 text-xs text-brand-400 underline underline-offset-2 hover:text-brand-300"
+              disabled={location.status === 'requesting'}
+              className="mt-2 text-xs text-brand-400 underline underline-offset-2 hover:text-brand-300 disabled:opacity-60"
             >
-              Share your location for answers about where you are
+              {location.status === 'requesting'
+                ? 'Finding your precise location…'
+                : location.status === 'denied'
+                  ? 'Location is blocked — allow it to answer about where you are'
+                  : location.status === 'too_vague' || location.status === 'unavailable'
+                    ? 'Try again for a precise location, or pick a place in Discover'
+                    : 'Share your precise location for answers about where you are'}
             </button>
           )}
         </form>

@@ -93,9 +93,10 @@ export function useLiveLocation(): LiveLocation {
         )
       },
       {
-        // Worth the battery here and nowhere else in the product: following a
-        // line needs metres, and the coarse fix used for "near me" ranking is
-        // hundreds of metres out.
+        // High accuracy + no stale cache: following a line needs metres.
+        // Discover/"Use my location" now uses the same request shape via
+        // `requestNearbyDeviceLocation`, with a wider accuracy ceiling because
+        // neighbourhood ranking is not street projection.
         enableHighAccuracy: true,
         timeout: 15_000,
         // Never a cached fix while navigating - a stale position is exactly the
