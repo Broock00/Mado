@@ -14,10 +14,10 @@ import { ArrowLeft, CalendarX, CloudOff, WifiOff } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useIsOnline } from '@/app/offline'
 import { useLanguage } from '@/app/language-context'
-import { Button, Card, EmptyState, Skeleton } from '@/design-system/primitives'
+import { Button, EmptyState, Skeleton } from '@/design-system/primitives'
 import { PlanSummary, PlanTimeline } from './PlanTimeline'
 import { RouteGuidance } from './RouteGuidance'
-import { clockTime } from './timeline-format'
+import { clockTime, dayLabel } from './timeline-format'
 
 export function ItineraryPage() {
   const { itineraryId } = useParams<{ itineraryId: string }>()
@@ -32,18 +32,15 @@ export function ItineraryPage() {
 
   if (isLoading) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6">
-        <Skeleton className="h-8 w-64" />
-        <Skeleton className="mt-4 h-64 w-full" />
+      <div className="mx-auto w-full max-w-3xl px-4 pb-24 pt-8 sm:px-6">
+        <Skeleton className="h-4 w-24" />
+        <Skeleton className="mt-4 h-8 w-64" />
+        <Skeleton className="mt-6 h-64 w-full rounded-xl" />
       </div>
     )
   }
 
   if (isError || !itinerary) {
-    // Two very different causes, and telling somebody standing on a street with
-    // no signal that their plan "may have been deleted" is both wrong and
-    // alarming. Offline, the honest answer is that this one was never stored
-    // here - and what to do about it next time.
     const unreachable = !online
     return (
       <div className="mx-auto max-w-3xl px-4 py-16">
@@ -65,11 +62,9 @@ export function ItineraryPage() {
     )
   }
 
-  const day = new Date(itinerary.startsAt).toLocaleDateString([], {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-  })
+  const day = dayLabel(itinerary.startsAt)
+  const underway =
+    Date.parse(itinerary.startsAt) <= Date.now() && Date.parse(itinerary.endsAt) >= Date.now()
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pb-24 pt-6 sm:px-6">
@@ -82,18 +77,26 @@ export function ItineraryPage() {
       </Link>
 
       <header className="mt-4">
-        <h1 className="text-2xl font-semibold tracking-tight text-sand-900">
+        <p className="text-xs font-medium uppercase tracking-wide text-brand-600">
+          {underway ? 'On now' : day}
+        </p>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight text-sand-900">
           {itinerary.title}
         </h1>
         <p className="mt-1 text-sand-600">
-          {day}, {clockTime(itinerary.startsAt)} – {clockTime(itinerary.endsAt)}
+          {underway ? `${day}, ` : null}
+          {clockTime(itinerary.startsAt)} – {clockTime(itinerary.endsAt)}
         </p>
+        <div className="mt-3">
+          <PlanSummary
+            stopCount={itinerary.stops.length}
+            totalTravelMinutes={itinerary.totalTravelMinutes}
+            totalCost={itinerary.estimatedCost ?? 0}
+            currency={itinerary.currency}
+          />
+        </div>
       </header>
 
-      {/* Offline, this is by definition the stored copy - the request either
-          came from the cache or failed. Said plainly, because a plan that looks
-          live is how somebody turns up to a date that was called off this
-          morning. */}
       {!online && (
         <p
           role="status"
@@ -104,22 +107,13 @@ export function ItineraryPage() {
         </p>
       )}
 
-      <Card className="mt-6 p-5">
-        <PlanSummary
-          stopCount={itinerary.stops.length}
-          totalTravelMinutes={itinerary.totalTravelMinutes}
-          totalCost={itinerary.estimatedCost ?? 0}
-          currency={itinerary.currency}
-        />
+      {itinerary.rationale && (
+        <p className="mt-4 text-sm leading-relaxed text-sand-600">{itinerary.rationale}</p>
+      )}
 
-        {itinerary.rationale && (
-          <p className="mt-4 text-sm text-sand-600">{itinerary.rationale}</p>
-        )}
-
-        <div className="mt-6 border-t border-sand-200 pt-4">
-          <PlanTimeline stops={itinerary.stops} />
-        </div>
-      </Card>
+      <div className="mt-6">
+        <PlanTimeline stops={itinerary.stops} currency={itinerary.currency} />
+      </div>
 
       <RouteGuidance itinerary={itinerary} />
     </div>

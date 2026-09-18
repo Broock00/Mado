@@ -140,55 +140,57 @@ export function RouteGuidance({ itinerary }: { itinerary: Itinerary }) {
 
           {navigating && <NavigationStatus location={location} progress={progress} titles={titles} />}
 
-          <Card className="mt-3 overflow-hidden p-0">
-            <RouteMap
-              route={route}
-              titles={titles}
-              fix={navigating ? location.fix : null}
-              alongMetres={progress.alongMetres}
-              follow={navigating}
-              // Taller while navigating. A 288px strip is fine for glancing at
-              // a route; it is not enough to walk by, where the useful thing is
-              // seeing the street ahead rather than the whole city.
-              className={navigating ? 'h-[26rem] w-full' : 'h-72 w-full'}
-            />
-          </Card>
+          <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
+            <Card className="overflow-hidden p-0">
+              <RouteMap
+                route={route}
+                titles={titles}
+                fix={navigating ? location.fix : null}
+                alongMetres={progress.alongMetres}
+                follow={navigating}
+                // Taller while navigating. A 288px strip is fine for glancing at
+                // a route; it is not enough to walk by, where the useful thing is
+                // seeing the street ahead rather than the whole city.
+                className={navigating ? 'h-[26rem] w-full' : 'h-72 w-full lg:h-[22rem]'}
+              />
+            </Card>
 
-          <Card className="mt-3 divide-y divide-sand-200 px-5">
-            {route.legs.map((leg) => (
-              <div
-                key={`${leg.fromIndex}-${leg.toIndex}`}
-                className="flex items-center justify-between gap-4 py-3"
-              >
-                <span className="flex min-w-0 items-center gap-2 text-sm text-sand-800">
-                  {leg.mode === 'walk' ? (
-                    <Footprints className="size-4 shrink-0 text-sand-500" aria-hidden />
-                  ) : (
-                    <Car className="size-4 shrink-0 text-sand-500" aria-hidden />
-                  )}
-                  <span className="truncate">
-                    {titles[leg.fromIndex]} → {titles[leg.toIndex]}
+            <Card className="divide-y divide-sand-200 px-5">
+              {route.legs.map((leg) => (
+                <div
+                  key={`${leg.fromIndex}-${leg.toIndex}`}
+                  className="flex items-center justify-between gap-4 py-3"
+                >
+                  <span className="flex min-w-0 items-center gap-2 text-sm text-sand-800">
+                    {leg.mode === 'walk' ? (
+                      <Footprints className="size-4 shrink-0 text-sand-500" aria-hidden />
+                    ) : (
+                      <Car className="size-4 shrink-0 text-sand-500" aria-hidden />
+                    )}
+                    <span className="truncate">
+                      {titles[leg.fromIndex]} → {titles[leg.toIndex]}
+                    </span>
                   </span>
+                  <span className="shrink-0 text-sm text-sand-600">
+                    {leg.durationMinutes} min · {leg.distanceKm} km
+                    {leg.isEstimated && (
+                      <span className="ml-1.5 text-xs text-sand-400">estimated</span>
+                    )}
+                  </span>
+                </div>
+              ))}
+
+              <div className="flex items-center justify-between gap-4 py-3 text-sm">
+                <span className="flex items-center gap-2 font-medium text-sand-900">
+                  <RouteIcon className="size-4 text-sand-500" aria-hidden />
+                  Total travel
                 </span>
-                <span className="shrink-0 text-sm text-sand-600">
-                  {leg.durationMinutes} min · {leg.distanceKm} km
-                  {leg.isEstimated && (
-                    <span className="ml-1.5 text-xs text-sand-400">estimated</span>
-                  )}
+                <span className="text-sand-700">
+                  {route.totalDurationMinutes} min · {route.totalDistanceKm} km
                 </span>
               </div>
-            ))}
-
-            <div className="flex items-center justify-between gap-4 py-3 text-sm">
-              <span className="flex items-center gap-2 font-medium text-sand-900">
-                <RouteIcon className="size-4 text-sand-500" aria-hidden />
-                Total travel
-              </span>
-              <span className="text-sand-700">
-                {route.totalDurationMinutes} min · {route.totalDistanceKm} km
-              </span>
-            </div>
-          </Card>
+            </Card>
+          </div>
 
           {route.estimatedLegs > 0 && (
             <p className="mt-2 text-xs text-sand-500">

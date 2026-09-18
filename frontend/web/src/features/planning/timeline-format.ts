@@ -7,8 +7,9 @@
  */
 
 /** Local wall-clock time. The planner works in UTC; explorers do not. */
-export function clockTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+export function clockTime(iso: string | Date): string {
+  const date = iso instanceof Date ? iso : new Date(iso)
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
 export function duration(minutes: number): string {
@@ -16,4 +17,12 @@ export function duration(minutes: number): string {
   const hours = Math.floor(minutes / 60)
   const rest = minutes % 60
   return rest === 0 ? `${hours} hr` : `${hours} hr ${rest} min`
+}
+
+export function dayLabel(iso: string): string {
+  return new Date(iso).toLocaleDateString([], {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  })
 }
