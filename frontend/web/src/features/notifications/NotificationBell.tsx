@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils'
 const ICONS: Record<string, typeof Bell> = {
   event_reminder: CalendarClock,
   plan_reminder: Route,
+  plan_day_reminder: Route,
   moderation_outcome: ShieldCheck,
   nearby_suggestion: Sparkles,
   travel_alert: CalendarX2,

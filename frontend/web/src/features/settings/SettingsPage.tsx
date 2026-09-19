@@ -43,7 +43,8 @@ const NOTIFICATION_KINDS = [
   {
     key: 'plan_reminder',
     label: 'Reminders for your plans',
-    description: 'Before a plan you kept is due to begin.',
+    description:
+      'The evening before a multi-day trip, and when each day of a plan is about to begin.',
   },
   {
     key: 'travel_alert',

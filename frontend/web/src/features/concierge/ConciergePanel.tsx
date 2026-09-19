@@ -102,6 +102,7 @@ export function ConciergePanel() {
   const citySlug = useAppStore((s) => s.citySlug)
   const location = useAppStore((s) => s.location)
   const place = useAppStore((s) => s.place)
+  const activeDraftId = useAppStore((s) => s.activeDraftId)
   const requestLocation = useRequestLocation()
 
   const [turns, setTurns] = useState<Turn[]>([])
@@ -133,6 +134,10 @@ export function ConciergePanel() {
         bbox: place?.bbox ?? null,
         country: place?.countryCode ?? null,
         placeLabel: place?.label ?? null,
+        // When the builder is open, scope refinements to that draft so the
+        // explorer can say "make it cheaper" or "add lunch" and have it target
+        // the plan they are looking at rather than starting a new one.
+        activeItineraryId: activeDraftId,
       }),
     onSuccess: (response) => {
       setConversationId(response.conversationId)

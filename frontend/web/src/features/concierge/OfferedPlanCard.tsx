@@ -12,11 +12,12 @@
  */
 
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Check, Clock, Lock, Navigation, Route } from 'lucide-react'
+import { Check, Clock, Lock, Navigation, PenLine, Route } from 'lucide-react'
 
 import { api } from '@/lib/api'
+import { useAppStore } from '@/app/store'
 import type { OfferedPlan } from '@/lib/types'
 import { Button } from '@/design-system/primitives'
 
@@ -41,6 +42,8 @@ export function OfferedPlanCard({
   onClose: () => void
 }) {
   const queryClient = useQueryClient()
+  const setActiveDraftId = useAppStore((s) => s.setActiveDraftId)
+  const navigate = useNavigate()
   const [savedId, setSavedId] = useState<string | null>(null)
 
   const keep = useMutation({
@@ -48,6 +51,16 @@ export function OfferedPlanCard({
     onSuccess: (itinerary) => {
       setSavedId(itinerary.id)
       void queryClient.invalidateQueries({ queryKey: ['itineraries'] })
+    },
+  })
+
+  const openInPlanner = useMutation({
+    mutationFn: () => api.openOfferAsDraft(conversationId),
+    onSuccess: (draft) => {
+      setActiveDraftId(draft.id)
+      void queryClient.invalidateQueries({ queryKey: ['itinerary-drafts'] })
+      onClose()
+      navigate('/plans')
     },
   })
 
@@ -59,11 +72,20 @@ export function OfferedPlanCard({
       </div>
 
       <ol className="mt-2 space-y-2">
-        {plan.stops.map((stop, index) => (
+        {plan.stops.map((stop, index) => {
+          const day = stop.dayIndex ?? 0
+          const prevDay = index > 0 ? (plan.stops[index - 1].dayIndex ?? 0) : day
+          const showDayHeader = index === 0 ? day > 0 || plan.stops.some((s) => (s.dayIndex ?? 0) > 0) : day !== prevDay
+          return (
           <li key={`${stop.experienceId}-${stop.arriveAt}`}>
+            {showDayHeader && (
+              <p className="pb-1 pt-1 text-[0.7rem] font-semibold uppercase tracking-wide text-brand-800">
+                Day {day + 1}
+              </p>
+            )}
             {/* Travel is drawn between stops because that is what it is - the
                 gap you have to cross, not a property of the destination. */}
-            {index > 0 && stop.travelMinutes > 0 && (
+            {index > 0 && day === prevDay && stop.travelMinutes > 0 && (
               <p className="flex items-center gap-1.5 py-1 pl-2 text-[0.7rem] text-sand-500">
                 <Navigation className="size-3" aria-hidden />
                 {duration(stop.travelMinutes)}
@@ -104,7 +126,8 @@ export function OfferedPlanCard({
               </div>
             </div>
           </li>
-        ))}
+          )
+        })}
       </ol>
 
       <p className="mt-2.5 border-t border-brand-200/70 pt-2 text-xs text-sand-600">
@@ -127,18 +150,30 @@ export function OfferedPlanCard({
             </Link>
           </p>
         ) : (
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => keep.mutate()}
-            loading={keep.isPending}
-          >
-            Keep this plan
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {/* Primary: open in the builder so the explorer can edit before committing. */}
+            <Button
+              size="sm"
+              onClick={() => openInPlanner.mutate()}
+              loading={openInPlanner.isPending}
+            >
+              <PenLine className="size-3.5" aria-hidden />
+              Open in planner
+            </Button>
+            {/* Secondary: one-tap keep for explorers who want exactly what was offered. */}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => keep.mutate()}
+              loading={keep.isPending}
+            >
+              Keep as-is
+            </Button>
+          </div>
         )}
-        {keep.isError && (
+        {(keep.isError || openInPlanner.isError) && (
           <p className="mt-1 text-xs text-red-300" role="alert">
-            {(keep.error as Error).message}
+            {((keep.error ?? openInPlanner.error) as Error).message}
           </p>
         )}
       </div>
