@@ -7,11 +7,12 @@
  * evening from the one that was saved.
  */
 
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, CalendarX, CloudOff, WifiOff } from 'lucide-react'
+import { ArrowLeft, CalendarX, CloudOff, Pencil, WifiOff } from 'lucide-react'
 
 import { api } from '@/lib/api'
+import { useAppStore } from '@/app/store'
 import { useIsOnline } from '@/app/offline'
 import { useLanguage } from '@/app/language-context'
 import { Button, EmptyState, Skeleton } from '@/design-system/primitives'
@@ -23,6 +24,8 @@ export function ItineraryPage() {
   const { itineraryId } = useParams<{ itineraryId: string }>()
   const online = useIsOnline()
   const { t } = useLanguage()
+  const navigate = useNavigate()
+  const setActiveDraftId = useAppStore((s) => s.setActiveDraftId)
 
   const { data: itinerary, isLoading, isError } = useQuery({
     queryKey: ['itinerary', itineraryId],
@@ -65,6 +68,12 @@ export function ItineraryPage() {
   const day = dayLabel(itinerary.startsAt)
   const underway =
     Date.parse(itinerary.startsAt) <= Date.now() && Date.parse(itinerary.endsAt) >= Date.now()
+  const planId = itinerary.id
+
+  function editInBuilder() {
+    setActiveDraftId(planId)
+    navigate('/plans')
+  }
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 pb-24 pt-6 sm:px-6">
@@ -76,25 +85,31 @@ export function ItineraryPage() {
         Planning
       </Link>
 
-      <header className="mt-4">
-        <p className="text-xs font-medium uppercase tracking-wide text-brand-600">
-          {underway ? 'On now' : day}
-        </p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight text-sand-900">
-          {itinerary.title}
-        </h1>
-        <p className="mt-1 text-sand-600">
-          {underway ? `${day}, ` : null}
-          {clockTime(itinerary.startsAt)} – {clockTime(itinerary.endsAt)}
-        </p>
-        <div className="mt-3">
-          <PlanSummary
-            stopCount={itinerary.stops.length}
-            totalTravelMinutes={itinerary.totalTravelMinutes}
-            totalCost={itinerary.estimatedCost ?? 0}
-            currency={itinerary.currency}
-          />
+      <header className="mt-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-medium uppercase tracking-wide text-brand-600">
+            {underway ? 'On now' : day}
+          </p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-sand-900">
+            {itinerary.title}
+          </h1>
+          <p className="mt-1 text-sand-600">
+            {underway ? `${day}, ` : null}
+            {clockTime(itinerary.startsAt)} – {clockTime(itinerary.endsAt)}
+          </p>
+          <div className="mt-3">
+            <PlanSummary
+              stopCount={itinerary.stops.length}
+              totalTravelMinutes={itinerary.totalTravelMinutes}
+              totalCost={itinerary.estimatedCost ?? 0}
+              currency={itinerary.currency}
+            />
+          </div>
         </div>
+        <Button variant="secondary" onClick={editInBuilder}>
+          <Pencil className="size-4" aria-hidden />
+          Edit plan
+        </Button>
       </header>
 
       {!online && (

@@ -838,6 +838,8 @@ export const api = {
     placeLabel?: string | null
     latitude?: number | null
     longitude?: number | null
+    /** Active draft in the builder, so refinements target that document. */
+    activeItineraryId?: string | null
   }) =>
     request<Envelope<ConciergeResponse>>('/api/v1/assistant/messages', {
       method: 'POST',
@@ -905,6 +907,94 @@ export const api = {
 
   deleteItinerary: (id: string) =>
     request<void>(`/api/v1/itineraries/${id}`, { method: 'DELETE' }),
+
+  // -------------------------------------------------------- draft builder
+  /** Create an empty draft workspace. */
+  createDraft: (input: import('@/lib/types').CreateDraftInput) =>
+    request<Envelope<Itinerary>>('/api/v1/itineraries/drafts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }).then((r) => r.data),
+
+  /** List all draft (not yet kept) itineraries. */
+  drafts: () =>
+    request<CollectionEnvelope<Itinerary>>('/api/v1/itineraries/drafts').then((r) => r.data),
+
+  /** Update a draft's title, window, or constraints. */
+  patchDraft: (id: string, input: import('@/lib/types').PatchDraftInput) =>
+    request<Envelope<Itinerary>>(`/api/v1/itineraries/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }).then((r) => r.data),
+
+  /** Append one stop to a draft (optionally to a specific trip day). */
+  appendStop: (
+    itineraryId: string,
+    experienceId: string,
+    eventInstanceId?: string | null,
+    dayIndex?: number | null,
+  ) =>
+    request<Envelope<Itinerary>>(`/api/v1/itineraries/${itineraryId}/stops`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ experienceId, eventInstanceId, dayIndex }),
+    }).then((r) => r.data),
+
+  /** Replace the entire stop list (reorder / remove / bulk time-edit). */
+  replaceStops: (itineraryId: string, stops: import('@/lib/types').StopSpec[]) =>
+    request<Envelope<Itinerary>>(`/api/v1/itineraries/${itineraryId}/stops`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(stops),
+    }).then((r) => r.data),
+
+  /** Remove one stop from a draft. */
+  removeStop: (itineraryId: string, stopId: string) =>
+    request<Envelope<Itinerary>>(`/api/v1/itineraries/${itineraryId}/stops/${stopId}`, {
+      method: 'DELETE',
+    }).then((r) => r.data),
+
+  /** Validate the draft's stop list without changing anything. */
+  checkItinerary: (itineraryId: string) =>
+    request<Envelope<import('@/lib/types').PlanAnalysis>>(
+      `/api/v1/itineraries/${itineraryId}/check`,
+      { method: 'POST' },
+    ).then((r) => r.data),
+
+  /** Propose stops that fit in a free gap. */
+  fillGap: (itineraryId: string, afterIndex: number, gapStart: string, gapEnd: string) =>
+    request<Envelope<Plan>>(`/api/v1/itineraries/${itineraryId}/fill-gap`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ afterIndex, gapStart, gapEnd }),
+    }).then((r) => r.data),
+
+  /** Propose a reordering using 2-opt. Returns proposals, does not apply. */
+  optimizeItinerary: (itineraryId: string) =>
+    request<Envelope<Plan>>(`/api/v1/itineraries/${itineraryId}/optimize`, {
+      method: 'POST',
+    }).then((r) => r.data),
+
+  /** Promote a draft to a kept itinerary. */
+  keepDraft: (itineraryId: string, title?: string) =>
+    request<Envelope<Itinerary>>(`/api/v1/itineraries/${itineraryId}/keep`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    }).then((r) => r.data),
+
+  /** Open a concierge-offered plan as an editable draft. */
+  openOfferAsDraft: (conversationId: string, title?: string) =>
+    request<Envelope<Itinerary>>(
+      `/api/v1/assistant/conversations/${conversationId}/plan/draft`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      },
+    ).then((r) => r.data),
 
   // -------------------------------------------------------- notifications
   notifications: () =>

@@ -1324,6 +1324,8 @@ export type ReportReason =
 // --- Planning (spec 10.01.04, Journey Planner) -------------------------------
 
 export interface PlanStop {
+  /** Persisted stop row id — present on itinerary stops, absent on ephemeral plans. */
+  id?: string | null
   experienceId: string
   eventInstanceId?: string | null
   title: string
@@ -1336,6 +1338,8 @@ export interface PlanStop {
   /** Dictated by a scheduled event rather than chosen, so it cannot be moved. */
   isFixedTime: boolean
   note?: string | null
+  /** 0-based day within a multi-day trip; outings are always 0. */
+  dayIndex?: number
 }
 
 export interface Plan {
@@ -1360,7 +1364,69 @@ export interface Itinerary {
   currency: string
   totalTravelMinutes: number
   rationale?: string | null
+  /** "draft" while building, "kept" after explicit save. */
+  status: 'draft' | 'kept'
+  /** outing = one day; trip = multi-day builder. */
+  kind?: 'outing' | 'trip'
+  timezone?: string | null
   stops: PlanStop[]
+}
+
+// ---- Stop spec for full replacement
+export interface StopSpec {
+  experienceId: string
+  eventInstanceId?: string | null
+  isFixedTime?: boolean
+  arriveAt?: string | null
+  departAt?: string | null
+  note?: string | null
+  dayIndex?: number
+}
+
+// ---- Analysis (Check My Plan result)
+export interface PlanConflict {
+  kind: 'overlap' | 'travel_gap' | 'fixed_time_miss' | 'window_overrun' | 'budget_overrun'
+  stopIndices: number[]
+  message: string
+  resolutions: Array<'move_stop' | 'change_duration' | 'remove_stop' | 'keep_as_is'>
+}
+
+export interface PlanGap {
+  afterIndex: number
+  startsAt: string
+  endsAt: string
+  freeMinutes: number
+}
+
+export interface PlanAnalysis {
+  conflicts: PlanConflict[]
+  gaps: PlanGap[]
+  totalCost: number
+  totalTravelMinutes: number
+  budgetOverrun: number
+}
+
+// ---- Draft create / patch
+export interface CreateDraftInput {
+  title?: string
+  city?: string
+  latitude?: number | null
+  longitude?: number | null
+  startsAt?: string | null
+  endsAt?: string | null
+  budget?: number | null
+  freeOnly?: boolean
+  timezone?: string | null
+  kind?: 'outing' | 'trip' | null
+}
+
+export interface PatchDraftInput {
+  title?: string | null
+  city?: string | null
+  startsAt?: string | null
+  endsAt?: string | null
+  budget?: number | null
+  freeOnly?: boolean | null
 }
 
 export interface PlanRequestInput {

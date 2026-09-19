@@ -12,9 +12,11 @@
 import { Link } from 'react-router-dom'
 import { BadgeCheck, Bookmark, Building2, Clock, MapPin, Megaphone, Sparkles, Star } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useAppStore } from '@/app/store'
 import type { ExperienceSummary } from '@/lib/types'
 import { Badge } from '@/design-system/primitives'
 import { cn, formatDistance, formatPrice, formatWhen, isStartingSoon } from '@/lib/utils'
+import { AddToPlan } from '@/features/planning/AddToPlan'
 
 interface Props {
   experience: ExperienceSummary
@@ -36,6 +38,7 @@ export function ExperienceCard({
   compact,
   hidePublisher,
 }: Props) {
+  const activeDraftId = useAppStore((s) => s.activeDraftId)
   const image = experience.media[0]
   const when = formatWhen(experience.nextEvent?.startTime)
   const distance = formatDistance(experience.distanceKm)
@@ -221,6 +224,15 @@ export function ExperienceCard({
               <BadgeCheck
                 className="size-4 text-brand-700"
                 aria-label={`${experience.publisher?.name} is a verified publisher`}
+              />
+            )}
+            {/* Quick-add to active draft — shown only when a draft is open so
+                existing surfaces that render many cards stay uncluttered. */}
+            {activeDraftId && !compact && (
+              <AddToPlan
+                experienceId={experience.id}
+                eventInstanceId={experience.nextEvent?.id ?? null}
+                size="sm"
               />
             )}
           </div>

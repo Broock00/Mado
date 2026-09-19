@@ -45,6 +45,7 @@ import type { LucideIcon } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useDiscoveryParams, useToggleSave } from '@/app/hooks'
 import { AddToCollection } from '@/features/collections/AddToCollection'
+import { AddToPlan } from '@/features/planning/AddToPlan'
 import { Button, EmptyState, Skeleton } from '@/design-system/primitives'
 import { ExperienceCard } from './ExperienceCard'
 import { Reviews } from '@/features/reviews/Reviews'
@@ -711,6 +712,11 @@ function BookingWidget({
             />
             {data.isSaved ? 'Saved' : 'Save'}
           </Button>
+          <AddToPlan
+            experienceId={data.id}
+            eventInstanceId={data.nextEvent?.id ?? null}
+            size="sm"
+          />
           <AddToCollection experienceId={data.id} citySlug={data.citySlug} size="sm" />
         </div>
 

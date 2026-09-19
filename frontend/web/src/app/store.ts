@@ -66,6 +66,15 @@ interface AppState {
   place: ChosenPlace | null
   location: LocationState
   conciergeOpen: boolean
+  /**
+   * The draft the explorer is currently building.
+   *
+   * Only the id is stored globally; the full document lives in React Query so
+   * it stays fresh. Add-to-Plan actions from any surface use this id to know
+   * which draft to append to. Null means no active draft — clicking Add to Plan
+   * will prompt the explorer to start one or pick an existing draft.
+   */
+  activeDraftId: string | null
 
   setUser: (user: Me | null) => void
   setCity: (slug: string | null) => void
@@ -77,6 +86,7 @@ interface AppState {
   setLocationTooVague: (accuracyMetres: number | null) => void
   clearLocation: () => void
   toggleConcierge: (open?: boolean) => void
+  setActiveDraftId: (id: string | null) => void
   signOut: () => void
 }
 
@@ -88,6 +98,7 @@ export const useAppStore = create<AppState>()(
       place: null,
       location: { ...IDLE_LOCATION },
       conciergeOpen: false,
+      activeDraftId: null,
 
       setUser: (user) => set({ user }),
       setCity: (citySlug) => set({ citySlug }),
@@ -142,6 +153,7 @@ export const useAppStore = create<AppState>()(
       clearLocation: () => set({ location: { ...IDLE_LOCATION } }),
       toggleConcierge: (open) =>
         set((state) => ({ conciergeOpen: open ?? !state.conciergeOpen })),
+      setActiveDraftId: (id) => set({ activeDraftId: id }),
       signOut: () => {
         tokenStore.clear()
         set({ user: null })
