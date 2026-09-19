@@ -32,6 +32,13 @@ CATALOGUE: dict[str, dict[str, str]] = {
         "reminder.event.body_at_venue": "Starts at {time} at {venue}",
         "reminder.plan.title": "{title} starts soon",
         "reminder.plan.body": "Your first stop is {stop} at {time}",
+        "reminder.plan.tomorrow_title": "{title} is tomorrow",
+        "reminder.plan.tomorrow_body": (
+            "Your trip begins on {date}. Open it to review the days ahead."
+        ),
+        "reminder.plan.day_title": "Day {day} of {title}",
+        "reminder.plan.day_body": "Starts with {stop} at {time}",
+        "reminder.plan.day_body_bare": "Day {day} begins at {time}",
         # Phrased as an offer rather than an instruction. This is the one
         # message nobody asked for, so it should read like a suggestion from
         # somebody who knows the city, not like an alert.
@@ -61,6 +68,11 @@ CATALOGUE: dict[str, dict[str, str]] = {
         "reminder.event.body_at_venue": "በ{time} በ{venue} ይጀምራል",
         "reminder.plan.title": "{title} በቅርቡ ይጀምራል",
         "reminder.plan.body": "የመጀመሪያ መዳረሻዎ በ{time} {stop} ነው",
+        "reminder.plan.tomorrow_title": "{title} ነገ ነው",
+        "reminder.plan.tomorrow_body": "ጉዞዎ በ{date} ይጀምራል። ቀናቱን ለመመልከት ይክፈቱት።",
+        "reminder.plan.day_title": "የ{title} ቀን {day}",
+        "reminder.plan.day_body": "በ{time} በ{stop} ይጀምራል",
+        "reminder.plan.day_body_bare": "ቀን {day} በ{time} ይጀምራል",
         "suggestion.nearby.title": "{title} በቅርቡ ይካሄዳል",
         "suggestion.nearby.body": "በ{city} ውስጥ ነው፣ እና የእርስዎ ዓይነት ይመስላል።",
         "suggestion.nearby.body_at_venue": "በ{venue} ነው፣ እና የእርስዎ ዓይነት ይመስላል።",

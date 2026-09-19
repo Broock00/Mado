@@ -147,3 +147,81 @@ class TestSubjectSurvival:
 
         subject = Notification.__table__.c.subject_id
         assert not subject.foreign_keys
+
+
+class TestPlanTripReminders:
+    """Multi-day plans get an evening-before ping plus one per day."""
+
+    def test_day_subject_ids_are_stable_and_distinct(self):
+        import uuid
+
+        from app.domains.explorer.reminders import plan_day_subject_id
+
+        itinerary = uuid.uuid4()
+        day0 = plan_day_subject_id(itinerary, 0)
+        day1 = plan_day_subject_id(itinerary, 1)
+        assert day0 != day1
+        assert day0 == plan_day_subject_id(itinerary, 0)
+        assert day0 != itinerary
+
+    def test_day_reminder_kind_follows_plan_preference(self):
+        from app.domains.explorer.notifications import (
+            KIND_PLAN_DAY_REMINDER,
+            KIND_PLAN_REMINDER,
+            Preferences,
+        )
+
+        on = Preferences(enabled=frozenset({KIND_PLAN_REMINDER}))
+        assert on.wants(KIND_PLAN_DAY_REMINDER)
+        off = Preferences(enabled=frozenset())
+        assert not off.wants(KIND_PLAN_DAY_REMINDER)
+
+    def test_evening_before_is_prior_local_evening(self):
+        from app.domains.explorer.reminders import _evening_before_start
+
+        starts = datetime(2026, 9, 20, 6, 0, tzinfo=UTC)  # 09:00 Addis
+        advance = _evening_before_start(starts, ADDIS)
+        local = advance.astimezone(__import__("zoneinfo").ZoneInfo(ADDIS))
+        assert local.hour == 18
+        assert local.date().isoformat() == "2026-09-19"
+
+    def test_trip_detected_from_kind_or_day_index(self):
+        from types import SimpleNamespace
+
+        from app.domains.explorer.reminders import _is_trip
+
+        outing = SimpleNamespace(
+            constraints={"kind": "outing", "timezone": "UTC"},
+            starts_at=datetime(2026, 9, 19, 9, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 9, 19, 22, 0, tzinfo=UTC),
+            stops=[SimpleNamespace(day_index=0)],
+        )
+        assert not _is_trip(outing)
+
+        trip = SimpleNamespace(
+            constraints={"kind": "trip", "timezone": "UTC"},
+            starts_at=datetime(2026, 9, 19, 9, 0, tzinfo=UTC),
+            ends_at=datetime(2026, 9, 21, 22, 0, tzinfo=UTC),
+            stops=[SimpleNamespace(day_index=0), SimpleNamespace(day_index=1)],
+        )
+        assert _is_trip(trip)
+
+    def test_day_start_is_local_morning(self):
+        from types import SimpleNamespace
+
+        from app.domains.explorer.reminders import _day_start
+
+        itinerary = SimpleNamespace(
+            starts_at=datetime(2026, 9, 19, 6, 0, tzinfo=UTC),  # 09:00 Addis
+            stops=[],
+        )
+        day1 = _day_start(itinerary, 1, ADDIS)
+        local = day1.astimezone(__import__("zoneinfo").ZoneInfo(ADDIS))
+        assert local.hour == 9
+        assert local.date().isoformat() == "2026-09-20"
+
+    def test_tomorrow_and_day_copy_exist(self):
+        from app.core.messages import translate
+
+        assert "tomorrow" in translate("reminder.plan.tomorrow_title", "en", title="Paris").lower()
+        assert "Day 2" in translate("reminder.plan.day_title", "en", title="Paris", day=2)

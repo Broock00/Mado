@@ -64,6 +64,9 @@ SCHEMA = "explorer"
 # change and not a migration - the set will grow.
 KIND_EVENT_REMINDER = "event_reminder"
 KIND_PLAN_REMINDER = "plan_reminder"
+# Per-day ping for multi-day trips. Shares the plan_reminder preference rather
+# than appearing as its own settings toggle — turning plans off turns both off.
+KIND_PLAN_DAY_REMINDER = "plan_day_reminder"
 KIND_MODERATION = "moderation_outcome"
 KIND_NEARBY = "nearby_suggestion"
 KIND_TRAVEL_ALERT = "travel_alert"
@@ -165,6 +168,9 @@ class Preferences:
     language: str = "en"
 
     def wants(self, kind: str) -> bool:
+        # Day-of trip reminders ride on the same opt-out as the advance ping.
+        if kind == KIND_PLAN_DAY_REMINDER:
+            return KIND_PLAN_REMINDER in self.enabled
         return kind in self.enabled
 
 
