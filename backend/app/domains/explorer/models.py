@@ -241,6 +241,11 @@ class Itinerary(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     estimated_cost: Mapped[float | None] = mapped_column(Numeric(10, 2), default=None)
     currency: Mapped[str] = mapped_column(String(3), default="ETB", nullable=False)
     total_travel_minutes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Lifecycle: 'draft' while the explorer is building, 'kept' once they have
+    # explicitly saved it. Only kept plans appear in the "Kept plans" list; drafts
+    # live in the builder workspace. The two are never mixed because a draft is a
+    # workspace commitment, not a promise — it has not been reviewed as an evening.
+    status: Mapped[str] = mapped_column(String(10), default="kept", nullable=False)
     # The request this plan answers, kept so it can be replanned when something
     # falls through without interrogating the explorer again.
     constraints: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
@@ -251,7 +256,7 @@ class Itinerary(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     stops: Mapped[list[ItineraryStop]] = relationship(
         back_populates="itinerary",
         cascade="all, delete-orphan",
-        order_by="ItineraryStop.position",
+        order_by="ItineraryStop.day_index, ItineraryStop.position",
         lazy="selectin",
     )
 
@@ -266,7 +271,11 @@ class ItineraryStop(Base, UUIDPrimaryKey, Timestamps):
 
     __tablename__ = "itinerary_stops"
     __table_args__ = (
-        UniqueConstraint("itinerary_id", "position", name="uq_itinerary_stop_position"),
+        # Position is unique within a day so two days can both start at 0.
+        UniqueConstraint(
+            "itinerary_id", "day_index", "position", name="uq_itinerary_stop_day_position"
+        ),
+        Index("ix_itinerary_stops_itinerary_day", "itinerary_id", "day_index"),
         {"schema": SCHEMA},
     )
 
@@ -275,6 +284,8 @@ class ItineraryStop(Base, UUIDPrimaryKey, Timestamps):
         ForeignKey(f"{SCHEMA}.itineraries.id", ondelete="CASCADE"),
         index=True,
     )
+    # 0-based day within a multi-day trip. Outings are always day 0.
+    day_index: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
     position: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     # No foreign key into catalog: this schema does not read catalog tables
     # directly (modular monolith rule), and a plan should survive a listing being
@@ -289,7 +300,7 @@ class ItineraryStop(Base, UUIDPrimaryKey, Timestamps):
     depart_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # Travel from the previous stop, zero for the first.
     travel_minutes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    travel_km: Mapped[float | None] = mapped_column(Numeric(6, 2), default=None)
+    travel_km: Mapped[float | None] = mapped_column(Numeric(8, 2), default=None)
     estimated_cost: Mapped[float | None] = mapped_column(Numeric(10, 2), default=None)
     # True when the time is dictated by a scheduled event rather than chosen.
     is_fixed_time: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
