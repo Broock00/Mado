@@ -239,7 +239,7 @@ class PlanningService:
         Works for drafts and kept plans. Stops are not re-solved — only metadata.
         """
         itinerary = await self.get(itinerary_id, user_id=user_id, anonymous_id=anonymous_id)
-        _require_editable(itinerary)
+        _require_editable(itinerary, user_id=user_id, anonymous_id=anonymous_id)
 
         if title is not None:
             itinerary.title = title[:200]
@@ -283,7 +283,7 @@ class PlanningService:
         plans from inventing overnight road trips.
         """
         itinerary = await self.get(itinerary_id, user_id=user_id, anonymous_id=anonymous_id)
-        _require_editable(itinerary)
+        _require_editable(itinerary, user_id=user_id, anonymous_id=anonymous_id)
 
         experience = await self._load_single_experience(experience_id)
         if experience is None:
@@ -386,7 +386,7 @@ class PlanningService:
         result has conflicts, the check endpoint will surface them.
         """
         itinerary = await self.get(itinerary_id, user_id=user_id, anonymous_id=anonymous_id)
-        _require_editable(itinerary)
+        _require_editable(itinerary, user_id=user_id, anonymous_id=anonymous_id)
 
         if not stop_specs:
             # Clearing all stops is valid: the explorer is starting fresh.
@@ -544,7 +544,7 @@ class PlanningService:
     ) -> Itinerary:
         """Remove one stop and renumber positions within its day."""
         itinerary = await self.get(itinerary_id, user_id=user_id, anonymous_id=anonymous_id)
-        _require_editable(itinerary)
+        _require_editable(itinerary, user_id=user_id, anonymous_id=anonymous_id)
 
         existing = _sorted_stops(list(itinerary.stops))
         target = next((s for s in existing if s.id == stop_id), None)
@@ -1076,22 +1076,55 @@ class PlanningService:
         user_id: uuid.UUID | None,
         anonymous_id: str | None,
     ) -> Itinerary:
-        """Load one itinerary belonging to the caller.
+        """Load one itinerary the caller may see.
 
-        Returns 404 rather than 403 for someone else's plan, so the endpoint does
-        not confirm that an id exists to whoever guesses it.
+        Owners always can. Anyone holding the link can when the plan is kept and
+        unlisted/public. Private plans answer 404 to strangers so guessing an id
+        does not confirm the row exists.
         """
         itinerary = await self.session.get(Itinerary, itinerary_id)
         if itinerary is None or itinerary.deleted_at is not None:
             raise NotFoundError("Itinerary not found.", code="ITINERARY_NOT_FOUND")
 
-        owned = (
-            itinerary.user_id == user_id
-            if user_id is not None
-            else itinerary.anonymous_id is not None and itinerary.anonymous_id == anonymous_id
+        if _is_owner(itinerary, user_id=user_id, anonymous_id=anonymous_id):
+            return itinerary
+        if itinerary.is_shareable:
+            return itinerary
+        raise NotFoundError("Itinerary not found.", code="ITINERARY_NOT_FOUND")
+
+    async def set_visibility(
+        self,
+        itinerary_id: uuid.UUID,
+        visibility: str,
+        *,
+        user_id: uuid.UUID | None,
+        anonymous_id: str | None,
+    ) -> Itinerary:
+        """Change who can open this plan by link. Owner only; kept plans only."""
+        from app.domains.explorer.models import (
+            VISIBILITY_PRIVATE,
+            VISIBILITY_PUBLIC,
+            VISIBILITY_UNLISTED,
         )
-        if not owned:
-            raise NotFoundError("Itinerary not found.", code="ITINERARY_NOT_FOUND")
+
+        allowed = {VISIBILITY_PRIVATE, VISIBILITY_UNLISTED, VISIBILITY_PUBLIC}
+        if visibility not in allowed:
+            raise ValidationError("Unknown visibility.", code="INVALID_VISIBILITY")
+
+        itinerary = await self.get(itinerary_id, user_id=user_id, anonymous_id=anonymous_id)
+        _require_editable(itinerary, user_id=user_id, anonymous_id=anonymous_id)
+        if itinerary.status != STATUS_KEPT:
+            raise ValidationError(
+                "Keep this plan before sharing it.",
+                code="PLAN_NOT_KEPT",
+            )
+        itinerary.visibility = visibility
+        await self.session.flush()
+        logger.info(
+            "itinerary_visibility_set",
+            itinerary_id=str(itinerary_id),
+            visibility=visibility,
+        )
         return itinerary
 
     async def list_for(
@@ -1104,6 +1137,7 @@ class PlanningService:
         self, itinerary_id: uuid.UUID, *, user_id: uuid.UUID | None, anonymous_id: str | None
     ) -> None:
         itinerary = await self.get(itinerary_id, user_id=user_id, anonymous_id=anonymous_id)
+        _require_editable(itinerary, user_id=user_id, anonymous_id=anonymous_id)
         # Soft delete: an itinerary is the explorer's own record of an evening, and
         # spec BUSINESS-07's "nothing is deleted automatically" applies to their
         # history too.
@@ -1146,14 +1180,37 @@ class PlanningService:
         return result.scalar_one_or_none()
 
 
-def _require_editable(itinerary: Itinerary) -> None:
-    """Raise only if the itinerary is soft-deleted (both drafts and kept are editable).
+def _is_owner(
+    itinerary: Itinerary,
+    *,
+    user_id: uuid.UUID | None,
+    anonymous_id: str | None,
+) -> bool:
+    if user_id is not None:
+        return itinerary.user_id == user_id
+    return (
+        itinerary.anonymous_id is not None
+        and anonymous_id is not None
+        and itinerary.anonymous_id == anonymous_id
+    )
 
-    Kept plans used to be frozen after save. Explorers naturally want to tweak a
-    kept evening — remove a stop, reorder — so mutations are allowed on both
-    statuses. Soft-deleted rows stay unreachable via get().
+
+def _require_editable(
+    itinerary: Itinerary,
+    *,
+    user_id: uuid.UUID | None = None,
+    anonymous_id: str | None = None,
+) -> None:
+    """Raise if soft-deleted or the caller does not own the plan.
+
+    Shared viewers may read via ``get``; they must not mutate. Ownership is
+    checked whenever caller ids are supplied.
     """
     if itinerary.deleted_at is not None:
+        raise NotFoundError("Itinerary not found.", code="ITINERARY_NOT_FOUND")
+    if (user_id is not None or anonymous_id is not None) and not _is_owner(
+        itinerary, user_id=user_id, anonymous_id=anonymous_id
+    ):
         raise NotFoundError("Itinerary not found.", code="ITINERARY_NOT_FOUND")
 
 

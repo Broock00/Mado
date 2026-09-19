@@ -17,6 +17,7 @@ import { useIsOnline } from '@/app/offline'
 import { useLanguage } from '@/app/language-context'
 import { Button, EmptyState, Skeleton } from '@/design-system/primitives'
 import { PlanSummary, PlanTimeline } from './PlanTimeline'
+import { PlanShareBar } from './PlanShareBar'
 import { RouteGuidance } from './RouteGuidance'
 import { clockTime, dayLabel } from './timeline-format'
 
@@ -53,7 +54,7 @@ export function ItineraryPage() {
           description={
             unreachable
               ? t('offline.notStored.detail')
-              : 'It may have been deleted, or it belongs to another account.'
+              : 'It may have been deleted, or the link is private.'
           }
           action={
             <Link to="/plans">
@@ -66,9 +67,15 @@ export function ItineraryPage() {
   }
 
   const day = dayLabel(itinerary.startsAt)
+  const endDay = dayLabel(itinerary.endsAt)
+  const dayCount =
+    Math.max(0, ...itinerary.stops.map((s) => s.dayIndex ?? 0)) +
+    (itinerary.stops.length > 0 ? 1 : 0)
+  const isTrip = itinerary.kind === 'trip' || dayCount > 1
   const underway =
     Date.parse(itinerary.startsAt) <= Date.now() && Date.parse(itinerary.endsAt) >= Date.now()
   const planId = itinerary.id
+  const isMine = itinerary.isMine !== false
 
   function editInBuilder() {
     setActiveDraftId(planId)
@@ -88,28 +95,33 @@ export function ItineraryPage() {
       <header className="mt-4 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs font-medium uppercase tracking-wide text-brand-600">
-            {underway ? 'On now' : day}
+            {underway ? 'On now' : isTrip ? `${dayCount} days` : day}
+            {!isMine && ' · Shared with you'}
           </p>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight text-sand-900">
             {itinerary.title}
           </h1>
           <p className="mt-1 text-sand-600">
-            {underway ? `${day}, ` : null}
-            {clockTime(itinerary.startsAt)} – {clockTime(itinerary.endsAt)}
+            {isTrip
+              ? `${day} – ${endDay}`
+              : `${underway ? `${day}, ` : ''}${clockTime(itinerary.startsAt)} – ${clockTime(itinerary.endsAt)}`}
           </p>
           <div className="mt-3">
             <PlanSummary
               stopCount={itinerary.stops.length}
+              dayCount={isTrip ? dayCount : undefined}
               totalTravelMinutes={itinerary.totalTravelMinutes}
               totalCost={itinerary.estimatedCost ?? 0}
               currency={itinerary.currency}
             />
           </div>
         </div>
-        <Button variant="secondary" onClick={editInBuilder}>
-          <Pencil className="size-4" aria-hidden />
-          Edit plan
-        </Button>
+        {isMine && (
+          <Button variant="secondary" onClick={editInBuilder}>
+            <Pencil className="size-4" aria-hidden />
+            Edit plan
+          </Button>
+        )}
       </header>
 
       {!online && (
@@ -127,10 +139,16 @@ export function ItineraryPage() {
       )}
 
       <div className="mt-6">
-        <PlanTimeline stops={itinerary.stops} currency={itinerary.currency} />
+        <PlanTimeline
+          startsAt={itinerary.startsAt}
+          stops={itinerary.stops}
+          currency={itinerary.currency}
+        />
       </div>
 
       <RouteGuidance itinerary={itinerary} />
+
+      {isMine && itinerary.status === 'kept' && <PlanShareBar itinerary={itinerary} />}
     </div>
   )
 }

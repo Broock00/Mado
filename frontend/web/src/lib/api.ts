@@ -985,6 +985,17 @@ export const api = {
       body: JSON.stringify({ title }),
     }).then((r) => r.data),
 
+  /** Who can open this kept plan by link (private | unlisted | public). */
+  setItineraryVisibility: (
+    itineraryId: string,
+    visibility: import('@/lib/types').PlanVisibility,
+  ) =>
+    request<Envelope<Itinerary>>(`/api/v1/itineraries/${itineraryId}/visibility`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ visibility }),
+    }).then((r) => r.data),
+
   /** Open a concierge-offered plan as an editable draft. */
   openOfferAsDraft: (conversationId: string, title?: string) =>
     request<Envelope<Itinerary>>(

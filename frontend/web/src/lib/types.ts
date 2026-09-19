@@ -1369,8 +1369,14 @@ export interface Itinerary {
   /** outing = one day; trip = multi-day builder. */
   kind?: 'outing' | 'trip'
   timezone?: string | null
+  /** Who can open the link — same meaning as collections. */
+  visibility?: PlanVisibility
+  /** Whether the current caller owns this plan. */
+  isMine?: boolean
   stops: PlanStop[]
 }
+
+export type PlanVisibility = 'private' | 'unlisted' | 'public'
 
 // ---- Stop spec for full replacement
 export interface StopSpec {

@@ -111,6 +111,10 @@ class ItineraryOut(CamelModel):
     # From constraints — drives day tabs in the builder.
     kind: str = "outing"
     timezone: str | None = None
+    # private | unlisted | public — same meaning as collections.
+    visibility: str = "private"
+    # Whether the current caller owns this plan (controls edit/share UI).
+    is_mine: bool = True
     stops: list[StopOut]
 
 
@@ -158,6 +162,10 @@ class PatchDraftIn(CamelModel):
         if value is not None and value.tzinfo is None:
             raise ValueError("Timestamps must include a timezone offset.")
         return value
+
+
+class VisibilityIn(CamelModel):
+    visibility: str = Field(pattern="^(private|unlisted|public)$")
 
 
 class AppendStopIn(CamelModel):
@@ -507,10 +515,22 @@ async def get_itinerary(
     user: OptionalUser,
     anonymous_id: AnonymousId,
 ) -> Envelope[ItineraryOut]:
-    itinerary = await PlanningService(session).get(
+    service = PlanningService(session)
+    itinerary = await service.get(
         itinerary_id, user_id=user.id if user else None, anonymous_id=anonymous_id
     )
-    return Envelope(data=_to_itinerary_out(itinerary))
+    from app.domains.explorer.planning_service import _is_owner
+
+    return Envelope(
+        data=_to_itinerary_out(
+            itinerary,
+            is_mine=_is_owner(
+                itinerary,
+                user_id=user.id if user else None,
+                anonymous_id=anonymous_id,
+            ),
+        )
+    )
 
 
 @router.delete(
@@ -530,7 +550,7 @@ async def delete_itinerary(
     await session.commit()
 
 
-def _to_itinerary_out(itinerary) -> ItineraryOut:
+def _to_itinerary_out(itinerary, *, is_mine: bool = True) -> ItineraryOut:
     constraints = itinerary.constraints or {}
     kind = constraints.get("kind") or "outing"
     if kind not in ("outing", "trip"):
@@ -554,6 +574,8 @@ def _to_itinerary_out(itinerary) -> ItineraryOut:
         status=getattr(itinerary, "status", "kept"),
         kind=kind,
         timezone=constraints.get("timezone"),
+        visibility=getattr(itinerary, "visibility", None) or "private",
+        is_mine=is_mine,
         stops=[_to_stop_out(stop) for stop in ordered],
     )
 
@@ -561,6 +583,32 @@ def _to_itinerary_out(itinerary) -> ItineraryOut:
 # ------------------------------------------------------------- draft mutations
 # Static /itineraries/drafts routes are registered above get_itinerary so FastAPI
 # does not treat "drafts" as an itinerary_id UUID (which returns 422).
+
+
+@router.patch(
+    "/itineraries/{itinerary_id}/visibility",
+    response_model=Envelope[ItineraryOut],
+    summary="Set who can open this plan by link",
+    description=(
+        "private = owner only; unlisted = anyone with the link (the usual share); "
+        "public = same read access for now. Only kept plans can be shared."
+    ),
+)
+async def set_itinerary_visibility(
+    itinerary_id: uuid.UUID,
+    payload: VisibilityIn,
+    session: SessionDep,
+    user: OptionalUser,
+    anonymous_id: AnonymousId,
+) -> Envelope[ItineraryOut]:
+    itinerary = await PlanningService(session).set_visibility(
+        itinerary_id,
+        payload.visibility,
+        user_id=user.id if user else None,
+        anonymous_id=anonymous_id,
+    )
+    await session.commit()
+    return Envelope(data=_to_itinerary_out(itinerary, is_mine=True))
 
 
 @router.patch(

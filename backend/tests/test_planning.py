@@ -659,3 +659,42 @@ class TestMultiDayBuilder:
 
         assert MAX_TRIP_DAYS == 14
         assert MAX_BUILDER_STOPS == 40
+
+
+class TestItineraryShareable:
+    def test_kept_unlisted_is_shareable(self):
+        from types import SimpleNamespace
+
+        from app.domains.explorer.models import Itinerary
+
+        # Exercise the property logic without a DB row.
+        row = SimpleNamespace(
+            deleted_at=None,
+            status="kept",
+            visibility="unlisted",
+        )
+        assert Itinerary.is_shareable.fget(row) is True
+
+    def test_draft_is_never_shareable(self):
+        from types import SimpleNamespace
+
+        from app.domains.explorer.models import Itinerary
+
+        row = SimpleNamespace(
+            deleted_at=None,
+            status="draft",
+            visibility="unlisted",
+        )
+        assert Itinerary.is_shareable.fget(row) is False
+
+    def test_private_kept_is_not_shareable(self):
+        from types import SimpleNamespace
+
+        from app.domains.explorer.models import Itinerary
+
+        row = SimpleNamespace(
+            deleted_at=None,
+            status="kept",
+            visibility="private",
+        )
+        assert Itinerary.is_shareable.fget(row) is False

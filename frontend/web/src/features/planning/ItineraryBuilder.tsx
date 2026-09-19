@@ -47,6 +47,7 @@ import { AddStopSearch } from './AddStopSearch'
 import { ConflictBanner } from './ConflictBanner'
 import { FillGapCard } from './FillGapCard'
 import { OptimizePreview } from './OptimizePreview'
+import { PlanShareBar } from './PlanShareBar'
 
 interface Props {
   draftId: string
@@ -640,6 +641,9 @@ export function ItineraryBuilder({ draftId, draft, addExperienceId, onKept }: Pr
       ) : (
         <DraftMap draft={draft} stops={stops} />
       )}
+
+      {/* ----- Share (kept plans only) ----- */}
+      {draft.status === 'kept' && <PlanShareBar itinerary={draft} />}
 
       {/* ----- Add Stop overlay ----- */}
       {addStopOpen && (

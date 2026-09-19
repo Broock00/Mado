@@ -206,6 +206,15 @@ class InteractionEvent(Base, UUIDPrimaryKey):
     )
 
 
+# Shared by itineraries and collections. "Share" means unlisted: anyone holding
+# the link. Private answers 404 to strangers so guessing an id does not confirm
+# the row exists. Public is reserved for a listed surface (collections have one;
+# plans do not yet).
+VISIBILITY_PRIVATE = "private"
+VISIBILITY_UNLISTED = "unlisted"
+VISIBILITY_PUBLIC = "public"
+
+
 class Itinerary(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     """A planned sequence of experiences (spec 54.01 s12, taxonomy: Collection ->
     Itinerary -> Journey).
@@ -246,6 +255,15 @@ class Itinerary(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
     # live in the builder workspace. The two are never mixed because a draft is a
     # workspace commitment, not a promise — it has not been reviewed as an evening.
     status: Mapped[str] = mapped_column(String(10), default="kept", nullable=False)
+    # Same meaning as collections: private = owner only; unlisted = anyone with
+    # the link; public = reserved for a future browse rail (link works today).
+    # Drafts stay private — a half-built workspace is not something to circulate.
+    visibility: Mapped[str] = mapped_column(
+        String(16),
+        default=VISIBILITY_PRIVATE,
+        server_default=VISIBILITY_PRIVATE,
+        nullable=False,
+    )
     # The request this plan answers, kept so it can be replanned when something
     # falls through without interrogating the explorer again.
     constraints: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
@@ -259,6 +277,15 @@ class Itinerary(Base, UUIDPrimaryKey, Timestamps, SoftDelete):
         order_by="ItineraryStop.day_index, ItineraryStop.position",
         lazy="selectin",
     )
+
+    @property
+    def is_shareable(self) -> bool:
+        """Whether someone holding the link should be shown it."""
+        return (
+            self.deleted_at is None
+            and self.status == "kept"
+            and self.visibility in {VISIBILITY_UNLISTED, VISIBILITY_PUBLIC}
+        )
 
 
 class ItineraryStop(Base, UUIDPrimaryKey, Timestamps):
@@ -317,10 +344,6 @@ class ItineraryStop(Base, UUIDPrimaryKey, Timestamps):
 # actually do all of it in the order given, and a collection claims nothing of
 # the sort. Conflating them would mean either promising feasibility a themed list
 # cannot deliver, or dropping the timing an itinerary exists for.
-
-VISIBILITY_PRIVATE = "private"
-VISIBILITY_UNLISTED = "unlisted"
-VISIBILITY_PUBLIC = "public"
 
 # Where the collection came from. Only "user" is written today; the others are
 # in the taxonomy and get a value here so adding them later is a seed, not a
