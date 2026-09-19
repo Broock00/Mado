@@ -34,3 +34,9 @@ test-results/
 
 # Uploaded images. Content-addressed local storage; object storage in production.
 backend/var/
+
+# Agent skills + brag output
+.agents/
+brag-output/
+skills-lock.json
+
