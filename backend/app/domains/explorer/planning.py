@@ -75,6 +75,11 @@ MAX_DWELL_MINUTES = 240
 
 # A plan longer than this stops being a plan and becomes a schedule.
 MAX_STOPS = 6
+# Manual builder allows more stops than the AI solver. Multi-day trips need
+# headroom (e.g. 5 days × 4 stops) without inviting unbounded lists.
+MAX_BUILDER_STOPS = 40
+# Soft cap on calendar days in a manually built trip.
+MAX_TRIP_DAYS = 14
 
 # How far a plan may wander. Past this, "an evening out" has become a road trip.
 MAX_SPREAD_KM = 15.0
@@ -145,6 +150,8 @@ class PlannedStop:
     is_fixed_time: bool
     event_instance_id: uuid.UUID | None = None
     note: str | None = None
+    # 0-based day within a multi-day trip; outings stay at 0.
+    day_index: int = 0
 
     @property
     def dwell_minutes(self) -> int:
@@ -1005,3 +1012,359 @@ def _explain(stops: list[PlannedStop], request: PlanRequest) -> str:
     # rest, turning "Azmari Night" into "azmari night" and "ETB" into "etb".
     sentence = ", ".join(parts)
     return sentence[0].upper() + sentence[1:] + "."
+
+
+# --------------- explorer-constructed plan analysis --------------------------
+#
+# When an explorer builds a plan manually (choosing stops, reordering, editing
+# times), Mado validates rather than solves. `analyze_stops` is the function
+# that runs on the explorer's order and times to find problems — without
+# changing anything. Every conflict comes with explicit resolution options so
+# the interface can present them rather than deciding for the explorer.
+
+
+# A gap shorter than this is not worth surfacing as a fill opportunity: the
+# explorer has left intentional breathing room, not a scheduling gap.
+MIN_GAP_MINUTES = 30
+
+
+@dataclass(slots=True)
+class StopInput:
+    """One stop from a draft itinerary, ready for analysis.
+
+    Carries the experience (for coordinates and metadata) alongside the
+    explorer's chosen timings, so the analysis can compare them against what
+    the geometry allows.
+    """
+
+    experience: Experience
+    event_instance_id: uuid.UUID | None
+    is_fixed_time: bool
+    arrive_at: datetime
+    depart_at: datetime
+    estimated_cost: float
+
+
+@dataclass(slots=True)
+class Conflict:
+    """A scheduling problem found in an explorer-constructed plan.
+
+    Every conflict names the stops involved, states what is wrong in plain
+    language, and lists the resolutions the explorer can choose from. The
+    interface presents these; nothing is changed without explicit acceptance.
+    """
+
+    kind: str  # "overlap" | "travel_gap" | "fixed_time_miss" | "window_overrun" | "budget_overrun"
+    stop_indices: list[int]
+    message: str
+    # Resolution tokens shown as buttons in the conflict UI.
+    resolutions: list[str]  # "move_stop" | "change_duration" | "remove_stop" | "keep_as_is"
+
+
+@dataclass(slots=True)
+class FreeGap:
+    """A meaningful block of free time where a stop could be inserted.
+
+    `after_index` of -1 means the gap is before the first stop (between the
+    window start and the first arrival). An index equal to len(stops) means
+    it is after the last stop — unlikely in a manual plan but surfaced so the
+    explorer can ask "fill the end of my evening" explicitly.
+    """
+
+    after_index: int
+    starts_at: datetime
+    ends_at: datetime
+    free_minutes: int
+
+
+@dataclass(slots=True)
+class Analysis:
+    """Result of validating an explorer-constructed stop list.
+
+    Does not change anything. The caller uses conflicts to decide what to show
+    and gaps to decide where to offer a fill action.
+    """
+
+    conflicts: list[Conflict]
+    gaps: list[FreeGap]
+    total_cost: float
+    total_travel_minutes: int
+    budget_overrun: float  # 0 when none
+
+
+def analyze_stops(
+    stops: list[StopInput],
+    window_start: datetime | None,
+    window_end: datetime | None,
+    origin: tuple[float, float] | None,
+    budget: float | None = None,
+) -> Analysis:
+    """Validate an explorer-constructed stop list without re-solving.
+
+    Each conflict names the problem and the resolution options so the interface
+    can present them. Nothing is changed. The explorer stays in control of order
+    and times.
+    """
+    conflicts: list[Conflict] = []
+    gaps: list[FreeGap] = []
+    total_cost = 0.0
+    total_travel_minutes = 0
+
+    for i, stop in enumerate(stops):
+        total_cost += stop.estimated_cost
+
+        # Determine the cursor: when does the previous stop release us?
+        if i == 0:
+            prev_depart: datetime | None = window_start
+            prev_coords = origin
+            # Gap before the first stop.
+            if window_start is not None:
+                free = int((stop.arrive_at - window_start).total_seconds() / 60)
+                if free >= MIN_GAP_MINUTES:
+                    gaps.append(
+                        FreeGap(
+                            after_index=-1,
+                            starts_at=window_start,
+                            ends_at=stop.arrive_at,
+                            free_minutes=free,
+                        )
+                    )
+        else:
+            prev = stops[i - 1]
+            prev_depart = prev.depart_at
+            prev_coords = _coords(prev.experience)
+
+        here = _coords(stop.experience)
+        travel_minutes, _ = travel_estimate(prev_coords, here)
+        total_travel_minutes += travel_minutes
+
+        if prev_depart is not None:
+            earliest = prev_depart + timedelta(minutes=travel_minutes)
+
+            if stop.arrive_at < prev_depart:
+                # The next stop begins before the previous one has even ended.
+                conflicts.append(
+                    Conflict(
+                        kind="overlap",
+                        stop_indices=[i - 1, i] if i > 0 else [i],
+                        message=(
+                            f"\u201c{stop.experience.title}\u201d starts before "
+                            f"\u201c{stops[i-1].experience.title}\u201d finishes."
+                            if i > 0
+                            else (
+                                f"\u201c{stop.experience.title}\u201d "
+                                "starts before the window opens."
+                            )
+                        ),
+                        resolutions=["move_stop", "change_duration", "remove_stop", "keep_as_is"],
+                    )
+                )
+            elif stop.arrive_at < earliest:
+                # Not enough time to travel between them.
+                scheduled = int((stop.arrive_at - prev_depart).total_seconds() / 60)
+                conflicts.append(
+                    Conflict(
+                        kind="travel_gap",
+                        stop_indices=[i - 1, i] if i > 0 else [i],
+                        message=(
+                            f"About {travel_minutes} min of travel is needed before "
+                            f"\u201c{stop.experience.title}\u201d, but only {scheduled} min "
+                            "are scheduled."
+                        ),
+                        resolutions=["move_stop", "change_duration", "remove_stop", "keep_as_is"],
+                    )
+                )
+
+        # Fixed-time events: verify the explorer can arrive before the event starts.
+        if stop.is_fixed_time and stop.event_instance_id is not None:
+            for event in stop.experience.events or []:
+                if event.id == stop.event_instance_id:
+                    event_start = event.start_time
+                    if event_start.tzinfo is None:
+                        event_start = event_start.replace(tzinfo=UTC)
+                    if stop.arrive_at > event_start:
+                        conflicts.append(
+                            Conflict(
+                                kind="fixed_time_miss",
+                                stop_indices=[i],
+                                message=(
+                                    f"\u201c{stop.experience.title}\u201d starts at a fixed time "
+                                    "but your arrival is scheduled after it begins."
+                                ),
+                                resolutions=["move_stop", "remove_stop", "keep_as_is"],
+                            )
+                        )
+                    break
+
+        # Window overrun: the stop finishes after the planned end.
+        if window_end is not None and stop.depart_at > window_end:
+            conflicts.append(
+                Conflict(
+                    kind="window_overrun",
+                    stop_indices=[i],
+                    message=(
+                        f"\u201c{stop.experience.title}\u201d runs past your planned end time."
+                    ),
+                    resolutions=["change_duration", "remove_stop", "keep_as_is"],
+                )
+            )
+
+        # Gap between this stop and the next (after accounting for travel to the next).
+        if i < len(stops) - 1:
+            next_stop = stops[i + 1]
+            next_coords = _coords(next_stop.experience)
+            next_travel, _ = travel_estimate(here, next_coords)
+            free_start = stop.depart_at + timedelta(minutes=next_travel)
+            free = int((next_stop.arrive_at - free_start).total_seconds() / 60)
+            if free >= MIN_GAP_MINUTES:
+                gaps.append(
+                    FreeGap(
+                        after_index=i,
+                        starts_at=free_start,
+                        ends_at=next_stop.arrive_at,
+                        free_minutes=free,
+                    )
+                )
+        elif window_end is not None:
+            # Gap between the last stop and the end of the window.
+            free = int((window_end - stop.depart_at).total_seconds() / 60)
+            if free >= MIN_GAP_MINUTES:
+                gaps.append(
+                    FreeGap(
+                        after_index=i,
+                        starts_at=stop.depart_at,
+                        ends_at=window_end,
+                        free_minutes=free,
+                    )
+                )
+
+    # Budget: report a single overrun rather than one per stop, because removing
+    # a stop is what resolves it and the explorer picks which one.
+    budget_overrun = 0.0
+    if budget is not None and total_cost > budget:
+        budget_overrun = round(total_cost - budget, 2)
+        conflicts.append(
+            Conflict(
+                kind="budget_overrun",
+                stop_indices=list(range(len(stops))),
+                message=(
+                    f"Estimated total exceeds your budget by {budget_overrun:.0f}."
+                ),
+                resolutions=["remove_stop", "keep_as_is"],
+            )
+        )
+
+    return Analysis(
+        conflicts=conflicts,
+        gaps=gaps,
+        total_cost=round(total_cost, 2),
+        total_travel_minutes=total_travel_minutes,
+        budget_overrun=budget_overrun,
+    )
+
+
+def compute_stop_times(
+    stops: list[StopInput],
+    window_start: datetime | None,
+    origin: tuple[float, float] | None,
+) -> list[tuple[datetime, datetime, int, float | None]]:
+    """Compute (arrive_at, depart_at, travel_minutes, travel_km) for each stop.
+
+    Used when the service assembles the draft from a full stop replacement
+    and the client has not supplied explicit times. This assigns forward-only
+    times (no backtrack, no re-solve): each stop arrives as soon as travel from
+    the previous allows, using the draft window start or now as the origin.
+
+    Returns one tuple per stop in the same order. Fixed-time stops use their
+    event start where it is earlier than the computed earliest arrival.
+    """
+    cursor = window_start or datetime.now(UTC)
+    previous = origin
+    result: list[tuple[datetime, datetime, int, float | None]] = []
+
+    for stop in stops:
+        here = _coords(stop.experience)
+        travel_minutes, travel_km = travel_estimate(previous, here)
+        earliest = cursor + timedelta(minutes=travel_minutes)
+
+        if stop.is_fixed_time and stop.event_instance_id is not None:
+            # Find the scheduled start among the experience's events.
+            event_start: datetime | None = None
+            for event in stop.experience.events or []:
+                if event.id == stop.event_instance_id:
+                    event_start = event.start_time
+                    if event_start.tzinfo is None:
+                        event_start = event_start.replace(tzinfo=UTC)
+                    break
+            # Arrive at the event's start if we can make it, otherwise as early as possible.
+            arrive = (
+                event_start if (event_start is not None and event_start >= earliest) else earliest
+            )
+        else:
+            arrive = earliest
+
+        dwell = _dwell_minutes(stop.experience)
+        depart = arrive + timedelta(minutes=dwell)
+
+        result.append((arrive, depart, travel_minutes, travel_km))
+        cursor = depart + timedelta(minutes=BUFFER_MINUTES)
+        previous = here
+
+    return result
+
+
+def build_optimize_proposal(
+    stops: list[StopInput],
+    window_start: datetime,
+    window_end: datetime,
+    origin: tuple[float, float] | None,
+    currency: str = "ETB",
+) -> Plan:
+    """Propose a reordering of the explorer's stops using 2-opt + retime.
+
+    Returns a Plan containing the proposed sequence and times. Nothing is
+    applied until the explorer explicitly accepts the proposal — the caller
+    is responsible for presenting the diff and applying only on confirm.
+
+    Fixed-time stops are never moved. If the proposed order is infeasible,
+    the tail is trimmed rather than failing outright, so at minimum the
+    fixed-time anchors are preserved.
+    """
+    # Convert StopInputs to PlannedStops with placeholder times for 2-opt.
+    planned = [
+        PlannedStop(
+            experience=s.experience,
+            arrive_at=s.arrive_at,
+            depart_at=s.depart_at,
+            travel_minutes=s.event_instance_id is not None and s.is_fixed_time and 0 or 0,
+            travel_km=None,
+            estimated_cost=s.estimated_cost,
+            is_fixed_time=s.is_fixed_time,
+            event_instance_id=s.event_instance_id,
+        )
+        for s in stops
+    ]
+
+    # Build a minimal PlanRequest so _two_opt and _retime can check feasibility.
+    request = PlanRequest(
+        start=window_start,
+        end=window_end,
+        city_slug="",  # not used by scheduling helpers
+        latitude=origin[0] if origin else None,
+        longitude=origin[1] if origin else None,
+    )
+
+    optimized = _two_opt(planned, request, origin)
+    retimed = _retime(optimized, request, origin)
+
+    if not retimed:
+        return Plan([], 0.0, 0, "The proposed order could not be scheduled.", currency=currency)
+
+    total_cost = round(sum(s.estimated_cost for s in retimed), 2)
+    return Plan(
+        stops=retimed,
+        total_cost=total_cost,
+        total_travel_minutes=sum(s.travel_minutes for s in retimed),
+        rationale=_explain(retimed, request),
+        currency=currency,
+    )
