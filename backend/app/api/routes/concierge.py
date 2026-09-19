@@ -57,6 +57,10 @@ class MessageRequest(CamelModel):
     bbox: str | None = Field(default=None, max_length=120)
     country: str | None = Field(default=None, min_length=2, max_length=2)
     place_label: str | None = Field(default=None, max_length=160)
+    # The active draft the explorer is working on in the builder, if any.
+    # Passed so the gateway can scope refinements (make it cheaper, add lunch,
+    # optimize the route) to that document without asking again.
+    active_itinerary_id: uuid.UUID | None = None
 
 
 class ResultItem(CamelModel):
@@ -99,6 +103,7 @@ class PlanStopOut(CamelModel):
     estimated_cost: float
     is_fixed_time: bool
     note: str | None = None
+    day_index: int = 0
 
 
 class OfferedPlan(CamelModel):
@@ -106,7 +111,8 @@ class OfferedPlan(CamelModel):
 
     Sent separately from `results` because a plan is a sequence - the order, the
     timings and the travel between stops are the substance of it, and a row of
-    cards shows none of that.
+    cards shows none of that. Multi-day trips are flattened into ``stops`` with
+    ``dayIndex`` so the same card and open-in-planner path work for both.
     """
 
     stops: list[PlanStopOut]
@@ -115,6 +121,7 @@ class OfferedPlan(CamelModel):
     total_travel_minutes: int
     rationale: str
     unmet: list[str] = Field(default_factory=list)
+    kind: str = "outing"
 
 
 class ConciergeResponse(CamelModel):
@@ -237,6 +244,16 @@ async def _reply(*, session, user, anonymous_id: str | None, payload: MessageReq
         anonymous_id=anonymous_id,
         city_slug=city_slug,
     )
+
+    # Record the active builder draft so the gateway can scope refinements
+    # ("make it cheaper", "add lunch", "optimize") to that document. Stored in
+    # conversation state rather than passed as a parameter so it survives into
+    # subsequent turns without the client having to repeat it.
+    if payload.active_itinerary_id is not None:
+        state = dict(conversation.state or {})
+        state["activeDraftId"] = str(payload.active_itinerary_id)
+        conversation.state = state
+
     reply = await gateway.handle_message(
         conversation=conversation,
         text=payload.message,
@@ -477,15 +494,50 @@ async def forget_all_memories(session: SessionDep, user: CurrentUser) -> None:
 
 
 def _to_offered_plan(plan: dict | None) -> OfferedPlan | None:
-    if not plan or not plan.get("stops"):
+    from datetime import datetime as _dt
+
+    from app.domains.explorer.planning_service import _flatten_offered_stops
+
+    if not plan:
         return None
+    stops = _flatten_offered_stops(plan)
+    if not stops:
+        return None
+
+    def _ts(value: object) -> datetime:
+        if isinstance(value, datetime):
+            return value
+        return _dt.fromisoformat(str(value).replace("Z", "+00:00"))
+
+    kind = "trip" if plan.get("days") else "outing"
+    total_travel = int(plan.get("totalTravelMinutes") or 0)
+    if not total_travel:
+        total_travel = sum(int(s.get("travelMinutes") or 0) for s in stops)
+
     return OfferedPlan(
-        stops=[PlanStopOut(**stop) for stop in plan["stops"]],
+        stops=[
+            PlanStopOut(
+                experience_id=str(s["experienceId"]),
+                event_instance_id=s.get("eventInstanceId"),
+                title=s["title"],
+                arrive_at=_ts(s["arriveAt"]),
+                depart_at=_ts(s["departAt"]),
+                dwell_minutes=int(s.get("dwellMinutes") or 0),
+                travel_minutes=int(s.get("travelMinutes") or 0),
+                travel_km=s.get("travelKm"),
+                estimated_cost=float(s.get("estimatedCost") or 0),
+                is_fixed_time=bool(s.get("isFixedTime")),
+                note=s.get("note"),
+                day_index=int(s.get("dayIndex") or 0),
+            )
+            for s in stops
+        ],
         total_cost=plan.get("totalCost", 0.0),
         currency=plan.get("currency", "ETB"),
-        total_travel_minutes=plan.get("totalTravelMinutes", 0),
+        total_travel_minutes=total_travel,
         rationale=plan.get("rationale", ""),
         unmet=plan.get("unmet") or [],
+        kind=kind,
     )
 
 
@@ -516,7 +568,9 @@ async def accept_plan(
     )
 
     offered = (conversation.state or {}).get("pendingPlan")
-    if not offered or not offered.get("stops"):
+    from app.domains.explorer.planning_service import _flatten_offered_stops
+
+    if not offered or not _flatten_offered_stops(offered):
         raise BadRequestError(
             "There is no plan in this conversation to keep.", code="NO_PENDING_PLAN"
         )
@@ -536,15 +590,73 @@ async def accept_plan(
     return Envelope(data={"id": str(itinerary.id), "title": itinerary.title})
 
 
+@router.post(
+    "/conversations/{conversation_id}/plan/draft",
+    response_model=Envelope[dict],
+    status_code=201,
+    summary="Open the offered plan as an editable draft",
+    description=(
+        "Materialises the most recent plan offer as a draft itinerary so the "
+        "explorer can edit stops and times in the builder before keeping it. "
+        "Nothing is saved as a kept plan yet."
+    ),
+)
+async def open_plan_as_draft(
+    conversation_id: uuid.UUID,
+    payload: AcceptPlanRequest,
+    session: SessionDep,
+    user: OptionalUser,
+    anonymous_id: AnonymousId,
+) -> Envelope[dict]:
+    from app.domains.explorer.planning_service import STATUS_DRAFT
+
+    conversation = await AIGateway(session).get_conversation(
+        conversation_id, user_id=user.id if user else None, anonymous_id=anonymous_id
+    )
+
+    offered = (conversation.state or {}).get("pendingPlan")
+    from app.domains.explorer.planning_service import _flatten_offered_stops
+
+    if not offered or not _flatten_offered_stops(offered):
+        raise BadRequestError(
+            "There is no plan in this conversation to open.", code="NO_PENDING_PLAN"
+        )
+
+    title = (payload.title or "").strip() or _default_title(offered)
+    draft = await PlanningService(session).save_offered(
+        offered,
+        title=title,
+        user_id=user.id if user else None,
+        anonymous_id=anonymous_id,
+        status=STATUS_DRAFT,
+    )
+
+    # Leave the pendingPlan in state so the concierge still shows the offer
+    # in the timeline — the explorer opened it in the builder, not accepted it
+    # or discarded it.
+    await session.commit()
+
+    return Envelope(data={"id": str(draft.id), "title": draft.title, "status": draft.status})
+
+
 # How a plan is named when the explorer does not name it. Weekday and date,
 # because that is how people refer to an evening they have planned. Built from
 # parts rather than a format string: the no-padding directive for day-of-month
 # differs between platforms (%-d against %#d) and neither is portable.
 def _default_title(offered: dict) -> str:
-    stops = offered.get("stops") or []
+    from app.domains.explorer.planning_service import _flatten_offered_stops
+
+    stops = _flatten_offered_stops(offered)
     if not stops:
         return "A plan"
-    when = datetime.fromisoformat(stops[0]["arriveAt"].replace("Z", "+00:00"))
+    raw = stops[0]["arriveAt"]
+    when = (
+        raw
+        if isinstance(raw, datetime)
+        else datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    )
+    if offered.get("days"):
+        return f"Trip from {when:%A} {when.day} {when:%B}"
     return f"{when:%A} {when.day} {when:%B}"
 
 
