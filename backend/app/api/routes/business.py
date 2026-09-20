@@ -25,6 +25,7 @@ and what is on.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from dataclasses import asdict
 from datetime import datetime
@@ -1090,7 +1091,7 @@ async def upload_gallery_item(
             # doing it per concurrent request is how the API runs out of memory.
             while chunk := await file.read(1024 * 1024):
                 upload.feed(chunk)
-            stored_video = upload.finish(owner_id=user.id)
+            stored_video = await asyncio.to_thread(upload.finish, owner_id=user.id)
 
         item = await service.add_gallery_item(
             user,
@@ -1109,7 +1110,7 @@ async def upload_gallery_item(
                 f"Images must be under {media_storage.MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
                 code="UPLOAD_TOO_LARGE",
             )
-        stored = media_storage.store(data, owner_id=user.id)
+        stored = await asyncio.to_thread(media_storage.store, data, owner_id=user.id)
         item = await service.add_gallery_item(
             user,
             business_id,

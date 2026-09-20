@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import io
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from PIL import Image
 
-from app.core.errors import ValidationError
+from app.core.errors import ServiceUnavailableError, ValidationError
 from app.core.rate_limit import (
     DRAFT_LIMIT,
     LOGIN_LIMIT,
@@ -183,6 +184,15 @@ class TestUploadNormalisation:
 
 
 class TestStorage:
+    @pytest.fixture(autouse=True)
+    def _local_disk(self, monkeypatch):
+        from app.core.config import get_settings
+
+        monkeypatch.setattr(get_settings(), "media_provider", "local", raising=False)
+        media_storage.reset_provider()
+        yield
+        media_storage.reset_provider()
+
     def test_identical_images_share_a_file(self, tmp_path, monkeypatch):
         monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path)
         owner = uuid.uuid4()
@@ -251,6 +261,15 @@ class TestVideoIdentification:
 
 
 class TestVideoStorage:
+    @pytest.fixture(autouse=True)
+    def _local_disk(self, monkeypatch):
+        from app.core.config import get_settings
+
+        monkeypatch.setattr(get_settings(), "media_provider", "local", raising=False)
+        media_storage.reset_provider()
+        yield
+        media_storage.reset_provider()
+
     def test_extension_comes_from_the_bytes(self, tmp_path, monkeypatch):
         """The one property that makes the served Content-Type honest."""
         monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path)
@@ -264,38 +283,34 @@ class TestVideoStorage:
         self, tmp_path, monkeypatch
     ):
         monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path)
-        with pytest.raises(ValidationError) as caught:
-            with media_storage.VideoUpload() as upload:
-                upload.feed(mp4_bytes())
-                # One chunk past the ceiling, rather than a hundred megabytes:
-                # the check is on the running total, so this is the same test
-                # and does not spend a minute of disk write to make it.
-                upload.feed(b"\x00" * (media_storage.MAX_VIDEO_BYTES + 1))
+        with pytest.raises(ValidationError) as caught, media_storage.VideoUpload() as upload:
+            upload.feed(mp4_bytes())
+            # One chunk past the ceiling, rather than a hundred megabytes:
+            # the check is on the running total, so this is the same test
+            # and does not spend a minute of disk write to make it.
+            upload.feed(b"\x00" * (media_storage.MAX_VIDEO_BYTES + 1))
         assert caught.value.code == "UPLOAD_TOO_LARGE"
 
     def test_refuses_before_the_whole_file_arrives(self, tmp_path, monkeypatch):
         """Identification happens on the head, so a file that is not a video is
         turned away rather than written and then deleted."""
         monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path)
-        with pytest.raises(ValidationError):
-            with media_storage.VideoUpload() as upload:
-                upload.feed(b"\x00" * media_storage.SNIFF_BYTES)
+        with pytest.raises(ValidationError), media_storage.VideoUpload() as upload:
+            upload.feed(b"\x00" * media_storage.SNIFF_BYTES)
 
     def test_a_short_file_is_still_identified(self, tmp_path, monkeypatch):
         """Shorter than the sniff window, so the check never fired during feed
         and has to happen at the end. Without it a 30-byte file of anything at
         all would be stored as a video."""
         monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path)
-        with pytest.raises(ValidationError):
-            with media_storage.VideoUpload() as upload:
-                upload.feed(b"not a video")
-                upload.finish(owner_id=uuid.uuid4())
+        with pytest.raises(ValidationError), media_storage.VideoUpload() as upload:
+            upload.feed(b"not a video")
+            upload.finish(owner_id=uuid.uuid4())
 
     def test_an_abandoned_upload_leaves_nothing_behind(self, tmp_path, monkeypatch):
         monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path / "media")
-        with pytest.raises(ValidationError):
-            with media_storage.VideoUpload() as upload:
-                upload.feed(b"\x00" * media_storage.SNIFF_BYTES)
+        with pytest.raises(ValidationError), media_storage.VideoUpload() as upload:
+            upload.feed(b"\x00" * media_storage.SNIFF_BYTES)
         leftovers = list((tmp_path / "incoming").glob("*"))
         assert leftovers == [], f"partial upload left on disk: {leftovers}"
 
@@ -307,3 +322,220 @@ class TestVideoStorage:
                 upload.feed(mp4_bytes())
                 urls.append(upload.finish(owner_id=uuid.uuid4()).url)
         assert urls[0] == urls[1]
+
+
+# --- object store ------------------------------------------------------------
+
+
+def _configure_r2(monkeypatch, **overrides):
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    values = {
+        "media_provider": "auto",
+        "environment": "development",
+        "r2_account_id": "acct",
+        "r2_access_key_id": "AKIAEXAMPLE",
+        "r2_secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        "r2_bucket": "mado-media",
+        "media_base_url": "https://cdn.example",
+        "r2_endpoint_url": "",
+        "r2_region": "auto",
+    }
+    values.update(overrides)
+    for name, value in values.items():
+        monkeypatch.setattr(settings, name, value, raising=False)
+    media_storage.reset_provider()
+
+
+class RecordingClient:
+    """Stands in for httpx.Client. Captures signed requests, never opens a socket."""
+
+    calls: list[dict] = []
+    status_code = 200
+
+    def __init__(self, timeout=None):
+        self.timeout = timeout
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def request(self, method, url, content=None, headers=None):
+        body = content.read() if hasattr(content, "read") else content
+        RecordingClient.calls.append(
+            {"method": method, "url": url, "body": body, "headers": dict(headers or {})}
+        )
+        import httpx
+
+        return httpx.Response(
+            self.status_code, text="AccessDenied" if self.status_code >= 400 else ""
+        )
+
+
+class TestChoosingABackend:
+    def teardown_method(self):
+        media_storage.reset_provider()
+
+    def test_local_disk_is_the_keyless_default(self, monkeypatch):
+        _configure_r2(
+            monkeypatch,
+            r2_access_key_id="",
+            r2_secret_access_key="",
+            r2_bucket="",
+            media_base_url="",
+            r2_account_id="",
+        )
+        assert media_storage.get_provider().name == "local"
+
+    def test_r2_is_used_when_fully_configured(self, monkeypatch):
+        _configure_r2(monkeypatch)
+        assert media_storage.get_provider().name == "r2"
+
+    def test_a_public_origin_is_required_for_r2(self, monkeypatch):
+        """The S3 endpoint is signed. Storing a URL nobody can fetch looks like
+        a successful upload and is the stub-invents-success failure."""
+        _configure_r2(monkeypatch, media_base_url="")
+        assert media_storage.get_provider().name == "local"
+
+    def test_explicit_local_wins_over_credentials(self, monkeypatch):
+        _configure_r2(monkeypatch, media_provider="local")
+        assert media_storage.get_provider().name == "local"
+
+    def test_incomplete_r2_selection_falls_back(self, monkeypatch):
+        _configure_r2(monkeypatch, media_provider="r2", r2_secret_access_key="")
+        assert media_storage.get_provider().name == "local"
+
+
+class TestAwsV4Signing:
+    """The credential is in Authorization, never the URL."""
+
+    when = datetime(2015, 8, 30, 12, 36, 0, tzinfo=UTC)
+
+    def _headers(self, secret="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"):
+        return media_storage._aws_v4_headers(
+            method="PUT",
+            url="https://acct.r2.cloudflarestorage.com/mado-media/ab/cd/file.webp",
+            payload_hash=media_storage._EMPTY_SHA256,
+            access_key="AKIAIOSFODNN7EXAMPLE",
+            secret_key=secret,
+            region="auto",
+            extra_headers={"content-type": "image/webp"},
+            when=self.when,
+        )
+
+    def test_the_signature_is_stable(self):
+        first = self._headers()
+        second = self._headers()
+        assert first["authorization"] == second["authorization"]
+        assert first["authorization"].startswith("AWS4-HMAC-SHA256 Credential=")
+        assert "20150830/auto/s3/aws4_request" in first["authorization"]
+        assert first["x-amz-date"] == "20150830T123600Z"
+
+    def test_a_different_secret_produces_a_different_signature(self):
+        signed = self._headers()["authorization"]
+        other = self._headers("other-secret")["authorization"]
+        assert signed != other
+
+    def test_the_secret_is_not_in_the_authorization_header(self):
+        secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        assert secret not in self._headers(secret)["authorization"]
+
+
+class TestR2Store:
+    @pytest.fixture(autouse=True)
+    def _record(self, monkeypatch):
+        RecordingClient.calls = []
+        RecordingClient.status_code = 200
+        monkeypatch.setattr(media_storage.httpx, "Client", RecordingClient)
+        yield
+        media_storage.reset_provider()
+
+    def _store(self):
+        return media_storage.R2Store(
+            endpoint_url="https://acct.r2.cloudflarestorage.com",
+            access_key_id="AKIAEXAMPLE",
+            secret_access_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            bucket="mado-media",
+            public_base_url="https://cdn.example",
+        )
+
+    def test_put_uses_the_public_origin_not_the_s3_endpoint(self):
+        url = self._store().put_bytes(
+            key="ab/cd/file.webp", data=b"webp-bytes", content_type="image/webp"
+        )
+        assert url == "https://cdn.example/ab/cd/file.webp"
+        call = RecordingClient.calls[0]
+        assert call["method"] == "PUT"
+        assert call["url"] == (
+            "https://acct.r2.cloudflarestorage.com/mado-media/ab/cd/file.webp"
+        )
+        assert call["body"] == b"webp-bytes"
+        assert call["headers"]["content-type"] == "image/webp"
+        assert call["headers"]["authorization"].startswith("AWS4-HMAC-SHA256 ")
+
+    def test_store_writes_to_r2_not_to_disk(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path)
+        _configure_r2(monkeypatch)
+        stored = media_storage.store(make_image(400, 400), owner_id=uuid.uuid4())
+        assert stored.url.startswith("https://cdn.example/")
+        assert stored.url.endswith(".webp")
+        assert list(tmp_path.rglob("*.webp")) == []
+        assert RecordingClient.calls, "R2 was never contacted"
+        assert RecordingClient.calls[0]["headers"]["content-type"] == "image/webp"
+
+    def test_a_failed_put_does_not_fall_back_to_disk(self, tmp_path, monkeypatch):
+        """The file would exist on this instance and 404 on every other one."""
+        RecordingClient.status_code = 500
+        monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path)
+        _configure_r2(monkeypatch)
+        with pytest.raises(ServiceUnavailableError):
+            media_storage.store(make_image(400, 400), owner_id=uuid.uuid4())
+        assert list(tmp_path.rglob("*.webp")) == []
+
+    def test_a_video_is_streamed_not_held(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path / "media")
+        _configure_r2(monkeypatch)
+        clip = mp4_bytes()
+        with media_storage.VideoUpload() as upload:
+            upload.feed(clip)
+            stored = upload.finish(owner_id=uuid.uuid4())
+        assert stored.url.endswith(".mp4")
+        assert stored.url.startswith("https://cdn.example/")
+        assert stored.content_type == "video/mp4"
+        call = RecordingClient.calls[0]
+        assert call["method"] == "PUT"
+        assert call["body"] == clip
+        leftovers = list((tmp_path / "incoming").glob("*"))
+        assert leftovers == [], f"staging file left behind: {leftovers}"
+        assert list((tmp_path / "media").rglob("*")) == []
+
+    def test_a_failed_video_put_leaves_nothing_on_disk(self, tmp_path, monkeypatch):
+        RecordingClient.status_code = 503
+        monkeypatch.setattr(media_storage, "_storage_root", lambda: tmp_path / "media")
+        _configure_r2(monkeypatch)
+        with pytest.raises(ServiceUnavailableError), media_storage.VideoUpload() as upload:
+            upload.feed(mp4_bytes())
+            upload.finish(owner_id=uuid.uuid4())
+        assert list((tmp_path / "incoming").glob("*")) == []
+        assert list((tmp_path / "media").rglob("*")) == []
+
+
+class TestMediaHealth:
+    def test_media_is_optional(self):
+        from app.core import health
+
+        check = next(c for c in health.CHECKS if c.name == "media")
+        assert check.required is False
+
+    async def test_local_disk_is_disabled_not_down(self, monkeypatch):
+        from app.core import health
+        from app.core.config import get_settings
+
+        monkeypatch.setattr(get_settings(), "media_provider", "local", raising=False)
+        media_storage.reset_provider()
+        result = await health._run(next(c for c in health.CHECKS if c.name == "media"))
+        assert result.status == health.STATUS_DISABLED
+        media_storage.reset_provider()

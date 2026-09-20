@@ -119,6 +119,17 @@ async def _check_ai() -> None:
     )
 
 
+async def _check_media() -> None:
+    from app.integrations import media_storage
+
+    provider = media_storage.get_provider()
+    if provider.name == "local":
+        raise _Disabled("Writing to local disk; no object store is called.")
+    # HeadBucket, not an upload: a probe that put an object every few seconds
+    # would both cost and leave debris. R2 answers HEAD on the bucket itself.
+    await asyncio.to_thread(provider.ping)
+
+
 class _Disabled(Exception):
     """Not an error: this dependency is switched off on purpose."""
 
@@ -138,6 +149,9 @@ CHECKS: tuple[Check, ...] = (
     Check("search", False, _check_search),
     # The concierge stops; browsing, planning and publishing do not.
     Check("ai", False, _check_ai),
+    # Publishing cannot store new media; browsing listings that already have
+    # pictures still works. Not ready would take the city offline over a bucket.
+    Check("media", False, _check_media),
 )
 
 

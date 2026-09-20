@@ -209,13 +209,27 @@ class Settings(BaseSettings):
     # subscription into a way to make the API call our own internal services.
     webhook_allow_private_endpoints: bool = False
 
-    # Where uploaded images are written. Local disk in development; spec 82.01
-    # names S3-compatible object storage for production, which changes this
-    # setting and app/integrations/media_storage.py and nothing else.
+    # Uploaded images and videos (spec 82.01: S3-compatible object storage).
+    #   auto   Cloudflare R2 when its credentials are complete, local disk otherwise
+    #   r2     R2; falls back to disk and logs if the credentials are incomplete
+    #   local  this machine's disk, which is also the development default
+    media_provider: Literal["auto", "r2", "local"] = "auto"
+    # Where local-disk uploads are written. Used whenever R2 is not selected,
+    # and as the staging directory's sibling for video (incoming/ next to this).
     media_root: str = "var/media"
-    # Public prefix images are served from. Split from media_root so a CDN can be
-    # put in front without moving the files.
+    # Public origin object keys are served from. Required for R2: the custom
+    # domain or r2.dev URL that maps at the bucket root. Empty for local disk,
+    # which is served by this API under /media.
     media_base_url: str = ""
+    r2_account_id: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket: str = ""
+    # Empty means the Cloudflare URL derived from r2_account_id. Override to
+    # point at MinIO or another S3 host without a code change.
+    r2_endpoint_url: str = ""
+    # R2's region is the literal string "auto". Another S3 host uses its own.
+    r2_region: str = "auto"
 
     default_city_slug: str = "addis-ababa"
 

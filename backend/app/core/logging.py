@@ -27,6 +27,8 @@ SENSITIVE_KEYS = {
     "secret",
     "jwt_secret",
     "gemini_api_key",
+    "r2_secret_access_key",
+    "secret_access_key",
 }
 
 # Key-name redaction is not enough on its own. A secret passed as a URL query

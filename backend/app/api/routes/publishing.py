@@ -8,6 +8,7 @@ but nobody has to think about it.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import uuid
 
@@ -348,7 +349,7 @@ async def upload_media(
             code="UPLOAD_TOO_LARGE",
         )
 
-    stored = media_storage.store(data, owner_id=user.id)
+    stored = await asyncio.to_thread(media_storage.store, data, owner_id=user.id)
     await service.add_media(user, experience_id, url=stored.url, alt_text=alt_text)
 
     experience = await service.get_own_experience(user, experience_id)

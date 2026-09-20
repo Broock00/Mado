@@ -182,11 +182,12 @@ class UploadedFiles(StaticFiles):
         return response
 
 
-# Uploaded images and videos. Served by the application only in development - in
-# production this path belongs to a CDN or object store, which is why the URL
-# prefix is stable and the storage backend is not baked into it. StaticFiles
-# resolves paths against the root and refuses traversal outside it, and every
-# stored name is a content hash rather than anything an uploader chose.
+# Local-disk uploads, and anything stored before R2 was configured. Served by
+# the application only for that fallback - R2 objects are fetched from
+# media_base_url, which is why the stored URL is a public origin plus key and
+# the storage backend is not baked into callers. StaticFiles resolves paths
+# against the root and refuses traversal outside it, and every stored name is a
+# content hash rather than anything an uploader chose.
 _media_root = Path(settings.media_root)
 _media_root.mkdir(parents=True, exist_ok=True)
 app.mount("/media", UploadedFiles(directory=_media_root), name="media")
