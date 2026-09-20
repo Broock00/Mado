@@ -4,16 +4,19 @@
  * The old page was a form: fill in constraints, Mado solves, you keep. This one
  * is a builder: you choose stops, Mado connects and validates, you keep.
  *
- * Layout: left sidebar (draft list + kept plans) / main area (active draft).
- * The sidebar persists across views; the main area swaps between timeline and map.
+ * Desktop: left sidebar (draft list + kept plans) beside the active draft.
+ * Mobile: list first; opening a plan (or starting a new one) swaps to a full-
+ * width builder with a back control. The two panes are never stacked on a
+ * phone — that made both unreadable.
  *
  * Nothing is committed until "Keep this plan" — drafts are workspaces.
  */
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  ArrowLeft,
   ClipboardList,
   Plus,
   Trash2,
@@ -28,6 +31,9 @@ import { cn } from '@/lib/utils'
 import { clockTime, dayLabel } from './timeline-format'
 import { ItineraryBuilder } from './ItineraryBuilder'
 
+/** Matches Tailwind `lg` — sidebar + builder sit side by side from here up. */
+const DESKTOP_MQ = '(min-width: 1024px)'
+
 export function PlanPage() {
   const user = useAppStore((s) => s.user)
   const activeDraftId = useAppStore((s) => s.activeDraftId)
@@ -36,24 +42,26 @@ export function PlanPage() {
   const [searchParams] = useSearchParams()
   const { money } = useLanguage()
 
-  // When arriving with ?addExperience=<id>, the builder will auto-append it.
+  // When arriving with ?addExperience=<id>, open the builder immediately.
   const addExperienceId = searchParams.get('addExperience')
 
-  // Fetch drafts (only when signed in — anonymous drafts stay in the active id)
+  // Mobile master/detail. Desktop ignores this and always shows both panes.
+  const [mobilePane, setMobilePane] = useState<'list' | 'detail'>(() =>
+    addExperienceId ? 'detail' : 'list',
+  )
+
   const { data: drafts, isLoading: draftsLoading } = useQuery({
     queryKey: ['itinerary-drafts'],
     queryFn: () => api.drafts(),
     enabled: Boolean(user),
   })
 
-  // Fetch kept plans
   const { data: kept, isLoading: keptLoading } = useQuery({
     queryKey: ['itineraries'],
     queryFn: () => api.itineraries(),
     enabled: Boolean(user),
   })
 
-  // Fetch the active plan document (draft or kept)
   const { data: activeDraft } = useQuery({
     queryKey: ['itinerary', activeDraftId],
     queryFn: () => api.itinerary(activeDraftId!),
@@ -91,6 +99,7 @@ export function PlanPage() {
     },
     onSuccess: (draft) => {
       setActiveDraftId(draft.id)
+      setMobilePane('detail')
       void queryClient.invalidateQueries({ queryKey: ['itinerary-drafts'] })
     },
   })
@@ -98,31 +107,78 @@ export function PlanPage() {
   const deleteDraft = useMutation({
     mutationFn: (id: string) => api.deleteItinerary(id),
     onSuccess: (_, id) => {
-      if (activeDraftId === id) setActiveDraftId(null)
+      if (activeDraftId === id) {
+        setActiveDraftId(null)
+        setMobilePane('list')
+      }
       void queryClient.invalidateQueries({ queryKey: ['itinerary-drafts'] })
     },
   })
 
   const deleteKept = useMutation({
     mutationFn: (id: string) => api.deleteItinerary(id),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['itineraries'] }),
+    onSuccess: (_, id) => {
+      if (activeDraftId === id) {
+        setActiveDraftId(null)
+        setMobilePane('list')
+      }
+      void queryClient.invalidateQueries({ queryKey: ['itineraries'] })
+    },
   })
 
-  // Pick the first draft on load if none is active.
+  // Deep-link into the builder when Add to Plan lands here with an experience.
   useEffect(() => {
-    if (!activeDraftId && drafts && drafts.length > 0) {
-      setActiveDraftId(drafts[0].id)
+    if (addExperienceId) setMobilePane('detail')
+  }, [addExperienceId])
+
+  // On desktop only, open the first draft so the right pane is not empty.
+  // Doing this on a phone would skip the list the explorer came to see.
+  useEffect(() => {
+    if (!drafts || drafts.length === 0) return
+    const firstId = drafts[0].id
+    const mq = window.matchMedia(DESKTOP_MQ)
+    function pickIfDesktop() {
+      if (mq.matches && !useAppStore.getState().activeDraftId) {
+        setActiveDraftId(firstId)
+      }
     }
-  }, [drafts, activeDraftId, setActiveDraftId])
+    pickIfDesktop()
+    mq.addEventListener('change', pickIfDesktop)
+    return () => mq.removeEventListener('change', pickIfDesktop)
+  }, [drafts, setActiveDraftId])
+
+  function openPlan(id: string) {
+    setActiveDraftId(id)
+    setMobilePane('detail')
+  }
+
+  function backToList() {
+    setMobilePane('list')
+  }
 
   const isBuilding = Boolean(activeDraftId)
+  const showList = mobilePane === 'list'
+  const showDetail = mobilePane === 'detail'
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 pb-28 pt-6 sm:px-6 lg:px-8">
-      <div className="grid gap-8 lg:grid-cols-[17rem_minmax(0,1fr)]">
-        {/* ---- Left sidebar ---- */}
-        <aside className="space-y-6 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
-          {/* Start a new draft */}
+      {/* min-w-0: a grid item defaults to min-width:auto and will blow past the
+          viewport when the builder has a long title, URL, or timeline rail. */}
+      <div className="grid min-w-0 gap-8 lg:grid-cols-[17rem_minmax(0,1fr)]">
+        {/* ---- List pane (always on desktop; alone on mobile until a plan opens) ---- */}
+        <aside
+          className={cn(
+            'min-w-0 space-y-6 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto',
+            showDetail && 'hidden lg:block',
+          )}
+        >
+          <div className="lg:hidden">
+            <h1 className="text-2xl font-semibold tracking-tight text-sand-900">Plans</h1>
+            <p className="mt-1 text-sm text-sand-500">
+              Pick a plan to edit, or start a new one.
+            </p>
+          </div>
+
           <div>
             <Button
               className="w-full"
@@ -134,7 +190,7 @@ export function PlanPage() {
             </Button>
             <button
               type="button"
-              className="mt-2 w-full rounded-lg border border-sand-200 bg-sand-50 px-3 py-2 text-sm font-medium text-sand-800 hover:bg-sand-100"
+              className="mt-2 w-full rounded-lg border border-sand-200 bg-sand-50 px-3 py-2.5 text-sm font-medium text-sand-800 hover:bg-sand-100"
               onClick={() => createDraft.mutate({ kind: 'trip', days: 3 })}
               disabled={createDraft.isPending}
             >
@@ -153,27 +209,25 @@ export function PlanPage() {
             </p>
           </div>
 
-          {/* Active drafts */}
           {user && (
             <DraftSection
               title="In progress"
               items={drafts ?? []}
               loading={draftsLoading}
               activeId={activeDraftId}
-              onSelect={setActiveDraftId}
+              onSelect={openPlan}
               onDelete={(id) => deleteDraft.mutate(id)}
               money={money}
               emptyText="No plans in progress."
             />
           )}
 
-          {/* Kept plans — open in the same builder so they remain editable */}
           {user && (
             <KeptSection
               items={kept ?? []}
               loading={keptLoading}
               activeId={activeDraftId}
-              onSelect={setActiveDraftId}
+              onSelect={openPlan}
               onDelete={(id) => deleteKept.mutate(id)}
               money={money}
             />
@@ -187,10 +241,32 @@ export function PlanPage() {
               to save drafts across devices and keep plans.
             </p>
           )}
+
+          {/* Mobile empty: no drafts yet and signed in — nudge is already in the CTAs. */}
+          {user &&
+            !draftsLoading &&
+            !keptLoading &&
+            (drafts?.length ?? 0) === 0 &&
+            (kept?.length ?? 0) === 0 && (
+              <p className="text-center text-sm text-sand-400 lg:hidden">
+                Your plans will show up here.
+              </p>
+            )}
         </aside>
 
-        {/* ---- Main workspace ---- */}
-        <main>
+        {/* ---- Detail pane (always on desktop; alone on mobile when a plan is open) ---- */}
+        <main className={cn('min-w-0 overflow-x-clip', showList && 'hidden lg:block')}>
+          {showDetail && (
+            <button
+              type="button"
+              onClick={backToList}
+              className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-sand-600 hover:text-sand-900 lg:hidden"
+            >
+              <ArrowLeft className="size-4" aria-hidden />
+              All plans
+            </button>
+          )}
+
           {isBuilding ? (
             <ItineraryBuilder
               draftId={activeDraftId!}
@@ -209,7 +285,10 @@ export function PlanPage() {
               title="No plan selected"
               description="Start a new plan or pick one from the list to continue building."
               action={
-                <Button onClick={() => createDraft.mutate({ kind: 'outing' })} loading={createDraft.isPending}>
+                <Button
+                  onClick={() => createDraft.mutate({ kind: 'outing' })}
+                  loading={createDraft.isPending}
+                >
                   <Plus className="size-4" aria-hidden />
                   Start a plan
                 </Button>
@@ -248,8 +327,8 @@ function DraftSection({
       <section>
         <p className="text-xs font-medium uppercase tracking-wide text-sand-500">{title}</p>
         <div className="mt-2 space-y-1">
-          <Skeleton className="h-12 w-full rounded-lg" />
-          <Skeleton className="h-12 w-full rounded-lg" />
+          <Skeleton className="h-14 w-full rounded-lg" />
+          <Skeleton className="h-14 w-full rounded-lg" />
         </div>
       </section>
     )
@@ -300,10 +379,10 @@ function DraftListItem({
     <li>
       <div
         className={cn(
-          'group relative flex items-start gap-2 rounded-lg px-2 py-2 cursor-pointer transition-colors',
+          'group relative flex items-start gap-2 rounded-xl px-3 py-3 cursor-pointer transition-colors lg:rounded-lg lg:px-2 lg:py-2',
           active
-            ? 'bg-brand-700/10 border border-brand-600/20'
-            : 'hover:bg-sand-100 border border-transparent',
+            ? 'border border-brand-600/20 bg-brand-700/10'
+            : 'border border-transparent hover:bg-sand-100',
         )}
       >
         <button
@@ -330,7 +409,7 @@ function DraftListItem({
             e.stopPropagation()
             onDelete()
           }}
-          className="relative z-10 rounded-md p-1 text-sand-400 hover:bg-sand-200 hover:text-red-500 lg:opacity-0 lg:group-hover:opacity-100"
+          className="relative z-10 rounded-md p-1.5 text-sand-400 hover:bg-sand-200 hover:text-red-500 lg:opacity-0 lg:group-hover:opacity-100"
         >
           <Trash2 className="size-3.5" aria-hidden />
         </button>
@@ -359,7 +438,7 @@ function KeptSection({
       <section>
         <p className="text-xs font-medium uppercase tracking-wide text-sand-500">Kept plans</p>
         <div className="mt-2 space-y-1">
-          <Skeleton className="h-10 w-full rounded-lg" />
+          <Skeleton className="h-14 w-full rounded-lg" />
         </div>
       </section>
     )

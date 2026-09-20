@@ -55,16 +55,16 @@ export function PlanShareBar({ itinerary }: { itinerary: Itinerary }) {
   const shareUrl = `${window.location.origin}/plans/${itinerary.id}`
 
   return (
-    <Card className="mt-5 p-5">
+    <Card className="mt-5 min-w-0 overflow-hidden p-4 sm:p-5">
       <p className="font-medium text-sand-900">Who can see this</p>
-      <div className="mt-3 space-y-2">
+      <div className="mt-3 space-y-1">
         {OPTIONS.map((option) => {
           const Icon = option.icon
           const active = visibility === option.value
           return (
             <label
               key={option.value}
-              className="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-2 hover:bg-sand-100"
+              className="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-2.5 hover:bg-sand-100"
             >
               <input
                 type="radio"
@@ -76,10 +76,10 @@ export function PlanShareBar({ itinerary }: { itinerary: Itinerary }) {
               />
               <span className="min-w-0">
                 <span className="flex items-center gap-1.5 font-medium text-sand-900">
-                  <Icon className="size-4" aria-hidden />
+                  <Icon className="size-4 shrink-0" aria-hidden />
                   {option.label}
                 </span>
-                <span className="block text-sm text-sand-600">{option.description}</span>
+                <span className="mt-0.5 hidden text-sm text-sand-600 lg:block">{option.description}</span>
               </span>
             </label>
           )
@@ -93,10 +93,16 @@ export function PlanShareBar({ itinerary }: { itinerary: Itinerary }) {
       )}
 
       {visibility !== 'private' && (
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <Input readOnly value={shareUrl} aria-label="Share link" className="min-w-[16rem] flex-1" />
+        <div className="mt-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+          <Input
+            readOnly
+            value={shareUrl}
+            aria-label="Share link"
+            className="min-w-0 w-full flex-1 truncate"
+          />
           <Button
             variant="secondary"
+            className="w-full shrink-0 sm:w-auto"
             onClick={() => {
               void navigator.clipboard.writeText(shareUrl)
               setCopied(true)

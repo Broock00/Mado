@@ -417,10 +417,11 @@ export function ConciergeLauncher() {
     <button
       type="button"
       onClick={() => toggle(true)}
-      className="fixed bottom-6 right-5 z-40 flex items-center gap-2 rounded-pill bg-brand-700 py-3 pl-4 pr-5 text-sm font-medium text-white shadow-lifted transition-transform hover:bg-brand-800 active:scale-95"
+      aria-label="Ask Mado"
+      className="fixed bottom-20 right-4 z-40 flex items-center gap-2 rounded-pill bg-brand-700 p-3.5 text-sm font-medium text-white shadow-lifted transition-transform hover:bg-brand-800 active:scale-95 sm:bottom-6 sm:right-5 sm:py-3 sm:pl-4 sm:pr-5"
     >
       <Sparkles className="size-4" aria-hidden />
-      Ask Mado
+      <span className="hidden sm:inline">Ask Mado</span>
     </button>
   )
 }
