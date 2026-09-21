@@ -195,27 +195,50 @@ export function ComposePage() {
   // The saved ticket plan, folded in once. Seeded rather than kept in sync,
   // because after that the list on screen is the one being edited and a refetch
   // landing on top of it would throw away what somebody just typed.
-  const { data: savedPlan } = useQuery({
+  //
+  // `planFetched` matters as much as the data: an empty plan and a failed
+  // fetch both leave `savedPlan` undefined-or-empty, and without a settled
+  // flag the General admission default below would either fire too early
+  // (race) or never fire (stuck waiting on a plan that is not coming).
+  const { data: savedPlan, isFetched: planFetched } = useQuery({
     queryKey: ['ticket-plan', draftId],
     queryFn: () => api.ticketPlan(draftId!),
     enabled: Boolean(draftId),
   })
 
+  // Route identity changed - the previous post's tiers must not linger, and
+  // the plan for this one has not been folded in yet. `draftId` alone is the
+  // wrong dependency: it also flips on first save of a new post, which must
+  // keep whatever is already on screen. Sync it from the route here so a
+  // navigate between two edits does not keep querying the previous id while
+  // `seeded` stays true and blocks the new plan.
   useEffect(() => {
-    if (seeded || !savedPlan) return
-    setTickets(
-      savedPlan.map((entry) => ({
-        name: entry.name,
-        description: entry.description ?? '',
-        priceMinor: entry.priceMinor,
-        quantity: entry.quantity ?? null,
-        dates: entry.dates,
-        sold: entry.sold,
-        varies: entry.varies,
-      })),
-    )
+    setDraftId(experienceId ?? null)
+    setSeeded(false)
+    setTickets([])
+  }, [experienceId])
+
+  useEffect(() => {
+    if (seeded || !draftId || !planFetched) return
+    // Editing must take the server plan. A new draft that already has tiers
+    // on screen (typed, or invented from the price) must keep them: the plan
+    // fetch returns [] when no dates have been written yet, and replacing
+    // the list with that would erase what is being composed.
+    if (savedPlan && (isEditing || tickets.length === 0)) {
+      setTickets(
+        savedPlan.map((entry) => ({
+          name: entry.name,
+          description: entry.description ?? '',
+          priceMinor: entry.priceMinor,
+          quantity: entry.quantity ?? null,
+          dates: entry.dates,
+          sold: entry.sold,
+          varies: entry.varies,
+        })),
+      )
+    }
     setSeeded(true)
-  }, [savedPlan, seeded])
+  }, [savedPlan, seeded, draftId, planFetched, isEditing, tickets.length])
 
   const post: OwnPost | undefined = existing
   // Images still go straight to the server, because an upload needs somewhere
@@ -468,11 +491,18 @@ export function ComposePage() {
    * kept in sync in both directions: after it exists the list is the truth, and
    * a price field quietly overwriting a ticket somebody had adjusted would be
    * the same class of bug pointing the other way.
+   *
+   * When a draft already exists, wait until its plan has been folded in
+   * (`seeded`). The form's price arrives in the same pass as a multi-tier
+   * plan; without this gate both effects see `tickets.length === 0` and the
+   * last `setTickets` wins - a lone General admission on top of VIP and the
+   * rest, with `seeded` already true so the real plan never returns.
    */
   useEffect(() => {
     if (form.type !== 'event') return
     if (form.priceType === 'free' || form.priceAmount == null) return
     if (tickets.length > 0) return
+    if (draftId && !seeded) return
     setTickets([
       {
         name: ORDINARY_TICKET,
@@ -481,7 +511,15 @@ export function ComposePage() {
         quantity: null,
       },
     ])
-  }, [form.type, form.priceType, form.priceAmount, tickets.length, effectiveCurrency])
+  }, [
+    form.type,
+    form.priceType,
+    form.priceAmount,
+    tickets.length,
+    effectiveCurrency,
+    draftId,
+    seeded,
+  ])
 
   // Read at commit time rather than closed over, so a name typed a moment ago
   // is the one that gets used.
