@@ -7,7 +7,7 @@ services:
     dockerContext: ./backend
     branch: trip-planning-and-business-accounts
     plan: starter
-    healthCheckPath: /health/live
+    healthCheckPath: /health
     # Run Alembic migrations before the new image takes traffic.
     preDeployCommand: alembic upgrade head
     envVars:
