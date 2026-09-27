@@ -1,0 +1,76 @@
+services:
+  # FastAPI API ----------------------------------------------------------------
+  - type: web
+    name: mado-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    branch: trip-planning-and-business-accounts
+    plan: starter
+    healthCheckPath: /health/live
+    # Run Alembic migrations before the new image takes traffic.
+    preDeployCommand: alembic upgrade head
+    envVars:
+      - key: MADO_ENVIRONMENT
+        value: production
+      - key: MADO_DEBUG
+        value: "false"
+      - key: MADO_RATE_LIMIT_ENABLED
+        value: "true"
+      - key: MADO_SCHEDULER_ENABLED
+        value: "true"
+      - key: MADO_REQUIRE_VERIFIED_EMAIL_TO_PUBLISH
+        value: "false"
+      - key: MADO_PAYMENT_PROVIDER
+        value: stub
+      - key: MADO_STRIPE_ENABLED
+        value: "false"
+      - key: MADO_AI_PROVIDER
+        value: stub
+      - key: MADO_MEDIA_PROVIDER
+        value: local
+      # Render private services are reachable at http://<service-name>:<port>
+      # from within the same Render account. Set after deploying Meilisearch.
+      - key: MADO_MEILISEARCH_URL
+        value: http://mado-meilisearch:7700
+      # Secrets — set these in the Render dashboard (Environment tab) before
+      # or immediately after the first deploy:
+      #   MADO_DATABASE_URL       Neon pooled URL, postgresql+psycopg://...
+      #   MADO_JWT_SECRET         python -c "import secrets; print(secrets.token_urlsafe(48))"
+      #   MADO_MEILISEARCH_API_KEY  must match MEILI_MASTER_KEY below
+      #   MADO_CORS_ORIGINS       JSON list, e.g. ["https://mado.vercel.app"]
+      #   MADO_WEB_BASE_URL       https://mado.vercel.app
+      #   MADO_GEMINI_API_KEY     optional — AI stays on stub without it
+      #   MADO_GOOGLE_MAPS_API_KEY  optional — server key for Places/Geocoding
+      - key: MADO_DATABASE_URL
+        sync: false
+      - key: MADO_JWT_SECRET
+        sync: false
+      - key: MADO_MEILISEARCH_API_KEY
+        sync: false
+      - key: MADO_CORS_ORIGINS
+        sync: false
+      - key: MADO_WEB_BASE_URL
+        sync: false
+      - key: MADO_GEMINI_API_KEY
+        sync: false
+      - key: MADO_GOOGLE_MAPS_API_KEY
+        sync: false
+
+  # Meilisearch — private service, not reachable from the public internet ------
+  - type: pserv
+    name: mado-meilisearch
+    runtime: docker
+    image:
+      url: docker.io/getmeili/meilisearch:v1.11
+    plan: starter
+    disk:
+      name: meili-data
+      mountPath: /meili_data
+      sizeGB: 10
+    envVars:
+      - key: MEILI_ENV
+        value: production
+      # Must match MADO_MEILISEARCH_API_KEY set on mado-api above.
+      - key: MEILI_MASTER_KEY
+        sync: false
